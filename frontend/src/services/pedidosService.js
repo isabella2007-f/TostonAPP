@@ -16,6 +16,7 @@ const ESTADO_PEDIDO_MAP = {
   17: "Fecha rechazada",
   18: "Parcialmente entregado",
   19: "Escalado a admin",
+  20: "Esperando pago",
 };
 
 const adaptPedido = (p) => {
@@ -70,6 +71,7 @@ const adaptPedido = (p) => {
     fecha_propuesta:  p.Fecha_Propuesta || p.fecha_propuesta || p.Fecha_entrega_esperada || null,
     fecha_rechazada:  p.fecha_rechazada || null,
     intentos_rechazo: p.intentos_rechazo || 0,
+    resaltarCanalExcepcion: !!(p.resaltar_canal_excepcion),
     comprobante:             p.comprobante_pago || p.Comprobante || p.comprobante || null,
     observaciones_domicilio: p.observaciones_domicilio || null,
     sobre_stock:      !!(p.sobre_stock),
@@ -222,14 +224,40 @@ export const proponerFechaProduccion = async (id, fecha) =>
     body: JSON.stringify({ fecha_entrega: fecha }),
   });
 
-export const aceptarFechaProduccion = async (id) =>
-  apiFetch(`/ventas/${id}/aceptar-fecha`, { method: "PATCH" });
+export const aceptarFechaProduccion = async (id) => {
+  const data = await apiFetch(`/ventas/${id}/aceptar-fecha`, { method: "PATCH" });
+  return adaptPedido(data);
+};
 
-export const rechazarFechaProduccion = async (id, motivo = null) =>
-  apiFetch(`/ventas/${id}/rechazar-fecha`, {
+// Camino A: admin aprueba en 1 clic la fecha que el cliente pidió al hacer el pedido.
+export const aprobarFechaDirecta = async (id) => {
+  const data = await apiFetch(`/ventas/${id}/aprobar-fecha`, { method: "PATCH" });
+  return adaptPedido(data);
+};
+
+// El cliente pide hablar directamente con el admin (canal de excepción) en
+// vez de seguir rechazando la contraoferta de fecha.
+export const solicitarEscalado = async (id) => {
+  const data = await apiFetch(`/ventas/${id}/solicitar-escalado`, { method: "PATCH" });
+  return adaptPedido(data);
+};
+
+// El cliente adjunta el comprobante (o el anticipo) de un pedido 'Esperando Pago'.
+export const pagarPedido = async (id, { comprobante_url, monto = null }) => {
+  const data = await apiFetch(`/pedidos/${id}/pagar`, {
+    method: "PATCH",
+    body: JSON.stringify({ comprobante_url, monto }),
+  });
+  return adaptPedido(data);
+};
+
+export const rechazarFechaProduccion = async (id, motivo = null) => {
+  const data = await apiFetch(`/ventas/${id}/rechazar-fecha`, {
     method: "PATCH",
     body: JSON.stringify({ motivo: motivo || null }),
   });
+  return adaptPedido(data);
+};
 
 export const resolverEscaladoAcuerdo = async (id, fechaAcordada) => {
   const data = await apiFetch(`/ventas/${id}/resolver-escalado-acuerdo`, {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, CreditCard, Banknote, Scale, User, MapPin, ShoppingBag, CheckCircle2, Sparkles, ShieldCheck, UploadCloud, ChevronRight, Gift, Truck, Phone, Save, Package, AlertTriangle, Home, MapPinned } from 'lucide-react';
+import { X, CreditCard, Banknote, Scale, User, MapPin, ShoppingBag, CheckCircle2, Sparkles, ShieldCheck, ChevronRight, Gift, Truck, Phone, Save, Package, AlertTriangle, Home, MapPinned } from 'lucide-react';
 import { CartItem } from '../services/cartService';
 import { getUser } from '../../../../services/authService';
 import { getMiCredito } from '../../../../services/pedidosService';
@@ -12,10 +12,9 @@ import { desdeTexto, lineaVia } from '../../../../utils/direccionEntrega';
 import { pideAnticipo } from '../../../../utils/anticipo';
 import SaldoMonto from '../../../../shared/components/SaldoMonto';
 import SplitPagoMonto from '../../../../shared/components/SplitPagoMonto';
-import ImageLightbox from '../../../../shared/components/ImageLightbox.jsx';
 import TerminosCondicionesModal from '../../../../shared/components/TerminosCondicionesModal';
 import { getLandingConfig, LANDING_DEFAULTS } from '../../../../services/landingConfigService';
-import { estaAbierto, mensajeFueraHorario, rangoHorario } from '../../../../utils/horario';
+import { estaAbierto, mensajeFueraHorario, rangoHorario, primeraFechaValida } from '../../../../utils/horario';
 import { formatCOP } from '../../../../utils/formato';
 import './CheckoutModal.css';
 
@@ -44,7 +43,9 @@ interface CheckoutModalProps {
     observaciones?: string;
     tieneDomicilio?: boolean;
   } | null;
-  onConfirm: (paymentMethod: string, comprobante?: File | null, saldoAFavor?: { usar: boolean; monto: number; efectivoMonto?: number }, deliveryInfo?: { tieneDomicilio: boolean; address: string; idBarrio: number | null; municipio: string; departamento: string; date: string; time: string; observaciones: string }, anticipoData?: { requiere: boolean; metodo: string; efectivo: boolean; comprobante: File | null; monto: number; saldo: number; pagarTodo?: boolean; creditoCubreAnticipo?: boolean }) => Promise<void> | void;
+  // El comprobante ya no se sube en el checkout: se adjunta después, desde
+  // "Mis pedidos" (pagarPedido) — por eso ya no viaja por acá.
+  onConfirm: (paymentMethod: string, saldoAFavor?: { usar: boolean; monto: number; efectivoMonto?: number }, deliveryInfo?: { tieneDomicilio: boolean; address: string; idBarrio: number | null; municipio: string; departamento: string; date: string; time: string; observaciones: string }) => Promise<void> | void;
 }
 
 /** Saldo a favor: lo que el cliente tiene abonado de devoluciones anteriores.
@@ -91,13 +92,11 @@ const SaldoAFavorPicker: React.FC<{
 
 const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDetails, onConfirm }) => {
   const [paymentMethod,      setPaymentMethod]      = useState('digital');
-  // Pago mixto: cuánta plata va en efectivo, en pesos. La transferencia se
-  // paga ahora con comprobante y el efectivo se entrega al recibir el pedido.
+  // Pago mixto: cuánta plata va en efectivo, en pesos. El comprobante de la
+  // parte transferida se adjunta después (Mis pedidos); el efectivo se
+  // entrega al recibir el pedido.
   const [efectivoMonto,      setEfectivoMonto]      = useState<number | ''>('');
   const [mixtoError,         setMixtoError]         = useState('');
-  const [comprobante,        setComprobante]        = useState<File | null>(null);
-  const [comprobantePreview, setComprobantePreview] = useState<string | null>(null);
-  const [comprobanteError,   setComprobanteError]   = useState('');
   const [isConfirming,       setIsConfirming]       = useState(false);
   const [credito,            setCredito]            = useState(0);
   const [usarCredito,        setUsarCredito]        = useState(false);
@@ -119,6 +118,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
   /// Mientras se pregunta la cobertura del barrio guardado.
   const [cargandoBarrio,     setCargandoBarrio]     = useState(false);
   const [date,               setDate]               = useState('');
+  const [fechaTocada,        setFechaTocada]        = useState(false);
   const [time,               setTime]               = useState('');
   const [observaciones,      setObservaciones]      = useState('');
   // Teléfono
@@ -131,14 +131,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
   const [registrada,     setRegistrada]     = useState<any>(null);
   /// Si ya se intentó confirmar: hasta entonces no se marca nada en rojo.
   const [direccionTocada,     setDireccionTocada]     = useState(false);
-  // Anticipo
-  const [anticipoMetodo,      setAnticipoMetodo]      = useState('');
-  const [anticipoEfectivo,    setAnticipoEfectivo]    = useState(false);
-  const [anticipoComprobante, setAnticipoComprobante] = useState<File | null>(null);
-  const [anticipoError,       setAnticipoError]       = useState('');
-  // 'mitad' = 50%, 'todo' = 100%, 'personalizado' = monto elegido por el cliente
-  const [anticipoOpcion,      setAnticipoOpcion]      = useState<'mitad' | 'todo' | 'personalizado'>('mitad');
-  const [montoPersonalizado,  setMontoPersonalizado]  = useState<number | ''>('');
   const [terminosAceptados,  setTerminosAceptados]   = useState(false);
   const [verTerminos,        setVerTerminos]         = useState(false);
   const [cfgHorario,         setCfgHorario]          = useState<any>({ ...LANDING_DEFAULTS });
@@ -154,10 +146,9 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
     setIdBarrio(null);
     setCoberturaBarrio(null);
     setDate(orderDetails.date || '');
+    setFechaTocada(false);
     setTime('');
     setObservaciones(orderDetails.observaciones || '');
-    setComprobante(null);
-    setComprobantePreview(null);
     setTelefonoTocado(false);
     setDireccionTocada(false);
 
@@ -198,12 +189,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
     getMiCredito()
       .then((data: any) => setCredito(data?.saldo || 0))
       .catch(() => setCredito(0));
-    setAnticipoOpcion('mitad');
-    setMontoPersonalizado('');
-    setAnticipoMetodo('');
-    setAnticipoEfectivo(false);
-    setAnticipoComprobante(null);
-    setAnticipoError('');
     setUsarCredito(false);
     setCreditoMonto('');
     setEfectivoMonto('');
@@ -214,9 +199,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
     setBannerProduccion(true);
   }, [isOpen]);
 
-  // El anticipo se le pide al pedido que hay que hornear Y que pasa de
-  // $50.000. Acá estaba clavado en `true`: se le pedía transferencia por
-  // adelantado a quien compraba tres panes que estaban en la vitrina.
+  // El anticipo ya no se cobra en el checkout: se pide después, cuando el
+  // admin apruebe la fecha de entrega (pantalla "Esperando pago" en Mis
+  // pedidos). Esto solo previene el método mixto y avisa de antemano —el
+  // servidor decide lo mismo con la misma regla al aprobar la fecha.
   //
   // Se calcula acá arriba, antes del early return, porque el efecto de abajo
   // lo necesita y los hooks no pueden quedar detrás de un return; de ahí el
@@ -290,26 +276,26 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
     ? Math.min(Math.max(Number(creditoMonto) || 0, 0), creditoMaximo)
     : 0;
   const totalFinal       = Math.max(0, orderDetails.total + costoDomicilio - creditoAplicar);
-  const montoMitad = Math.ceil(totalFinal * 0.5);
-  const montoAnticipo = requiereAnticipo
-    ? anticipoOpcion === 'todo'          ? totalFinal
-    : anticipoOpcion === 'personalizado' ? Math.max(montoMitad, Math.min(Math.round(Number(montoPersonalizado) || 0), totalFinal))
-    : montoMitad
-    : 0;
-  // El cliente paga todo si eligió "Pagar total" o si el monto personalizado alcanza el total
-  const pagarTodo            = anticipoOpcion === 'todo' || (anticipoOpcion === 'personalizado' && montoAnticipo >= totalFinal);
-  const creditoCubreAnticipo = requiereAnticipo && usarCredito
-    && creditoAplicar >= montoAnticipo;
+
+  // Fecha límite obligatoria: solo para lo que hay que fabricar. El mínimo
+  // seleccionable es hoy (si todavía se puede recibir) o el próximo día de
+  // atención — la misma regla la valida el servidor al crear el pedido.
+  const fechaMinima = primeraFechaValida(cfgHorario);
+  const faltaFecha  = itemsConDeficit.length > 0 && !date
+    ? 'Elige para cuándo necesitas tu pedido'
+    : itemsConDeficit.length > 0 && date < fechaMinima
+    ? `La fecha más próxima disponible es ${fechaMinima}`
+    : null;
+  const fechaError = fechaTocada ? faltaFecha : null;
 
   const handleFinalConfirm = async () => {
     setTelefonoTocado(true);
+    setFechaTocada(true);
     if (tieneDomicilio) setDireccionTocada(true);
     if (!telefonoValido) return;
     if (tieneDomicilio && !direccionValida) return;
+    if (faltaFecha) return;
 
-    // Pagando por transferencia el comprobante es obligatorio: sin él, el pedido
-    // se creaba igual y quedaba sin soporte de pago, sin avisar a nadie.
-    // (Con anticipo el comprobante que cuenta es el del anticipo, validado abajo.)
     // Un mixto tiene que tener las dos partes: si una queda en cero, lo que
     // el cliente quiere es el otro método a secas.
     if (esMixto) {
@@ -323,22 +309,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
         return;
       }
       setMixtoError('');
-    }
-
-    // El mixto lleva una transferencia de verdad: también pide el comprobante.
-    // Excepción: si el saldo a favor cubre el 100% del total no hay nada que
-    // transferir, aunque el método elegido sea "Transferencia".
-    const llevaTransferencia = paymentMethod === 'digital' || esMixto;
-    if (llevaTransferencia && !requiereAnticipo && totalFinal > 0 && !comprobante) {
-      setComprobanteError('Adjunta el comprobante de la transferencia.');
-      return;
-    }
-    setComprobanteError('');
-
-    if (requiereAnticipo && !creditoCubreAnticipo) {
-      if (!anticipoMetodo) { setAnticipoError('Selecciona el método de pago del anticipo'); return; }
-
-      if (anticipoMetodo === 'digital' && !anticipoComprobante) { setAnticipoError('Debes adjuntar el comprobante del anticipo'); return; }
     }
 
     setIsConfirming(true);
@@ -367,15 +337,11 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
       }).catch(() => {});
     }
 
-    // Con anticipo, el pedido se cobra por donde se pagó el anticipo: es el
-    // mismo dinero. Si lo cubre el crédito, el saldo se cobra al entregar y se
-    // deja en efectivo (una transferencia sin comprobante bloquea la entrega).
-    const metodoPedido = requiereAnticipo
-      ? (creditoCubreAnticipo ? 'efectivo' : anticipoMetodo || 'efectivo')
-      : paymentMethod;
-
     try {
-      await onConfirm(metodoPedido, comprobante, { usar: usarCredito, monto: creditoAplicar, efectivoMonto: Number(efectivoMonto) || 0 }, {
+      // El comprobante ya no se sube acá: se adjunta después, cuando el
+      // pedido llegue a "Esperando pago" (sin producción) o al aprobarse la
+      // fecha (con producción y anticipo).
+      await onConfirm(paymentMethod, { usar: usarCredito, monto: creditoAplicar, efectivoMonto: Number(efectivoMonto) || 0 }, {
         tieneDomicilio,
         address,
         idBarrio,
@@ -384,16 +350,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
         date,
         time,
         observaciones,
-      }, requiereAnticipo ? {
-        requiere: true,
-        metodo: creditoCubreAnticipo ? 'credito' : anticipoMetodo,
-        efectivo: creditoCubreAnticipo ? true : anticipoEfectivo,
-        comprobante: creditoCubreAnticipo ? null : anticipoComprobante,
-        monto: montoAnticipo,
-        saldo: totalFinal - montoAnticipo,
-        pagarTodo,
-        creditoCubreAnticipo,
-      } : undefined);
+      });
     } catch {
       // el padre ya muestra el error al usuario
     } finally {
@@ -446,8 +403,8 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
               <Package size={15} className="shrink-0 mt-0.5" />
               <div>
                 <strong>Pedido programado.</strong> Algunos productos no tienen stock inmediato
-                ({itemsConDeficit.map((it: CartItem) => it.nombre).join(', ')}). Se creará una orden
-                de producción y el administrador te propondrá una fecha de entrega.
+                ({itemsConDeficit.map((it: CartItem) => it.nombre).join(', ')}). Elige para cuándo
+                lo necesitas: el administrador revisa la fecha y la aprueba o te propone otra.
               </div>
               <button className="co-banner__x" onClick={() => setBannerProduccion(false)} aria-label="Descartar">
                 <X size={13} />
@@ -471,6 +428,27 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
               <p className="text-xs font-black text-gray-800 truncate">{user?.nombre} {user?.apellidos}</p>
             </div>
           </div>
+
+          {/* Fecha límite: obligatoria solo para lo que hay que fabricar. */}
+          {itemsConDeficit.length > 0 && (
+            <div className={`bg-white rounded-2xl border px-3 py-3 space-y-2 ${fechaError ? 'border-red-200' : date ? 'border-green-200' : 'border-gray-100'}`}>
+              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Package size={10} /> ¿Para cuándo necesitas tu pedido?
+                <span className="text-red-400">*</span>
+              </p>
+              <input
+                type="date"
+                value={date}
+                min={fechaMinima}
+                onChange={e => setDate(e.target.value)}
+                onBlur={() => setFechaTocada(true)}
+                className={inputCls}
+              />
+              {fechaError && (
+                <p className="text-[11px] font-bold text-red-600">{fechaError}</p>
+              )}
+            </div>
+          )}
 
           {/* Teléfono de contacto */}
           <div className={`bg-white rounded-2xl border px-3 py-3 space-y-2 ${telefonoError ? 'border-red-200' : telefonoValido ? 'border-green-200' : 'border-gray-100'}`}>
@@ -699,9 +677,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
             </div>
           </div>
 
-          {/* Con anticipo el método se elige una sola vez, abajo: preguntarlo
-              aquí también obligaba a decidir dos veces lo mismo. */}
-          {!requiereAnticipo && (
+          {/* Método de pago. El comprobante ya no se sube acá: si el pedido no
+              necesita producción pasa a "Esperando pago" y se adjunta desde
+              "Mis pedidos"; si necesita producción, se pide recién cuando el
+              admin apruebe la fecha (y solo si el pedido pide anticipo). */}
           <div className="bg-white rounded-2xl border border-gray-100 px-3 py-3 space-y-2.5">
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
               Método de pago del pedido
@@ -719,6 +698,18 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
                 </button>
               ))}
             </div>
+
+            {requiereAnticipo && (
+              <div className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2.5">
+                <Banknote size={16} className="text-yellow-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] font-bold text-yellow-800">
+                  Este pedido incluye producción y supera $100.000: una vez el administrador
+                  apruebe tu fecha de entrega vas a necesitar pagar un anticipo del 50%
+                  (o más) por transferencia antes de que empecemos a producir. Por eso el
+                  método mixto no está disponible aquí.
+                </p>
+              </div>
+            )}
 
             {/* Reparto entre las dos formas de pago */}
             {esMixto && (
@@ -738,13 +729,16 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
             {(paymentMethod === 'digital' || esMixto) && totalFinal === 0 && (
               <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
                 <CheckCircle2 size={14} className="text-green-600 shrink-0" />
-                <p className="text-xs font-bold text-green-800">Tu saldo a favor cubre el total — no necesitas realizar ningún pago ni adjuntar comprobante.</p>
+                <p className="text-xs font-bold text-green-800">Tu saldo a favor cubre el total — no necesitas realizar ningún pago.</p>
               </div>
             )}
 
             {(paymentMethod === 'digital' || esMixto) && totalFinal > 0 && (
               <div className="space-y-2">
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1.5">
+                    Vas a transferir a esta cuenta
+                  </p>
                   <div className="space-y-1">
                     {[['Banco', CUENTA.banco], ['Número', CUENTA.numero], ['Tipo', CUENTA.tipo], ['Titular', CUENTA.titular]].map(([l, v]) => (
                       <div key={l} className="flex gap-2">
@@ -754,201 +748,20 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
                     ))}
                   </div>
                 </div>
-                {esMixto && (
-                  <p className="text-[10px] font-bold text-blue-700 bg-blue-50 rounded-xl px-3 py-2">
-                    Transfiere {COP(totalFinal - (Number(efectivoMonto) || 0))} y
-                    ten listos {COP(Number(efectivoMonto) || 0)} en efectivo para la entrega.
-                  </p>
-                )}
-                {comprobantePreview ? (
-                  <div className="relative rounded-xl overflow-hidden border border-green-200 bg-black">
-                    <ImageLightbox
-                      src={comprobantePreview}
-                      alt="Comprobante"
-                      label="Ver comprobante"
-                      thumbStyle={{ width: '100%', maxHeight: 140, objectFit: 'contain', display: 'block', borderRadius: 10 }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => { setComprobante(null); setComprobantePreview(null); setComprobanteError(''); }}
-                      className="absolute top-1.5 right-1.5 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-black/80 transition-colors"
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="relative group">
-                    <input type="file" accept="image/*"
-                      onChange={e => {
-                        const f = e.target.files?.[0] || null;
-                        setComprobante(f);
-                        setComprobanteError('');
-                        if (f) {
-                          const r = new FileReader();
-                          r.onload = ev => setComprobantePreview(ev.target?.result as string);
-                          r.readAsDataURL(f);
-                        } else {
-                          setComprobantePreview(null);
-                        }
-                      }}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                    <div className="border-2 border-dashed border-green-200 bg-white group-hover:bg-green-50 transition-all rounded-xl p-3 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <UploadCloud size={15} className="text-green-300" />
-                        <p className="text-xs font-bold text-gray-400">Subir comprobante de pago</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {comprobanteError && (
-                  <p className="text-[11px] font-bold text-red-600">{comprobanteError}</p>
-                )}
+                <p className="text-[10px] font-bold text-blue-700 bg-blue-50 rounded-xl px-3 py-2">
+                  {esMixto
+                    ? `Vas a transferir ${COP(totalFinal - (Number(efectivoMonto) || 0))} y tener listos ${COP(Number(efectivoMonto) || 0)} en efectivo. `
+                    : `Vas a transferir ${COP(totalFinal)}. `}
+                  {requiereAnticipo
+                    ? 'Sube el comprobante del anticipo cuando el admin apruebe tu fecha (en "Mis pedidos").'
+                    : 'Una vez creado el pedido, súbelo desde "Mis pedidos".'}
+                </p>
               </div>
             )}
           </div>
-          )}
 
-          {/* Anticipo obligatorio */}
-          {requiereAnticipo && (
-            <div className="rounded-2xl border-2 border-yellow-300 bg-yellow-50 px-3 py-3 space-y-3">
-              <div className="flex items-start gap-2">
-                <Banknote size={20} className="text-yellow-600 shrink-0" />
-                <div>
-                  <p className="text-xs font-black text-yellow-800">Anticipo requerido</p>
-                  <p className="text-[10px] font-bold text-yellow-700">Este pedido lleva productos por encargo y supera los $100.000: requiere un anticipo del 50%. El saldo restante se paga al recibir.</p>
-                  <p className="text-[10px] font-bold text-yellow-700 mt-1">El pago mixto no está disponible: su parte en efectivo se paga al recibir y el anticipo va antes.</p>
-                </div>
-              </div>
-
-              {/* Toggle: anticipo 50% / monto elegido / pagar total */}
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  { id: 'mitad',         label: 'Anticipo 50%'     },
-                  { id: 'personalizado', label: 'Elegir monto'     },
-                  { id: 'todo',          label: 'Pagar total ahora' },
-                ] as Array<{ id: 'mitad' | 'todo' | 'personalizado'; label: string }>).map(opt => (
-                  <button key={opt.id}
-                    onClick={() => { setAnticipoOpcion(opt.id); setMontoPersonalizado(''); setAnticipoMetodo(''); setAnticipoEfectivo(false); setAnticipoComprobante(null); setAnticipoError(''); }}
-                    className={`p-2 rounded-xl border-2 text-xs font-black transition-all ${anticipoOpcion === opt.id ? 'border-yellow-500 bg-yellow-100 text-yellow-900' : 'border-gray-200 bg-white text-gray-400 hover:border-yellow-200'}`}>
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Input para monto personalizado */}
-              {anticipoOpcion === 'personalizado' && (
-                <div className="space-y-1">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={montoMitad}
-                    max={totalFinal}
-                    step={100}
-                    placeholder={`Entre ${COP(montoMitad)} y ${COP(totalFinal)}`}
-                    value={montoPersonalizado}
-                    onChange={e => setMontoPersonalizado(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="w-full bg-gray-50 border border-yellow-300 rounded-xl py-2.5 px-3 text-sm text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-yellow-200 focus:border-yellow-400 transition-all"
-                  />
-                  {montoPersonalizado !== '' && Number(montoPersonalizado) < montoMitad && (
-                    <p className="text-[10px] font-bold text-red-500">El mínimo es {COP(montoMitad)} (50%)</p>
-                  )}
-                  {montoPersonalizado !== '' && Number(montoPersonalizado) > totalFinal && (
-                    <p className="text-[10px] font-bold text-red-500">No puede superar el total ({COP(totalFinal)})</p>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-yellow-200">
-                <span className="text-xs font-bold text-gray-600">
-                  {anticipoOpcion === 'todo' ? 'Total a pagar ahora' : anticipoOpcion === 'personalizado' ? 'Anticipo elegido' : 'Anticipo (50%)'}
-                </span>
-                <span className="text-base font-black text-yellow-700">{COP(montoAnticipo)}</span>
-              </div>
-
-              {/* Saldo a favor — dentro del bloque de anticipo */}
-              {credito > 0 && (
-                <SaldoAFavorPicker
-                  saldo={credito}
-                  maximo={creditoMaximo}
-                  activo={usarCredito}
-                  monto={creditoMonto}
-                  onToggle={() => {
-                    const prender = !usarCredito;
-                    setUsarCredito(prender);
-                    if (prender) setCreditoMonto(creditoMaximo);
-                  }}
-                  onMonto={setCreditoMonto}
-                />
-              )}
-
-              {creditoCubreAnticipo ? (
-                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
-                  <CheckCircle2 size={14} className="text-green-600 shrink-0" />
-                  <p className="text-xs font-bold text-green-800">Tu saldo a favor cubre este anticipo — no necesitas adjuntar comprobante.</p>
-                </div>
-              ) : (
-                <>
-                  {usarCredito && creditoAplicar > 0 && creditoAplicar < montoAnticipo && (
-                    <div className="text-[10px] font-bold text-yellow-700 bg-yellow-100 rounded-xl px-3 py-2">
-                      Con {COP(creditoAplicar)} de saldo a favor aún debes pagar {COP(montoAnticipo - creditoAplicar)} por otro método.
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
-                    <CreditCard size={13} className="text-blue-600 shrink-0" />
-                    <p className="text-xs font-bold text-blue-800">El anticipo debe pagarse por <strong>transferencia bancaria</strong>.</p>
-                  </div>
-
-                  <button
-                    onClick={() => { setAnticipoMetodo('digital'); setAnticipoEfectivo(false); setAnticipoComprobante(null); setAnticipoError(''); }}
-                    className={`w-full flex items-center gap-2 p-2.5 rounded-xl border-2 text-xs font-black transition-all ${anticipoMetodo === 'digital' ? 'border-yellow-500 bg-yellow-100 text-yellow-900' : 'border-gray-200 bg-white text-gray-400 hover:border-yellow-200'}`}>
-                    <div className={`p-1.5 rounded-lg ${anticipoMetodo === 'digital' ? 'bg-yellow-500 text-white' : 'bg-gray-100 text-gray-400'}`}><CreditCard size={13} /></div>
-                    Transferencia bancaria
-                  </button>
-
-                  {anticipoMetodo === 'digital' && (
-                    <div className="space-y-2">
-                      <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-[10px] font-bold text-blue-800">
-                        Transfiere <strong>{COP(montoAnticipo)}</strong> a <strong>{CUENTA.banco}</strong> · {CUENTA.tipo} · <strong>{CUENTA.numero}</strong> — {CUENTA.titular}
-                      </div>
-                      <div className="relative group">
-                        <input type="file" accept="image/*"
-                          onChange={e => { setAnticipoComprobante(e.target.files?.[0] || null); setAnticipoError(''); }}
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                        <div className="border-2 border-dashed border-yellow-300 bg-white group-hover:bg-yellow-50 transition-all rounded-xl p-3 text-center">
-                          {anticipoComprobante ? (
-                            <div className="flex items-center justify-center gap-2">
-                              <CheckCircle2 size={13} className="text-green-500" />
-                              <p className="text-xs font-black text-green-700 truncate max-w-[180px]">{anticipoComprobante.name}</p>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-center gap-2">
-                              <UploadCloud size={14} className="text-yellow-400" />
-                              <p className="text-xs font-bold text-gray-400">Subir comprobante del anticipo</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {anticipoError && (
-                <p className="text-[10px] font-black text-red-600">{anticipoError}</p>
-              )}
-
-              {!pagarTodo && (
-                <div className="flex items-center justify-between text-[10px] font-bold text-yellow-800 bg-white rounded-xl px-3 py-2 border border-yellow-200">
-                  <span>Saldo restante al recibir el pedido</span>
-                  <span className="font-black">{COP(totalFinal - montoAnticipo)}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Saldo a favor (con anticipo se muestra dentro de ese bloque) */}
-          {credito > 0 && !requiereAnticipo && (
+          {/* Saldo a favor */}
+          {credito > 0 && (
             <SaldoAFavorPicker
               saldo={credito}
               maximo={creditoMaximo}
@@ -993,7 +806,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
                 </span>
               </div>
             )}
-            {paymentMethod === 'mixto' && !requiereAnticipo && Number(efectivoMonto) > 0 && (
+            {paymentMethod === 'mixto' && Number(efectivoMonto) > 0 && (
               <>
                 <div className="flex justify-between text-[11px] font-bold text-gray-500">
                   <span>En efectivo al recibir</span>
@@ -1009,23 +822,6 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
               <div className="flex justify-between text-xs font-bold text-green-700">
                 <span>Saldo a favor</span><span>−{COP(creditoAplicar)}</span>
               </div>
-            )}
-            {requiereAnticipo && (
-              <>
-                {/* Sin esta línea se pasaba del subtotal al anticipo y no se
-                    entendía sobre qué monto se calcula el 50%. */}
-                <div className="flex justify-between text-xs font-black text-gray-700 border-t border-gray-100 pt-1">
-                  <span>Total del pedido</span><span>{COP(totalFinal)}</span>
-                </div>
-                <div className="flex justify-between text-xs font-bold text-yellow-700">
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Banknote size={13} /> {pagarTodo ? 'Total pagado ahora' : anticipoOpcion === 'personalizado' ? 'Anticipo elegido' : 'Anticipo ahora (50%)'}</span><span>{COP(montoAnticipo)}</span>
-                </div>
-                {!pagarTodo && (
-                  <div className="flex justify-between text-xs font-bold text-gray-400">
-                    <span>Saldo al recibir</span><span>{COP(totalFinal - montoAnticipo)}</span>
-                  </div>
-                )}
-              </>
             )}
             {/* Términos y condiciones */}
             <label style={{
@@ -1056,10 +852,10 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
             <div className="flex items-center justify-between pt-2 border-t border-gray-100">
               <div>
                 <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                  {requiereAnticipo ? (pagarTodo ? 'Total a pagar ahora' : 'Anticipo a pagar ahora') : 'Total a pagar'}
+                  Total a pagar
                 </p>
                 <p className="text-2xl font-black text-gray-900 tracking-tighter leading-none">
-                  {COP(requiereAnticipo ? montoAnticipo : totalFinal)}
+                  {COP(totalFinal)}
                 </p>
               </div>
               <button

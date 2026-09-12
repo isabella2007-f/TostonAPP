@@ -11,7 +11,7 @@ from src.shared.services.models import (
 )
 from src.features.ventas.gestion_ventas.services.service import (
     _formato_venta, _now, cambiar_estado as _gv_cambiar_estado,
-    _abonar_credito,
+    _abonar_credito, _avanzar_tras_pago_aprobado, _validar_fecha_entrega_esperada,
 )
 from src.features.ventas.ubicaciones.services.service import resolver_domicilio
 from src.features.ventas.domicilios.services.estados import EstadoDomicilio
@@ -251,16 +251,29 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
     hasta que el comprobante haya sido aprobado (Estado_Pago = pagado_completo
     o anticipo_pagado para mixto).
     """
-    pedido = db.query(Venta).filter(
-        Venta.ID_Venta == id_venta,
-        Venta.Estado   == EstadoPedido.PENDIENTE,
-    ).first()
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
     if not pedido:
-        raise HTTPException(
-            status_code=400,
-            detail="Solo se puede confirmar un pedido en estado Pendiente. "
-                   "Si el pedido está En producción, espera a que se completen las órdenes de producción."
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    # La mayoría de los pedidos nuevos ya no pasan por acá: nacen directo en
+    # Confirmado/Esperando pago (sin producción) o en Pendiente de Aprobación,
+    # resuelto con aprobar-fecha/proponer-fecha (con producción). Si ya avanzó
+    # de "Pendiente" —a mano o por ese otro camino— no hay nada que confirmar.
+    if pedido.Estado != EstadoPedido.PENDIENTE:
+        return _formato_venta(pedido, db)
+
+    # Un "Pendiente de Aprobación" (necesita producción) no se confirma como un
+    # pedido normal: confirmarlo es aprobar de una la fecha que trajo (Camino
+    # A), igual que el botón "Aprobar" del panel.
+    if getattr(pedido, "Necesita_Produccion", 0) and pedido.Fecha_entrega_esperada:
+        from src.features.ventas.gestion_ventas.services.service import (
+            _avanzar_tras_fecha_confirmada, _guardar_historial_fecha,
         )
+        _avanzar_tras_fecha_confirmada(db, pedido, pedido.Fecha_entrega_esperada)
+        _guardar_historial_fecha(db, id_venta, "aceptada", pedido.Fecha_entrega_esperada)
+        db.commit()
+        db.refresh(pedido)
+        return _formato_venta(pedido, db)
 
     if _lleva_transferencia(pedido.Metodo_Pago):
         ep = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
@@ -338,6 +351,92 @@ def _dentro_ventana_edicion(venta: Venta) -> bool:
     return datetime.utcnow() - venta.Fecha_Venta < _VENTANA_EDICION
 
 
+def _reabrir_pedido_produccion(db: Session, pedido: Venta, productos_nuevos, fecha_nueva) -> None:
+    """Recalcula el pedido tras un ajuste de cantidades y/o de la fecha límite
+    deseada, y lo deja 'Pendiente de Aprobación' para que el admin lo revise
+    de nuevo (Camino A/B) — es la vía "editar" para reabrir la negociación de
+    fecha, alternativa a "rechazar con causa" (`rechazar_fecha`); se pueden
+    combinar las dos.
+
+    No agrega productos nuevos: `productos_nuevos` (si viene) debe traer
+    exactamente los mismos ID_Producto que ya estaban en el pedido, solo con
+    otra Cantidad. Reevalúa contra el stock real con la misma función que usa
+    el checkout (`_evaluar_lineas_pedido`), para no duplicar las reglas de
+    preorden y de qué es fabricable.
+    """
+    from types import SimpleNamespace
+    from src.features.ventas.gestion_ventas.services.service import (
+        _evaluar_lineas_pedido, _productos_producibles,
+    )
+
+    era_fecha_propuesta = pedido.Estado == EstadoPedido.FECHA_PROPUESTA
+
+    if productos_nuevos is not None:
+        items_actuales = db.query(VentaXProducto).filter(VentaXProducto.ID_Venta == pedido.ID_Venta).all()
+        ids_actuales = {it.ID_Producto for it in items_actuales}
+        ids_nuevos   = {int(p["ID_Producto"]) for p in productos_nuevos}
+        if ids_nuevos != ids_actuales:
+            raise HTTPException(
+                status_code=400,
+                detail="Solo puedes ajustar la cantidad de los productos que ya pediste, no agregar ni quitar líneas.",
+            )
+
+        productos_input = [
+            SimpleNamespace(ID_Producto=int(p["ID_Producto"]), Cantidad=int(p["Cantidad"]))
+            for p in productos_nuevos
+        ]
+        lineas, subtotal_bruto = _evaluar_lineas_pedido(db, productos_input)
+        preorden_por_producto = {l["ID_Producto"]: l["preorden"] for l in lineas}
+        sobre_stock = any(l["preorden"] > 0 for l in lineas)
+
+        prod_ids    = [l["ID_Producto"] for l in lineas]
+        producibles = _productos_producibles(db, prod_ids)
+        sin_produccion_con_deficit = [
+            l for l in lineas if l["ID_Producto"] not in producibles and l["preorden"] > 0
+        ]
+        if sin_produccion_con_deficit:
+            detalle = "; ".join(
+                f"{l['nombre']}: disponible {l['stock']}, pediste {l['cantidad']}"
+                for l in sin_produccion_con_deficit
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"No hay stock suficiente y estos productos no se fabrican por encargo: {detalle}",
+            )
+        necesita_produccion = any(
+            l["ID_Producto"] in producibles and l["preorden"] > 0 for l in lineas
+        )
+
+        cantidades = {l["ID_Producto"]: l["cantidad"] for l in lineas}
+        for it in items_actuales:
+            it.Cantidad          = cantidades[it.ID_Producto]
+            it.Cantidad_Preorden = preorden_por_producto.get(it.ID_Producto, 0)
+
+        detalle_venta = db.query(DetalleVenta).filter(DetalleVenta.ID_Venta == pedido.ID_Venta).first()
+        subtotal_anterior = Decimal(str(detalle_venta.SubTotal or 0)) if detalle_venta else Decimal("0")
+        diferencia = subtotal_bruto - subtotal_anterior
+        pedido.Total = max(Decimal("0"), Decimal(str(pedido.Total or 0)) + diferencia)
+        if detalle_venta:
+            detalle_venta.SubTotal = subtotal_bruto
+
+        pedido.Necesita_Produccion = 1 if necesita_produccion else 0
+        pedido.Sobre_Stock         = 1 if sobre_stock else 0
+
+    if fecha_nueva is not None:
+        _validar_fecha_entrega_esperada(db, fecha_nueva)
+        pedido.Fecha_entrega_esperada = fecha_nueva
+
+    if not getattr(pedido, "Necesita_Produccion", 0):
+        raise HTTPException(
+            status_code=400,
+            detail="Con estas cantidades el pedido ya no necesita producción: cancélalo y haz uno nuevo.",
+        )
+
+    pedido.Estado = EstadoPedido.PENDIENTE
+    if era_fecha_propuesta:
+        pedido.intentos_rechazo = (int(getattr(pedido, "intentos_rechazo", 0) or 0)) + 1
+
+
 def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> dict:
     """
     El cliente puede cambiar Metodo_Pago y/o tipo de entrega en cualquier estado activo.
@@ -354,6 +453,15 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
 
+    # Dos puntos de entrada quedan fuera de la ventana de 10 minutos, que existe
+    # para el arrepentimiento inmediato tras crear el pedido, no para esto:
+    # - Reabrir la negociación de fecha (rechazar-con-causa + editar), habilitada
+    #   deliberadamente por la contraoferta del admin.
+    # - Adjuntar el comprobante de un pedido 'Esperando Pago': puede necesitar
+    #   más de 10 minutos (abrir el banco, transferir, tomar la captura).
+    _reabre_negociacion = pedido.Estado in (EstadoPedido.PENDIENTE, EstadoPedido.FECHA_PROPUESTA)
+    _fuera_de_ventana_ok = _reabre_negociacion or pedido.Estado == EstadoPedido.ESPERANDO_PAGO
+
     if actual.get("tipo") == "cliente":
         if pedido.ID_Usuario != actual["registro"].ID_Usuario:
             raise HTTPException(status_code=403, detail="No puedes editar pedidos de otros clientes")
@@ -362,7 +470,7 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                 status_code=400,
                 detail="Este pedido no puede editarse porque requiere anticipo. Si necesitas un cambio, escríbenos.",
             )
-        if not _dentro_ventana_edicion(pedido):
+        if not _fuera_de_ventana_ok and not _dentro_ventana_edicion(pedido):
             raise HTTPException(
                 status_code=400,
                 detail="Solo puedes editar tu pedido durante los primeros 10 minutos después de crearlo. Escríbenos si necesitas un cambio.",
@@ -377,6 +485,23 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
             status_code=400,
             detail="El pago de este pedido ya fue registrado. Contacta un empleado para realizar cambios.",
         )
+
+    # ── Reabrir negociación: ajustar cantidades y/o la fecha límite deseada ──
+    # Solo mientras el pedido espera aprobación de planta o tiene una
+    # contraoferta de fecha. No agrega productos nuevos: solo cambia la
+    # cantidad de líneas que ya estaban en el pedido.
+    productos_nuevos = datos.get("productos")
+    fecha_nueva       = datos.get("Fecha_entrega_esperada")
+    if productos_nuevos is not None or fecha_nueva is not None:
+        if not _reabre_negociacion:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Solo se pueden editar cantidades o la fecha mientras el pedido está "
+                    "pendiente de aprobación o tiene una fecha propuesta."
+                ),
+            )
+        _reabrir_pedido_produccion(db, pedido, productos_nuevos, fecha_nueva)
 
     grupos = db.query(GrupoEnvio).filter(GrupoEnvio.ID_Venta == id_venta).all()
     if grupos:
@@ -575,6 +700,60 @@ def aprobar_comprobante(db: Session, id_venta: int) -> dict:
         pedido.Estado_Pago = "anticipo_pagado"
     else:
         pedido.Estado_Pago = "pagado_completo"
+
+    # El pedido estaba Esperando Pago (el total, si no necesitaba producción;
+    # el anticipo, si sí): con el comprobante ya aprobado, sigue el flujo de
+    # producción/alistamiento normal.
+    if pedido.Estado == EstadoPedido.ESPERANDO_PAGO:
+        _avanzar_tras_pago_aprobado(db, pedido)
+
+    db.commit()
+    db.refresh(pedido)
+    return _formato_venta(pedido, db)
+
+
+def pagar_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> dict:
+    """El cliente adjunta el comprobante de pago mientras su pedido está
+    'Esperando Pago': el anticipo (si necesitó aprobación de fecha) o el
+    total (si no necesitaba producción).
+
+    No avanza el estado por sí solo — lo hace `aprobar_comprobante` cuando el
+    admin revisa y aprueba el comprobante, igual que cualquier otro pedido por
+    transferencia.
+    """
+    if actual.get("tipo") != "cliente":
+        raise HTTPException(status_code=403, detail="Solo disponible para clientes")
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if pedido.ID_Usuario != actual["registro"].ID_Usuario:
+        raise HTTPException(status_code=403, detail="No puedes pagar pedidos de otros clientes")
+    if pedido.Estado != EstadoPedido.ESPERANDO_PAGO:
+        raise HTTPException(status_code=400, detail="Este pedido no está esperando pago")
+
+    comprobante_url = (datos.get("comprobante_url") or "").strip()
+    if not comprobante_url:
+        raise HTTPException(status_code=400, detail="Adjunta el comprobante de la transferencia")
+
+    if getattr(pedido, "Requiere_Anticipo", 0):
+        minimo = Decimal(str(pedido.Anticipo_Requerido or 0))
+        monto  = Decimal(str(datos.get("monto") or 0))
+        if monto < minimo:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El anticipo mínimo es ${minimo:,.0f} (50% del pedido).",
+            )
+        pedido.Anticipo_Monto           = monto
+        pedido.Anticipo_Metodo_Pago     = "Transferencia"
+        pedido.Anticipo_Comprobante_Url = comprobante_url
+        pedido.Anticipo_Registrado      = 1
+        if monto >= Decimal(str(pedido.Total or 0)):
+            pedido.Pago_Final_Registrado = 1
+
+    pedido.Comprobante_Pago = comprobante_url
+    pedido.Estado_Pago      = "pendiente_validacion"
+
     db.commit()
     db.refresh(pedido)
     return _formato_venta(pedido, db)

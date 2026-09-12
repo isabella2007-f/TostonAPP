@@ -470,15 +470,14 @@ const LandingPage = ({ hideNavbar = false }) => {
     setCheckoutOpen(true);
   };
 
-  // Mismo envío que usa "Hacer pedidos": esta pantalla tenía su propia copia
-  // que no subía el comprobante ni mandaba los datos del anticipo, así que los
-  // pedidos del cliente llegaban sin respaldo de pago y el backend los rechazaba.
-  const handleConfirmOrder = async (paymentMethod, comprobante, saldoAFavor, deliveryInfo, anticipoData) => {
+  // Mismo envío que usa "Hacer pedidos": con un solo camino, una mejora acá
+  // vale para las dos pantallas.
+  const handleConfirmOrder = async (paymentMethod, saldoAFavor, deliveryInfo) => {
     let res;
     try {
       res = await crearPedidoCliente({
-        paymentMethod, comprobante, saldoAFavor,
-        deliveryInfo, anticipoData, orderDetails,
+        paymentMethod, saldoAFavor,
+        deliveryInfo, orderDetails,
       });
     } catch (err) {
       setErrorToast(err.message || "Error al registrar el pedido");

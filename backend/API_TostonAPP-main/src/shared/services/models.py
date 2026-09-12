@@ -431,8 +431,9 @@ class Venta(Base):
     # Respuesta del cliente a "¿Quiere que enviemos todo el pedido junto el domingo?"
     # NULL = no respondió todavía, 1 = sí, 0 = no.
     Envio_Completo_Domingo   = Column(Integer,                           nullable=True)
-    # Cuántas veces el cliente ha rechazado fechas propuestas. Al llegar a
-    # LIMITE_INTENTOS_RECHAZO el pedido pasa a ESCALADO_A_ADMIN.
+    # Cuántas veces el cliente ha rechazado fechas propuestas. No cancela ni
+    # escala nada por sí solo; a partir de LIMITE_INTENTOS_RECHAZO el frontend
+    # resalta con más énfasis el canal de excepción (hablar con el admin).
     intentos_rechazo         = Column(Integer,      default=0,           nullable=True)
 
     usuario            = relationship("Usuario", back_populates="ventas")

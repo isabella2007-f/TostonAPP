@@ -174,6 +174,10 @@ class BaseTest(unittest.TestCase):
 
     # ── Acciones ─────────────────────────────────────────────────────────────
     def crear(self, datos):
+        # Fecha límite obligatoria para lo que hay que fabricar (ver
+        # test_crear_venta_e2e.py: mismo criterio, mismo motivo).
+        if getattr(datos, "Fecha_entrega_esperada", None) is None and not datos.creado_por_admin:
+            datos.Fecha_entrega_esperada = self.fecha_futura()
         r = crear_venta(self.db, datos)
         self.db.commit()
         return r

@@ -69,6 +69,38 @@ export const mensajeFueraHorario = (cfg, ahora = new Date()) => {
   return "Estamos fuera del horario de atención. Tu pedido quedará registrado y no se atenderá hasta que volvamos a abrir.";
 };
 
+/** "YYYY-MM-DD" de hoy + `dias` días (en la zona horaria local). */
+const isoMasDias = (hoy, dias) => {
+  const d = new Date(hoy);
+  d.setDate(d.getDate() + dias);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+
+/**
+ * Primer día seleccionable para "¿para cuándo necesitas tu pedido?": hoy
+ * mismo si todavía se puede recibir (día de atención y antes de la hora de
+ * cierre), si no el próximo día de atención. Espejo en JS de
+ * `_fecha_minima_entrega` (backend) — la misma regla se valida ahí también,
+ * esto solo evita que el cliente elija algo que el servidor va a rechazar.
+ */
+export const primeraFechaValida = (cfg, ahora = new Date()) => {
+  const dias = diasAtencionSet(cfg);
+  const iso  = diaISO(ahora);
+  const ci   = parseHM(cfg?.horaCierre ?? HORA_CIERRE_DEF);
+  const cur  = ahora.getHours() * 60 + ahora.getMinutes();
+
+  if (dias.has(iso) && cur < ci) return isoMasDias(ahora, 0);
+
+  for (let i = 1; i <= 7; i++) {
+    const d = ((iso - 1 + i) % 7) + 1;
+    if (dias.has(d)) return isoMasDias(ahora, i);
+  }
+  return isoMasDias(ahora, 0);
+};
+
 /** Rango "8:00 am – 8:00 pm" con la config actual. */
 export const rangoHorario = (cfg) =>
   `${fmt12(cfg?.horaApertura ?? HORA_APERTURA_DEF)} – ${fmt12(cfg?.horaCierre ?? HORA_CIERRE_DEF)}`;

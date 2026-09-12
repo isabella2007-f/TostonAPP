@@ -457,25 +457,42 @@ class PanelBase(unittest.TestCase):
     def pedido_con_faltante(self, cantidad=6, **kw):
         """Pedido de tortas por encima del stock: 4 por hornear, $60.000.
 
-        Lleva el anticipo registrado, que es lo que el checkout envía cuando
-        el cliente lo paga.
+        Nace "Pendiente de Aprobación" con la fecha límite que manda el
+        checkout (obligatoria desde que el admin ya no la propone primero).
+        $60.000 no llega al umbral de anticipo (UMBRAL_ANTICIPO=$100.000).
+        Para tener la orden de producción ya abierta (lista para `hornear`),
+        usar `pedido_con_faltante_aprobado` en vez de este.
         """
+        from datetime import datetime, timedelta
         cuerpo = dict(
             productos=[{"ID_Producto": ID_TORTA, "Cantidad": cantidad}],
             Metodo_Pago="Transferencia",
-            requiere_anticipo=True,
-            anticipo_monto=30000.0,
-            anticipo_metodo_pago="Transferencia",
-            anticipo_comprobante_url="https://cloudinary.test/ant.jpg",
-            anticipo_registrado=True,
+            Fecha_entrega_esperada=(datetime.now() + timedelta(days=2)).isoformat(),
         )
         cuerpo.update(kw)
         return self.crear_pedido(**cuerpo)
 
+    def pedido_con_faltante_aprobado(self, cantidad=6, **kw):
+        """Igual que `pedido_con_faltante`, pero con el admin aprobando de una
+        (Camino A) la fecha que trajo el pedido: la orden de producción ya
+        queda abierta, lista para `hornear`."""
+        pedido = self.pedido_con_faltante(cantidad=cantidad, **kw)
+        return self.afirmar_ok(self.patch(f"/ventas/{pedido['ID_Venta']}/aprobar-fecha", self.admin))
+
     def confirmar_si_pendiente(self, id_venta):
         """La producción de una orden ligada a un pedido solo se gestiona a mano
-        cuando el pedido ya salió de «Pendiente»: se confirma primero."""
-        if self.venta(id_venta).Estado == PEDIDO_PENDIENTE:
+        cuando el pedido ya salió de «Pendiente»: se aprueba/confirma primero.
+
+        Un pedido "Pendiente de Aprobación" (necesita producción) se aprueba
+        con el Camino A directo; uno normal que por lo que sea sigue Pendiente
+        se confirma con el endpoint genérico.
+        """
+        venta = self.venta(id_venta)
+        if venta.Estado != PEDIDO_PENDIENTE:
+            return
+        if getattr(venta, "Necesita_Produccion", 0):
+            self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        else:
             self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
 
     def hornear(self, id_venta):

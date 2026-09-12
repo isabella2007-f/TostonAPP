@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 from decimal import Decimal
@@ -97,6 +97,12 @@ class PedidoUpdate(BaseModel):
     Comprobante_Pago:     Optional[str]   = None
 
 
+# ── Línea de producto al reabrir la negociación de fecha (editar cantidad) ──
+class ProductoEditInput(BaseModel):
+    ID_Producto: int = Field(..., gt=0)
+    Cantidad:    int = Field(..., gt=0)
+
+
 # ── Edición del pedido por el propio cliente ──
 class PedidoClienteEdit(BaseModel):
     Metodo_Pago:       Optional[str]   = None
@@ -108,6 +114,19 @@ class PedidoClienteEdit(BaseModel):
     Comprobante_Pago:  Optional[str]   = None
     # Para Mixto: cuánto paga en efectivo; el resto se carga a transferencia
     Monto_Efectivo:    Optional[float] = None
+    # Reabrir la negociación de fecha ('Pendiente de Aprobación' / 'Fecha
+    # propuesta'): ajustar cantidades de líneas ya existentes (no agrega
+    # productos nuevos) y/o la fecha límite deseada.
+    productos:              Optional[list[ProductoEditInput]] = None
+    Fecha_entrega_esperada: Optional[datetime]                = None
+
+
+# ── El cliente paga (o anticipa) un pedido 'Esperando Pago' ──
+class PedidoPago(BaseModel):
+    comprobante_url: str
+    # Solo relevante si el pedido requiere anticipo (mínimo 50% del total,
+    # siempre por transferencia); se ignora si no lo requiere.
+    monto: Optional[float] = None
 
 
 # ── Respuesta paginada ──

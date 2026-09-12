@@ -6,10 +6,11 @@ from src.shared.services.database import get_db
 from src.features.auth.services.dependencies import (
     requiere_permiso, permiso_o_cliente, obtener_usuario_actual,
 )
-from .schemas import PedidoResponse, PedidoListResponse, PedidoUpdate, RegistroCobro, PedidoClienteEdit
+from .schemas import PedidoResponse, PedidoListResponse, PedidoUpdate, RegistroCobro, PedidoClienteEdit, PedidoPago
 from .service import (
     obtener_pedidos, obtener_pedido, confirmar_pedido, cancelar_pedido,
     editar_pedido, editar_mi_pedido, aprobar_comprobante, rechazar_comprobante, registrar_cobro_pedido,
+    pagar_pedido,
 )
 from src.features.ventas.gestion_ventas.services.schemas import (
     RechazoComprobante, VentaCreate, VentaResponse,
@@ -32,7 +33,9 @@ def crear(
     """
     if actual.get("tipo") == "cliente":
         datos.ID_Usuario = actual["registro"].ID_Usuario
-        datos.Fecha_entrega_esperada = None
+        # El domicilio no trae su propia fecha de entrega: si el pedido
+        # necesita producción, hereda la fecha límite que el cliente puso
+        # (Fecha_entrega_esperada); `crear_venta` la valida.
         if datos.domicilio is not None:
             datos.domicilio.Fecha_entrega = None
     return crear_venta(db, datos)
@@ -111,6 +114,19 @@ def editar_mi_pedido_endpoint(
 ):
     """El cliente cambia el método de pago y/o el tipo de entrega de su pedido."""
     return editar_mi_pedido(db, id_venta, datos.model_dump(exclude_none=True), actual)
+
+
+@router.patch("/{id_venta}/pagar", response_model=PedidoResponse)
+def pagar_pedido_endpoint(
+    id_venta: int,
+    datos:    PedidoPago,
+    db:       Session = Depends(get_db),
+    actual:   dict    = Depends(obtener_usuario_actual),
+):
+    """El cliente adjunta el comprobante de pago (o anticipo) de un pedido
+    'Esperando Pago'. El admin lo aprueba/rechaza igual que cualquier otro
+    comprobante."""
+    return pagar_pedido(db, id_venta, datos.model_dump(), actual)
 
 
 @router.patch("/{id_venta}/aprobar-comprobante", response_model=PedidoResponse)

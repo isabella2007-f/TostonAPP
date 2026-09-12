@@ -96,6 +96,56 @@ def _calcular_anticipo(total_pedido: Decimal, credito_aplicado: Decimal) -> Deci
     )
 
 
+def _fecha_minima_entrega(db: Session):
+    """Primer día en que se puede prometer una entrega.
+
+    Hoy mismo, si todavía se puede recibir el pedido (día de atención y antes
+    de la hora de cierre); si no, el próximo día de atención. Espejo en Python
+    de `primeraFechaValida` (frontend, `utils/horario.js`) — la misma regla no
+    puede vivir solo del lado del cliente.
+    """
+    from src.shared.services.models import ConfiguracionLanding
+    cfg = db.query(ConfiguracionLanding).filter(ConfiguracionLanding.ID == 1).first()
+    hora_cierre = (getattr(cfg, "hora_cierre", None) or "20:00")
+    dias_csv    = (getattr(cfg, "dias_atencion", None) or "1,2,3,4,5,6,7")
+    dias = {
+        int(d) for d in dias_csv.split(",")
+        if d.strip().isdigit() and 1 <= int(d) <= 7
+    } or {1, 2, 3, 4, 5, 6, 7}
+
+    ahora   = _now()
+    hoy_iso = ahora.isoweekday()
+    try:
+        hh, mm = (hora_cierre.split(":") + ["0", "0"])[:2]
+        cierre_minutos = int(hh) * 60 + int(mm)
+    except (ValueError, AttributeError):
+        cierre_minutos = 20 * 60
+    ahora_minutos = ahora.hour * 60 + ahora.minute
+
+    if hoy_iso in dias and ahora_minutos < cierre_minutos:
+        return ahora.date()
+
+    for i in range(1, 8):
+        d = ((hoy_iso - 1 + i) % 7) + 1
+        if d in dias:
+            return (ahora + timedelta(days=i)).date()
+    return ahora.date()
+
+
+def _validar_fecha_entrega_esperada(db: Session, fecha_entrega) -> None:
+    """La fecha límite que pide el cliente no puede ser imposible: ni en el
+    pasado, ni hoy si ya se cerró por hoy (`_fecha_minima_entrega`)."""
+    if not fecha_entrega:
+        raise HTTPException(status_code=400, detail="Selecciona para cuándo necesitas tu pedido")
+    fecha_date = fecha_entrega.date() if hasattr(fecha_entrega, "date") else fecha_entrega
+    minima = _fecha_minima_entrega(db)
+    if fecha_date < minima:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La fecha más próxima disponible para tu pedido es {minima.isoformat()}",
+        )
+
+
 def _es_transferencia(metodo: str | None) -> bool:
     return "transfer" in (metodo or "").strip().lower()
 
@@ -207,6 +257,7 @@ _ESTADO_VENTA_LABEL = {
     17: "Fecha rechazada",
     18: "Parcialmente entregado",
     19: "Escalado a admin",
+    20: "Esperando pago",
 }
 
 # Cuántas veces puede el cliente rechazar una fecha antes de que el pedido
@@ -530,6 +581,10 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         "requiere_fecha_propuesta": requiere_fecha_propuesta(db, venta),
         "fecha_rechazada": getattr(venta, "Fecha_Rechazada", None),
         "intentos_rechazo": int(getattr(venta, "intentos_rechazo", 0) or 0),
+        # A partir de este número de rechazos, el frontend resalta con más
+        # énfasis el canal de excepción (hablar con el admin) — no bloquea ni
+        # cancela nada por sí solo, es puramente informativo.
+        "resaltar_canal_excepcion": int(getattr(venta, "intentos_rechazo", 0) or 0) >= LIMITE_INTENTOS_RECHAZO,
         # None = no contestó, True = quiere todo junto el domingo, False = prefiere recibir lo disponible ya
         "envio_completo_domingo": (
             None if getattr(venta, "Envio_Completo_Domingo", None) is None
@@ -850,6 +905,10 @@ def _batch_ventas(ventas: list, db: Session) -> list:
             "requiere_fecha_propuesta": rfp,
             "fecha_rechazada":  getattr(venta, "Fecha_Rechazada", None),
             "intentos_rechazo": int(getattr(venta, "intentos_rechazo", 0) or 0),
+        # A partir de este número de rechazos, el frontend resalta con más
+        # énfasis el canal de excepción (hablar con el admin) — no bloquea ni
+        # cancela nada por sí solo, es puramente informativo.
+        "resaltar_canal_excepcion": int(getattr(venta, "intentos_rechazo", 0) or 0) >= LIMITE_INTENTOS_RECHAZO,
             "envio_completo_domingo": (
                 None if getattr(venta, "Envio_Completo_Domingo", None) is None
                 else bool(venta.Envio_Completo_Domingo)
@@ -1137,6 +1196,13 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
             detail=f"No hay stock suficiente y estos productos no se fabrican por encargo: {detalle}",
         )
 
+    # El cliente que pide algo que hay que fabricar tiene que decir para cuándo
+    # lo necesita: sin esa fecha el admin no tiene contra qué comparar la
+    # capacidad de planta. No aplica al pedido que arma el personal en el
+    # mostrador (ese nace Confirmado y el admin ya sabe para cuándo es).
+    if not datos.creado_por_admin and necesita_produccion:
+        _validar_fecha_entrega_esperada(db, datos.Fecha_entrega_esperada)
+
     nueva_venta.Necesita_Produccion = 1 if necesita_produccion else 0
     # Guardar la respuesta del cliente si ya viene en la creación del pedido.
     # Normalmente llega None (se pregunta en el detalle del pedido) pero se
@@ -1181,148 +1247,195 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
             nueva_venta.Total, datos.pago_efectivo_monto
         )
 
-    # ── ¿Este pedido pide anticipo? ──────────────────────────────────
-    # Lo pide el pedido que hay que fabricar Y que pesa: ver `_pide_anticipo`.
-    # Antes lo pedía cualquier pedido que superara el stock, aunque fueran dos
-    # panes de $6.000 que se hornean igual el martes.
-    #
-    # TODO lo que se evalúa aquí sale de la BD (stock real, precios reales, crédito
-    # realmente descontado). El request del cliente no puede declarar que ya pagó.
-    #
-    # Valor real del pedido antes de aplicar créditos (lo que cuesta).
-    total_pedido         = subtotal_bruto - descuento_aplicado + costo_domicilio
-    anticipo_obligatorio = _pide_anticipo(necesita_produccion, total_pedido)
-    anticipo_requerido   = Decimal("0")
-
-    # El pago mixto no sirve para anticipar: ver _mixto_bloqueado_por_anticipo.
-    # Se decide acá abajo y no al entrar porque ahora depende del total ya
-    # cerrado, con domicilio y descuentos incluidos.
-    if _mixto_bloqueado_por_anticipo(datos.Metodo_Pago, anticipo_obligatorio):
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Este pedido requiere anticipo, así que no se puede pagar con el "
-                "método mixto: la parte en efectivo se paga al recibir y el "
-                "anticipo tiene que estar cubierto antes. Págalo por "
-                "transferencia, o con tu saldo a favor si alcanza."
-            ),
-        )
-
     # Que el pedido supere el stock se registra siempre: es un hecho del pedido
     # y de él dependen la fecha propuesta y las órdenes de producción, pida o no
     # anticipo.
     nueva_venta.Sobre_Stock = 1 if sobre_stock else 0
 
-    if anticipo_obligatorio:
-        anticipo_requerido = _calcular_anticipo(total_pedido, credito_aplicado)
-        # Solo cuenta como pagado lo verificable en el servidor: el crédito
-        # efectivamente descontado del libro mayor del cliente.
-        anticipo_pagado    = credito_aplicado
-        # Ningún pago fuera del crédito se puede verificar desde el servidor: ni
-        # una transferencia (el comprobante es una imagen) ni un efectivo
-        # entregado en el local. En los dos casos quien valida es el
-        # administrador antes de confirmar el pedido.
+    if datos.creado_por_admin:
+        # ── ¿Este pedido pide anticipo? ──────────────────────────────────
+        # Lo pide el pedido que hay que fabricar Y que pesa: ver `_pide_anticipo`.
+        # Antes lo pedía cualquier pedido que superara el stock, aunque fueran dos
+        # panes de $6.000 que se hornean igual el martes.
         #
-        # Se da por respaldado el anticipo cuando el checkout lo registró
-        # (anticipo_registrado: crédito que lo cubre, efectivo confirmado o
-        # comprobante adjunto) o cuando viene el comprobante del pedido pagado
-        # por transferencia.
+        # TODO lo que se evalúa aquí sale de la BD (stock real, precios reales, crédito
+        # realmente descontado). El request del cliente no puede declarar que ya pagó.
         #
-        # Antes esta regla solo aceptaba comprobante_pago + método Transferencia,
-        # así que rechazaba el flujo de anticipo del checkout: el comprobante
-        # viaja en otro campo y el método del PEDIDO puede ser Efectivo cuando el
-        # saldo se paga contra entrega. El cliente se quedaba sin forma de pasar.
-        comprobante_pedido   = (datos.comprobante_pago or "").strip()
-        comprobante_anticipo = (getattr(datos, "anticipo_comprobante_url", None) or "").strip()
-        anticipo_declarado   = bool(getattr(datos, "anticipo_registrado", False))
-        tiene_soporte = (
-            anticipo_declarado
-            or bool(comprobante_anticipo)
-            # Solo transferencia PURA: el comprobante de un mixto respalda
-            # unicamente la parte transferida, que puede quedar corta contra el
-            # 50%. De todos modos el mixto ya se rechaza mas arriba; esto queda
-            # para que la regla no dependa de ese unico control.
-            or (_es_transferencia(datos.Metodo_Pago) and bool(comprobante_pedido))
-        )
+        # Valor real del pedido antes de aplicar créditos (lo que cuesta).
+        total_pedido         = subtotal_bruto - descuento_aplicado + costo_domicilio
+        anticipo_obligatorio = _pide_anticipo(necesita_produccion, total_pedido)
+        anticipo_requerido   = Decimal("0")
 
-        # El pedido creado por el personal en el mostrador se cobra en el acto:
-        # queda marcado como sobre stock, pero no se le exige el anticipo online.
-        if not datos.creado_por_admin and anticipo_pagado < anticipo_requerido and not tiene_soporte:
-            faltante = anticipo_requerido - anticipo_pagado
-            # Se indica qué faltó exactamente: el rechazo por "no llegó nada" se
-            # confundía con "el monto no alcanza", y no había forma de saber si
-            # el problema estaba en el pago o en lo que envió la aplicación.
-            if not datos.requiere_anticipo:
-                motivo = "el pedido llegó sin registro de anticipo"
-            elif not anticipo_declarado and not comprobante_anticipo:
-                motivo = "no llegó el comprobante ni la confirmación del anticipo"
-            else:
-                motivo = "el anticipo registrado no cubre el mínimo"
+        # El pago mixto no sirve para anticipar: ver _mixto_bloqueado_por_anticipo.
+        # Se decide acá abajo y no al entrar porque ahora depende del total ya
+        # cerrado, con domicilio y descuentos incluidos.
+        if _mixto_bloqueado_por_anticipo(datos.Metodo_Pago, anticipo_obligatorio):
             db.rollback()
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Este pedido supera el stock disponible, por lo que requiere un anticipo "
-                    f"del 50% (${anticipo_requerido:,.0f}). Te faltan ${faltante:,.0f}: págalo "
-                    f"con tus créditos, o registra el anticipo indicando cómo lo pagaste. "
-                    f"({motivo})"
+                    "Este pedido requiere anticipo, así que no se puede pagar con el "
+                    "método mixto: la parte en efectivo se paga al recibir y el "
+                    "anticipo tiene que estar cubierto antes. Págalo por "
+                    "transferencia, o con tu saldo a favor si alcanza."
                 ),
             )
 
-        nueva_venta.Anticipo_Requerido = anticipo_requerido
-        nueva_venta.Anticipo_Pagado    = anticipo_pagado
-        # Cuando el flujo de anticipo explícito no se activa (solo ítems de
-        # producción sobre stock) pero el cliente sí aportó respaldo de pago,
-        # registrar igual para que el panel muestre el monto correcto.
-        if not datos.requiere_anticipo and tiene_soporte:
-            nueva_venta.Anticipo_Registrado = 1
-            nueva_venta.Anticipo_Monto      = anticipo_requerido
-            nueva_venta.Estado_Pago         = "anticipo_pagado"
+        if anticipo_obligatorio:
+            anticipo_requerido = _calcular_anticipo(total_pedido, credito_aplicado)
+            # Solo cuenta como pagado lo verificable en el servidor: el crédito
+            # efectivamente descontado del libro mayor del cliente.
+            anticipo_pagado    = credito_aplicado
+            # Ningún pago fuera del crédito se puede verificar desde el servidor: ni
+            # una transferencia (el comprobante es una imagen) ni un efectivo
+            # entregado en el local. En los dos casos quien valida es el
+            # administrador antes de confirmar el pedido.
+            #
+            # Se da por respaldado el anticipo cuando el checkout lo registró
+            # (anticipo_registrado: crédito que lo cubre, efectivo confirmado o
+            # comprobante adjunto) o cuando viene el comprobante del pedido pagado
+            # por transferencia.
+            #
+            # Antes esta regla solo aceptaba comprobante_pago + método Transferencia,
+            # así que rechazaba el flujo de anticipo del checkout: el comprobante
+            # viaja en otro campo y el método del PEDIDO puede ser Efectivo cuando el
+            # saldo se paga contra entrega. El cliente se quedaba sin forma de pasar.
+            comprobante_pedido   = (datos.comprobante_pago or "").strip()
+            comprobante_anticipo = (getattr(datos, "anticipo_comprobante_url", None) or "").strip()
+            anticipo_declarado   = bool(getattr(datos, "anticipo_registrado", False))
+            tiene_soporte = (
+                anticipo_declarado
+                or bool(comprobante_anticipo)
+                # Solo transferencia PURA: el comprobante de un mixto respalda
+                # unicamente la parte transferida, que puede quedar corta contra el
+                # 50%. De todos modos el mixto ya se rechaza mas arriba; esto queda
+                # para que la regla no dependa de ese unico control.
+                or (_es_transferencia(datos.Metodo_Pago) and bool(comprobante_pedido))
+            )
 
-    # El aviso al panel lo dispara el faltante, no el anticipo: el admin tiene
-    # que proponer fecha igual, cobre o no por adelantado.
-    if sobre_stock:
-        detalle_preorden = ", ".join(
-            f"{l['nombre']}: {l['cantidad']} pedidas / {l['stock']} en stock"
-            for l in lineas if l["preorden"] > 0
-        )
-        detalle_anticipo = (
-            f"Anticipo requerido: ${anticipo_requerido:,.0f}. "
-            if anticipo_obligatorio else ""
-        )
-        notificar(
-            db, "pedido_sobre_stock", "Pedido por encima del stock",
-            f"El pedido #{nueva_venta.ID_Venta} supera el stock ({detalle_preorden}). "
-            f"{detalle_anticipo}Revisá y proponé una fecha de entrega.",
-            nueva_venta.ID_Venta, "/ventas/pedidos",
-        )
+            # El pedido creado por el personal en el mostrador se cobra en el acto:
+            # queda marcado como sobre stock, pero no se le exige el anticipo online.
+            if not datos.creado_por_admin and anticipo_pagado < anticipo_requerido and not tiene_soporte:
+                faltante = anticipo_requerido - anticipo_pagado
+                # Se indica qué faltó exactamente: el rechazo por "no llegó nada" se
+                # confundía con "el monto no alcanza", y no había forma de saber si
+                # el problema estaba en el pago o en lo que envió la aplicación.
+                if not datos.requiere_anticipo:
+                    motivo = "el pedido llegó sin registro de anticipo"
+                elif not anticipo_declarado and not comprobante_anticipo:
+                    motivo = "no llegó el comprobante ni la confirmación del anticipo"
+                else:
+                    motivo = "el anticipo registrado no cubre el mínimo"
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Este pedido supera el stock disponible, por lo que requiere un anticipo "
+                        f"del 50% (${anticipo_requerido:,.0f}). Te faltan ${faltante:,.0f}: págalo "
+                        f"con tus créditos, o registra el anticipo indicando cómo lo pagaste. "
+                        f"({motivo})"
+                    ),
+                )
 
-    # El anticipo que registró quien creó el pedido. La obligación la decide el
-    # servidor —una app vieja sigue mandando el flag en pedidos que ya no lo
-    # piden—, pero la plata que de verdad entró se guarda igual: si alguien pagó
-    # por adelantado, el pedido tiene que mostrarlo y el saldo tiene que poder
-    # cobrarse después (registrar_pago_final exige Requiere_Anticipo).
-    if datos.requiere_anticipo:
-        nueva_venta.Requiere_Anticipo        = (
-            1 if (anticipo_obligatorio or datos.anticipo_registrado) else 0
-        )
-        nueva_venta.Anticipo_Monto           = datos.anticipo_monto
-        nueva_venta.Anticipo_Metodo_Pago     = datos.anticipo_metodo_pago
-        nueva_venta.Anticipo_Comprobante_Url = datos.anticipo_comprobante_url
-        nueva_venta.Anticipo_Registrado      = 1 if datos.anticipo_registrado else 0
-        nueva_venta.Estado_Pago              = "anticipo_pagado" if datos.anticipo_registrado else "pendiente"
-        # El cliente eligió pagar el total completo ahora. Se usa la bandera
-        # explícita (pagar_todo) en vez de comparar montos: la diferencia de
-        # redondeo entre el total del cliente (JS) y el servidor (Decimal) puede
-        # dejar el pedido en "anticipo_pagado" aunque el cliente pagara todo.
-        _pago_total = getattr(datos, "pagar_todo", False)
-        if datos.anticipo_registrado and (
-            _pago_total
-            or (datos.anticipo_monto is not None and float(datos.anticipo_monto) >= float(nueva_venta.Total or 0))
-        ):
-            nueva_venta.Pago_Final_Registrado = 1
-            nueva_venta.Estado_Pago           = "pagado_completo"
+            nueva_venta.Anticipo_Requerido = anticipo_requerido
+            nueva_venta.Anticipo_Pagado    = anticipo_pagado
+            # Cuando el flujo de anticipo explícito no se activa (solo ítems de
+            # producción sobre stock) pero el cliente sí aportó respaldo de pago,
+            # registrar igual para que el panel muestre el monto correcto.
+            if not datos.requiere_anticipo and tiene_soporte:
+                nueva_venta.Anticipo_Registrado = 1
+                nueva_venta.Anticipo_Monto      = anticipo_requerido
+                nueva_venta.Estado_Pago         = "anticipo_pagado"
+
+        # El aviso al panel lo dispara el faltante, no el anticipo: el admin tiene
+        # que proponer fecha igual, cobre o no por adelantado.
+        if sobre_stock:
+            detalle_preorden = ", ".join(
+                f"{l['nombre']}: {l['cantidad']} pedidas / {l['stock']} en stock"
+                for l in lineas if l["preorden"] > 0
+            )
+            detalle_anticipo = (
+                f"Anticipo requerido: ${anticipo_requerido:,.0f}. "
+                if anticipo_obligatorio else ""
+            )
+            notificar(
+                db, "pedido_sobre_stock", "Pedido por encima del stock",
+                f"El pedido #{nueva_venta.ID_Venta} supera el stock ({detalle_preorden}). "
+                f"{detalle_anticipo}Revisá y proponé una fecha de entrega.",
+                nueva_venta.ID_Venta, "/ventas/pedidos",
+            )
+
+        # El anticipo que registró quien creó el pedido. La obligación la decide el
+        # servidor —una app vieja sigue mandando el flag en pedidos que ya no lo
+        # piden—, pero la plata que de verdad entró se guarda igual: si alguien pagó
+        # por adelantado, el pedido tiene que mostrarlo y el saldo tiene que poder
+        # cobrarse después (registrar_pago_final exige Requiere_Anticipo).
+        if datos.requiere_anticipo:
+            nueva_venta.Requiere_Anticipo        = (
+                1 if (anticipo_obligatorio or datos.anticipo_registrado) else 0
+            )
+            nueva_venta.Anticipo_Monto           = datos.anticipo_monto
+            nueva_venta.Anticipo_Metodo_Pago     = datos.anticipo_metodo_pago
+            nueva_venta.Anticipo_Comprobante_Url = datos.anticipo_comprobante_url
+            nueva_venta.Anticipo_Registrado      = 1 if datos.anticipo_registrado else 0
+            nueva_venta.Estado_Pago              = "anticipo_pagado" if datos.anticipo_registrado else "pendiente"
+            # El cliente eligió pagar el total completo ahora. Se usa la bandera
+            # explícita (pagar_todo) en vez de comparar montos: la diferencia de
+            # redondeo entre el total del cliente (JS) y el servidor (Decimal) puede
+            # dejar el pedido en "anticipo_pagado" aunque el cliente pagara todo.
+            _pago_total = getattr(datos, "pagar_todo", False)
+            if datos.anticipo_registrado and (
+                _pago_total
+                or (datos.anticipo_monto is not None and float(datos.anticipo_monto) >= float(nueva_venta.Total or 0))
+            ):
+                nueva_venta.Pago_Final_Registrado = 1
+                nueva_venta.Estado_Pago           = "pagado_completo"
+    else:
+        # ── Pedido del cliente: sin anticipo ni comprobante al crear ────────
+        # Con producción: queda "Pendiente de Aprobación" (Estado ya nace en
+        # PENDIENTE) con la fecha obligatoria ya validada arriba. El anticipo
+        # (si aplica) se pide después de que el admin apruebe esa fecha, no acá.
+        if necesita_produccion:
+            # Puede terminar pidiendo anticipo una vez se apruebe la fecha
+            # (`_avanzar_tras_fecha_confirmada`); si ya se sabe que el método
+            # mixto no serviría para eso, se corta acá en vez de dejarlo pasar
+            # y fallar más adelante.
+            if _mixto_bloqueado_por_anticipo(datos.Metodo_Pago, _pide_anticipo(True, nueva_venta.Total)):
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Este pedido puede requerir anticipo una vez se apruebe la fecha de "
+                        "entrega, y el método mixto no sirve para anticipar. Elige Efectivo o "
+                        "Transferencia."
+                    ),
+                )
+        else:
+            # Sin producción: no hay nada que aprobar en planta. Va directo a
+            # Esperando Pago (transferencia/mixto) o En Alistamiento (efectivo);
+            # el comprobante se adjunta después, ya no aquí.
+            if _es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago):
+                nueva_venta.Estado = EstadoPedido.ESPERANDO_PAGO
+            else:
+                nueva_venta.Estado = EstadoPedido.CONFIRMADO
+                # Como al confirmar cualquier pedido sin domicilio: reservar
+                # (descontar) el stock de lo que se recoge en tienda. Sin
+                # déficit alguno (necesita_produccion es False), sale la
+                # línea completa — no hay preorden que esperar.
+                if not datos.domicilio:
+                    _descontar_stock_venta(db, nueva_venta.ID_Venta, PARTE_TODO)
+
+        if sobre_stock:
+            detalle_preorden = ", ".join(
+                f"{l['nombre']}: {l['cantidad']} pedidas / {l['stock']} en stock"
+                for l in lineas if l["preorden"] > 0
+            )
+            notificar(
+                db, "pedido_sobre_stock", "Pedido por encima del stock",
+                f"El pedido #{nueva_venta.ID_Venta} supera el stock ({detalle_preorden}). "
+                f"Revisá la fecha pedida: aprobala o proponé otra.",
+                nueva_venta.ID_Venta, "/ventas/pedidos",
+            )
 
     db.add(DetalleVenta(
         ID_Venta    = nueva_venta.ID_Venta,
@@ -1988,6 +2101,155 @@ def proponer_fecha(db: Session, id_venta: int, fecha_entrega, id_admin: int | No
     return _formato_venta(venta, db)
 
 
+def _avanzar_tras_fecha_confirmada(db: Session, venta: Venta, fecha_entrega, id_usuario: int | None = None) -> None:
+    """La fecha de entrega ya quedó acordada —aprobada tal cual (Camino A),
+    aceptada por el cliente tras una contraoferta, o pactada por teléfono en
+    un escalado— y decide a dónde avanza el pedido desde ahí.
+
+    Si el pedido pesa lo suficiente para pedir anticipo (`_pide_anticipo`),
+    queda en Esperando Pago: no se abre la orden de producción todavía, para
+    no arriesgar insumos antes de que el cliente respalde el pedido con
+    plata. Si no lo pide, sigue de una el mismo camino de producción/despacho
+    que ya existía (`aceptar_fecha` original): abre las órdenes que falten,
+    reserva stock de tienda y salta a Listo si no queda nada pendiente.
+
+    No hace commit ni arma la respuesta — eso lo decide quien llama, que
+    también dispara su propia notificación según el punto de entrada.
+    """
+    venta.Fecha_entrega_esperada = fecha_entrega
+    venta.intentos_rechazo = 0
+
+    anticipo_obligatorio = _pide_anticipo(True, venta.Total)
+    if anticipo_obligatorio:
+        venta.Anticipo_Requerido = _calcular_anticipo(venta.Total, Decimal("0"))
+        venta.Requiere_Anticipo  = 1
+        venta.Estado             = EstadoPedido.ESPERANDO_PAGO
+        notificar(
+            db, "fecha_propuesta", "Fecha aprobada — falta el anticipo",
+            f"Tu pedido #{venta.ID_Venta} ya tiene fecha de entrega. Sube el comprobante de tu "
+            f"anticipo (mínimo 50%, por transferencia) para que empecemos a producir.",
+            venta.ID_Venta, "/ventas/pedidos",
+        )
+        return
+
+    _iniciar_produccion_o_despachar(db, venta, fecha_entrega)
+
+
+def _iniciar_produccion_o_despachar(db: Session, venta: Venta, fecha_entrega) -> None:
+    """La fecha (y el anticipo, si hacía falta) ya están resueltos: abre las
+    órdenes de producción que falten, reserva stock de tienda, y decide entre
+    Confirmado / En producción / Listo.
+
+    Común a `_avanzar_tras_fecha_confirmada` (cuando el pedido no pedía
+    anticipo) y a `_avanzar_tras_pago_aprobado` (cuando sí lo pedía y el admin
+    ya aprobó el comprobante).
+    """
+    venta.Estado = EstadoPedido.CONFIRMADO
+    _crear_ordenes_produccion_para_venta(db, venta.ID_Venta, fecha_entrega)
+    _ordenes_abiertas = db.query(OrdenProduccion).filter(
+        OrdenProduccion.ID_Venta == venta.ID_Venta,
+        OrdenProduccion.Estado.notin_([11, 5]),   # completada / cancelada
+    ).count()
+    if _ordenes_abiertas > 0:
+        venta.Estado = EstadoPedido.PREPARANDO
+
+    # Reservar del stock la porción disponible para pedidos de recoger en tienda:
+    # el déficit ya quedó cubierto por la OP; las unidades en stock se apartan ahora.
+    _tiene_domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == venta.ID_Venta).first() is not None
+    if not _tiene_domicilio:
+        for av in db.query(VentaXProducto).filter(VentaXProducto.ID_Venta == venta.ID_Venta).all():
+            en_stock_reservado = (av.Cantidad or 0) - (av.Cantidad_Preorden or 0)
+            if en_stock_reservado <= 0:
+                continue
+            prod_av = (
+                db.query(Producto)
+                .filter(Producto.ID_Producto == av.ID_Producto)
+                .with_for_update()
+                .first()
+            )
+            if not prod_av or not getattr(prod_av, "Requiere_Produccion", 0):
+                continue
+            prod_av.Stock = max(0, (prod_av.Stock or 0) - en_stock_reservado)
+            _actualizar_estado_producto(prod_av)
+            notificar_stock_producto(db, prod_av)
+
+    # La panadería pudo terminar de hornear mientras se negociaba la fecha (o
+    # el pago). En ese caso ya no falta nada: queda Listo para despachar sin
+    # pasar por un "Confirmado" en el que nadie tiene nada que hacer.
+    if (venta.Estado == EstadoPedido.CONFIRMADO
+            and not _faltantes_sin_cubrir(db, venta.ID_Venta, _tiene_domicilio)):
+        venta.Estado = EstadoPedido.LISTO
+
+
+def _avanzar_tras_pago_aprobado(db: Session, venta: Venta) -> None:
+    """El admin aprobó el comprobante de un pedido que estaba Esperando Pago
+    (el total de un pedido sin producción, o el anticipo de uno que sí la
+    necesitaba). No hace commit — lo hace quien llama (`aprobar_comprobante`).
+
+    Con producción, sigue el mismo camino que si nunca hubiera pedido
+    anticipo (`_iniciar_produccion_o_despachar`). Sin producción, pasa a
+    Confirmado (En Alistamiento) y, si es para recoger en tienda, descuenta el
+    stock ahora — lo mismo que hace `cambiar_estado` al confirmar cualquier
+    otro pedido sin domicilio.
+    """
+    if getattr(venta, "Necesita_Produccion", 0):
+        _iniciar_produccion_o_despachar(db, venta, venta.Fecha_entrega_esperada)
+        return
+
+    venta.Estado = EstadoPedido.CONFIRMADO
+    _tiene_domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == venta.ID_Venta).first() is not None
+    if not _tiene_domicilio:
+        _descontar_stock_venta(db, venta.ID_Venta, PARTE_TODO)
+
+
+def aprobar_fecha_directa(db: Session, id_venta: int, actual: dict) -> dict:
+    """Admin aprueba en 1 clic la fecha que el cliente pidió al hacer el
+    pedido (Camino A). A diferencia de `proponer_fecha`, no cambia la fecha ni
+    pasa por 'Fecha propuesta': el cliente ya la puso, el admin solo confirma
+    que la planta puede cumplirla.
+    """
+    if actual["tipo"] not in ("admin", "empleado"):
+        raise HTTPException(status_code=403, detail="Solo disponible para administradores")
+
+    venta = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    if venta.Estado != EstadoPedido.PENDIENTE:
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se puede aprobar un pedido 'Pendiente de Aprobación'",
+        )
+    if not requiere_fecha_propuesta(db, venta):
+        raise HTTPException(status_code=400, detail="Este pedido no requiere aprobación de fecha")
+    if not venta.Fecha_entrega_esperada:
+        raise HTTPException(status_code=400, detail="El pedido no tiene una fecha para aprobar")
+
+    id_admin = getattr(actual.get("registro"), "ID_Usuario", None)
+    descartar_notificacion(db, "produccion_requerida", id_venta)
+    descartar_notificacion(db, "pedido_sobre_stock",   id_venta)
+    _avanzar_tras_fecha_confirmada(db, venta, venta.Fecha_entrega_esperada, id_usuario=id_admin)
+    _guardar_historial_fecha(db, id_venta, "aceptada", venta.Fecha_entrega_esperada, id_usuario=id_admin)
+
+    notificar(
+        db, "fecha_aceptada", "Pedido aprobado",
+        f"El administrador aprobó la fecha de entrega de tu pedido #{id_venta}",
+        id_venta, "/ventas/pedidos",
+    )
+    db.commit()
+    db.refresh(venta)
+    try:
+        from src.shared.services.fcm_service import notificar_cambio_pedido_push
+        notificar_cambio_pedido_push(
+            id_usuario_cliente=venta.ID_Usuario,
+            id_venta=id_venta,
+            nuevo_estado=venta.Estado,
+            db=db,
+        )
+    except Exception:
+        pass
+    return _formato_venta(venta, db)
+
+
 def _productos_producibles(db: Session, prod_ids: list[int]) -> set[int]:
     """IDs de los productos que la panadería sí puede fabricar.
 
@@ -2145,7 +2407,7 @@ def _crear_ordenes_produccion_para_venta(
 
 
 def aceptar_fecha(db: Session, id_venta: int, actual: dict) -> dict:
-    """El cliente acepta la fecha propuesta → Estado Confirmado (4)."""
+    """El cliente acepta la fecha que contraofreció el admin."""
     if actual["tipo"] != "cliente":
         raise HTTPException(status_code=403, detail="Solo disponible para clientes")
     id_usuario = actual["registro"].ID_Usuario
@@ -2158,52 +2420,8 @@ def aceptar_fecha(db: Session, id_venta: int, actual: dict) -> dict:
     if venta.Estado != EstadoPedido.FECHA_PROPUESTA:
         raise HTTPException(status_code=400, detail="El pedido no está en estado 'Fecha propuesta'")
 
-    venta.Estado = EstadoPedido.CONFIRMADO
-    venta.intentos_rechazo = 0
     _guardar_historial_fecha(db, id_venta, "aceptada", venta.Fecha_entrega_esperada, id_usuario=id_usuario)
-
-    # Si el pedido lleva producción, aceptar la fecha no lo deja listo para
-    # despachar: arranca la fabricación. Queda "En producción" y pasará a Listo
-    # cuando se completen sus órdenes.
-    _crear_ordenes_produccion_para_venta(db, id_venta, venta.Fecha_entrega_esperada)
-    _ordenes_abiertas = db.query(OrdenProduccion).filter(
-        OrdenProduccion.ID_Venta == id_venta,
-        OrdenProduccion.Estado.notin_([11, 5]),   # completada / cancelada
-    ).count()
-    if _ordenes_abiertas > 0:
-        venta.Estado = EstadoPedido.PREPARANDO
-
-    # Reservar del stock la porción disponible para pedidos de recoger en tienda:
-    # el déficit ya quedó cubierto por la OP; las unidades en stock se apartan ahora.
-    _tiene_domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first() is not None
-    if not _tiene_domicilio:
-        for av in db.query(VentaXProducto).filter(VentaXProducto.ID_Venta == id_venta).all():
-            en_stock_reservado = (av.Cantidad or 0) - (av.Cantidad_Preorden or 0)
-            if en_stock_reservado <= 0:
-                continue
-            prod_av = (
-                db.query(Producto)
-                .filter(Producto.ID_Producto == av.ID_Producto)
-                .with_for_update()
-                .first()
-            )
-            if not prod_av or not getattr(prod_av, "Requiere_Produccion", 0):
-                continue
-            prod_av.Stock = max(0, (prod_av.Stock or 0) - en_stock_reservado)
-            _actualizar_estado_producto(prod_av)
-            notificar_stock_producto(db, prod_av)
-
-    # La panadería pudo terminar de hornear mientras el cliente decidía. En
-    # ese caso ya no falta nada: aceptar la fecha deja el pedido Listo para
-    # despachar, sin pasar por un "Confirmado" en el que nadie tiene nada que
-    # hacer. Es la respuesta del cliente la que lo mueve, no el horno.
-    #
-    # Se exige lo mismo que exigiría cambiar_estado(LISTO): ninguna orden
-    # abierta —ya cubierto arriba— y ningún faltante sin cubrir, para no
-    # dejar listo un pedido al que le falta producto de verdad.
-    if (venta.Estado == EstadoPedido.CONFIRMADO
-            and not _faltantes_sin_cubrir(db, id_venta, _tiene_domicilio)):
-        venta.Estado = EstadoPedido.LISTO
+    _avanzar_tras_fecha_confirmada(db, venta, venta.Fecha_entrega_esperada, id_usuario=id_usuario)
 
     notificar(
         db, "fecha_aceptada", "Fecha aceptada por el cliente",
@@ -2217,8 +2435,6 @@ def aceptar_fecha(db: Session, id_venta: int, actual: dict) -> dict:
         notificar_cambio_pedido_push(
             id_usuario_cliente=venta.ID_Usuario,
             id_venta=id_venta,
-            # El estado real tras aceptar: Listo si ya no falta nada, En
-            # producción si todavía hay que fabricar, Confirmado si no.
             nuevo_estado=venta.Estado,
             db=db,
         )
@@ -2228,8 +2444,14 @@ def aceptar_fecha(db: Session, id_venta: int, actual: dict) -> dict:
 
 
 def rechazar_fecha(db: Session, id_venta: int, actual: dict, motivo: str | None = None) -> dict:
-    """El cliente rechaza la fecha propuesta → Estado Fecha rechazada (17).
-    Si supera LIMITE_INTENTOS_RECHAZO, pasa a Escalado a admin (19).
+    """El cliente rechaza la contraoferta de fecha, con una causa opcional.
+
+    Reabre la negociación: vuelve a 'Pendiente de Aprobación' con la fecha en
+    blanco, para que el admin apruebe una fecha o proponga otra. No hay tope
+    que cancele ni escale solo — `intentos_rechazo` solo sirve para que el
+    frontend resalte con más énfasis el canal de excepción a partir de cierto
+    número; cancelar o pedir hablar con el admin sigue siendo decisión del
+    cliente (`solicitar_escalado` / cancelar el pedido).
     """
     if actual["tipo"] != "cliente":
         raise HTTPException(status_code=403, detail="Solo disponible para clientes")
@@ -2247,26 +2469,58 @@ def rechazar_fecha(db: Session, id_venta: int, actual: dict, motivo: str | None 
     venta.Fecha_Rechazada = _now()
     venta.Fecha_entrega_esperada = None
     venta.intentos_rechazo = (int(getattr(venta, "intentos_rechazo", 0) or 0)) + 1
+    venta.Estado = EstadoPedido.PENDIENTE
 
     _guardar_historial_fecha(db, id_venta, "rechazada", fecha_anterior, motivo, id_usuario=id_usuario)
+    descartar_notificacion(db, "fecha_rechazada", id_venta)
+    notificar(
+        db, "fecha_rechazada", "Fecha rechazada por el cliente",
+        f"El cliente rechazó la fecha del pedido #{id_venta}"
+        + (f" ({motivo}). " if motivo else ". ")
+        + "Aprobá una nueva fecha o proponé otra.",
+        id_venta, "/ventas/pedidos",
+    )
 
-    if venta.intentos_rechazo >= LIMITE_INTENTOS_RECHAZO:
-        venta.Estado = EstadoPedido.ESCALADO_A_ADMIN
-        descartar_notificacion(db, "fecha_rechazada", id_venta)
-        notificar(
-            db, "fecha_rechazada", "Pedido escalado: demasiados rechazos de fecha",
-            f"El cliente rechazó {venta.intentos_rechazo} veces la fecha del pedido #{id_venta}. Requiere gestión manual.",
-            id_venta, "/ventas/pedidos",
+    db.commit()
+    db.refresh(venta)
+    try:
+        from src.shared.services.fcm_service import notificar_cambio_pedido_push
+        notificar_cambio_pedido_push(
+            id_usuario_cliente=venta.ID_Usuario,
+            id_venta=id_venta,
+            nuevo_estado=venta.Estado,
+            db=db,
         )
-    else:
-        venta.Estado = EstadoPedido.FECHA_RECHAZADA
-        descartar_notificacion(db, "fecha_rechazada", id_venta)
-        notificar(
-            db, "fecha_rechazada", "Fecha rechazada por el cliente",
-            f"El cliente rechazó la fecha del pedido #{id_venta}. Propón una nueva fecha.",
-            id_venta, "/ventas/pedidos",
-        )
+    except Exception:
+        pass
+    return _formato_venta(venta, db)
 
+
+def solicitar_escalado(db: Session, id_venta: int, actual: dict) -> dict:
+    """El cliente pide hablar directamente con el admin (canal de excepción)
+    en vez de seguir rechazando la contraoferta. Pasa a 'Escalado a admin':
+    el admin lo resuelve con un clic tras la llamada, sin volver a pasar por
+    el ciclo de propuesta/aceptación (`resolver_escalado_acuerdo_manual` /
+    `resolver_escalado_cancelar`).
+    """
+    if actual["tipo"] != "cliente":
+        raise HTTPException(status_code=403, detail="Solo disponible para clientes")
+    id_usuario = actual["registro"].ID_Usuario
+
+    venta = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    if venta.ID_Usuario != id_usuario:
+        raise HTTPException(status_code=403, detail="No puedes escalar pedidos de otros clientes")
+    if venta.Estado != EstadoPedido.FECHA_PROPUESTA:
+        raise HTTPException(status_code=400, detail="El pedido no está en estado 'Fecha propuesta'")
+
+    venta.Estado = EstadoPedido.ESCALADO_A_ADMIN
+    notificar(
+        db, "fecha_rechazada", "Cliente pide hablar directamente",
+        f"El cliente del pedido #{id_venta} prefiere acordar la fecha de entrega por teléfono.",
+        id_venta, "/ventas/pedidos",
+    )
     db.commit()
     db.refresh(venta)
     try:
@@ -2324,42 +2578,7 @@ def resolver_escalado_acuerdo_manual(
         raise HTTPException(status_code=400, detail="La fecha acordada no puede ser en el pasado")
 
     id_admin = getattr(actual.get("registro"), "ID_Usuario", None)
-    venta.Fecha_entrega_esperada = fecha_acordada
-    venta.intentos_rechazo = 0
-    venta.Estado = EstadoPedido.CONFIRMADO
-
-    _crear_ordenes_produccion_para_venta(db, id_venta, fecha_acordada)
-    _ordenes_abiertas = db.query(OrdenProduccion).filter(
-        OrdenProduccion.ID_Venta == id_venta,
-        OrdenProduccion.Estado.notin_([11, 5]),
-    ).count()
-    if _ordenes_abiertas > 0:
-        venta.Estado = EstadoPedido.PREPARANDO
-
-    # Igual que aceptar_fecha: reservar stock de tienda y saltar a LISTO si ya
-    # no falta nada (la producción terminó mientras duró la negociación).
-    _tiene_domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first() is not None
-    if not _tiene_domicilio:
-        for av in db.query(VentaXProducto).filter(VentaXProducto.ID_Venta == id_venta).all():
-            en_stock_reservado = (av.Cantidad or 0) - (av.Cantidad_Preorden or 0)
-            if en_stock_reservado <= 0:
-                continue
-            prod_av = (
-                db.query(Producto)
-                .filter(Producto.ID_Producto == av.ID_Producto)
-                .with_for_update()
-                .first()
-            )
-            if not prod_av or not getattr(prod_av, "Requiere_Produccion", 0):
-                continue
-            prod_av.Stock = max(0, (prod_av.Stock or 0) - en_stock_reservado)
-            _actualizar_estado_producto(prod_av)
-            notificar_stock_producto(db, prod_av)
-
-    if (venta.Estado == EstadoPedido.CONFIRMADO
-            and not _faltantes_sin_cubrir(db, id_venta, _tiene_domicilio)):
-        venta.Estado = EstadoPedido.LISTO
-
+    _avanzar_tras_fecha_confirmada(db, venta, fecha_acordada, id_usuario=id_admin)
     _guardar_historial_fecha(db, id_venta, "propuesta", fecha_acordada, id_usuario=id_admin)
     notificar(
         db, "fecha_propuesta", "Fecha de entrega acordada por el administrador",

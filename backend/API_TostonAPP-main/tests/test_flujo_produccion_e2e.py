@@ -179,7 +179,13 @@ class FlujoProduccionE2EBase(unittest.TestCase):
         return DomicilioVentaInput(**base)
 
     def crear(self, datos=None):
-        resultado = crear_venta(self.db, datos if datos is not None else self.pedido())
+        datos = datos if datos is not None else self.pedido()
+        # Fecha límite obligatoria para lo que hay que fabricar (ver
+        # test_crear_venta_e2e.py: mismo criterio, mismo motivo).
+        if getattr(datos, "Fecha_entrega_esperada", None) is None and not datos.creado_por_admin:
+            from datetime import datetime, timedelta
+            datos.Fecha_entrega_esperada = datetime.now() + timedelta(days=2)
+        resultado = crear_venta(self.db, datos)
         self.db.commit()
         return resultado
 

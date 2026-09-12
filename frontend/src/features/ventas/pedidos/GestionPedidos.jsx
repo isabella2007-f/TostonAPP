@@ -6,7 +6,7 @@ import { fmtFecha, getRecordDate } from "../../../utils/dateUtils.js";
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
 import SelectorBarrioEntrega from "../../../shared/components/SelectorBarrioEntrega";
 import { descargarFacturaPedido } from "../../../utils/facturaGenerator.js";
-import { getPedidos, getPedido, getHistorialPedidos, confirmarPedido, cancelarPedido, crearPedido, editarPedido, cambiarEstadoVenta, proponerFechaProduccion, registrarPagoFinal, aprobarComprobante, rechazarComprobante, registrarCobroPedido, resolverEscaladoAcuerdo, resolverEscaladoCancelar, getItemsListos, crearGruposEnvio, actualizarEstadoGrupo, cancelarGrupoPendiente, guardarEnvioCompletoDomingo, editarGrupo } from "../../../services/pedidosService.js";
+import { getPedidos, getPedido, getHistorialPedidos, confirmarPedido, cancelarPedido, crearPedido, editarPedido, cambiarEstadoVenta, proponerFechaProduccion, aprobarFechaDirecta, registrarPagoFinal, aprobarComprobante, rechazarComprobante, registrarCobroPedido, resolverEscaladoAcuerdo, resolverEscaladoCancelar, getItemsListos, crearGruposEnvio, actualizarEstadoGrupo, cancelarGrupoPendiente, guardarEnvioCompletoDomingo, editarGrupo } from "../../../services/pedidosService.js";
 import { subirImagenCloudinary } from "../../../utils/cloudinary.js";
 import { asignarRepartidor } from "../../../services/domiciliosService.js";
 import { registrarSalida } from "../../../services/salidasService.js";
@@ -56,9 +56,12 @@ const esProductoConProduccion = (producto) => {
 
 const ESTADO_CONFIG = {
   "Pendiente":               { bg: "#fff8e1", color: "#f9a825", border: "#ffe082", dot: "#f9a825" },
+  "Pendiente de Aprobación": { bg: "#fff8e1", color: "#f9a825", border: "#ffe082", dot: "#f9a825" },
   "Pendiente de producción": { bg: "#fff3e0", color: "#e65100", border: "#ffcc80", dot: "#ef6c00" },
   "En producción":           { bg: "#e3f2fd", color: "#1565c0", border: "#90caf9", dot: "#1976d2" },
+  "Esperando pago":          { bg: "#fff3e0", color: "#ef6c00", border: "#ffcc80", dot: "#fb8c00" },
   "Confirmado":              { bg: "#e8f5e9", color: "#2e7d32", border: "#a5d6a7", dot: "#43a047" },
+  "En Alistamiento":         { bg: "#e8f5e9", color: "#2e7d32", border: "#a5d6a7", dot: "#43a047" },
   "Listo":                   { bg: "#e8f5e9", color: "#2e7d32", border: "#a5d6a7", dot: "#43a047" },
   "Asignado":                { bg: "#e8f5e9", color: "#2e7d32", border: "#a5d6a7", dot: "#43a047" },
   "En camino":               { bg: "#f3e5f5", color: "#6a1b9a", border: "#ce93d8", dot: "#8e24aa" },
@@ -70,11 +73,19 @@ const ESTADO_CONFIG = {
   "Entregado":               { bg: "#e8f5e9", color: "#2e7d32", border: "#a5d6a7", dot: "#43a047" },
 };
 
-const getEstadoDisplay = (pedido) =>
-  (pedido?.ordenes_en_espera > 0 &&
-   ["En producción", "Confirmado"].includes(pedido?.estado))
-    ? "Pendiente de producción"
-    : (pedido?.estado ?? "Pendiente");
+const getEstadoDisplay = (pedido) => {
+  if (pedido?.ordenes_en_espera > 0 && ["En producción", "Confirmado"].includes(pedido?.estado)) {
+    return "Pendiente de producción";
+  }
+  const estado = pedido?.estado ?? "Pendiente";
+  // "Pendiente" solo existe hoy para pedidos que necesitan aprobación de
+  // planta (fecha de entrega obligatoria); "Confirmado" sin producción es
+  // simple alistamiento, sin nada que fabricar. Es solo la etiqueta: el
+  // valor real de estado (para filtros, comparaciones, endpoints) no cambia.
+  if (estado === "Pendiente" && pedido?.requiereProduccion) return "Pendiente de Aprobación";
+  if (estado === "Confirmado" && !pedido?.requiereProduccion) return "En Alistamiento";
+  return estado;
+};
 
 /* ─── EstadoBadge ────────────────────────────────────────── */
 function EstadoBadge({ estado }) {
@@ -2005,12 +2016,15 @@ function ModalVerComprobante({ pedido, saving, onClose, onAprobar, onRechazar })
 /* ═══════════════════════════════════════════════════════════
    MENÚ DE ACCIONES POR FILA
    ═══════════════════════════════════════════════════════════ */
-function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onProponerFecha, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro }) {
+function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onAprobarFecha, onProponerFecha, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro }) {
   const necesitaProduccion  = ped.requiereFechaPropuesta;
   const canEdit             = puedeEditarsePedido(ped.estado);
   const canAdvance          = ped.estado === "Pendiente" && !necesitaProduccion
     && (!esPagoTransferencia(ped.metodo_pago)
         || ["pagado_completo", "anticipo_pagado"].includes(ped.estado_pago));
+  // Camino A: aprobar de una la fecha que el cliente ya pidió. Camino B (más
+  // abajo, canProponerFecha): contraofrecer otra.
+  const canAprobarFecha     = ped.estado === "Pendiente" && necesitaProduccion && !!ped.fecha_propuesta;
   const canProponerFecha    = ["Pendiente", "Fecha rechazada"].includes(ped.estado) && necesitaProduccion;
   const canResolverEscalado = ped.estado === "Escalado a admin";
   // canMarcarListo: no debe quedar desbloqueado solo porque no hay OPs pendientes.
@@ -2048,7 +2062,8 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
       <button className="act-btn act-btn--view"   data-tooltip="Ver detalle"           onClick={() => onVer(ped)}><Eye size={15} /></button>
       {canEdit          && <button className="act-btn act-btn--edit"    data-tooltip="Editar pedido"          disabled={saving} onClick={() => onEditar(ped)}><Pencil size={15} /></button>}
       {canAdvance       && <button className="act-btn act-btn--success" data-tooltip="Confirmar pedido"       disabled={saving} onClick={() => onConfirmar(ped)}><Check size={15} /></button>}
-      {canProponerFecha    && <button className="act-btn act-btn--info"    data-tooltip="Proponer fecha entrega" disabled={saving} onClick={() => onProponerFecha(ped)}><Calendar size={15} /></button>}
+      {canAprobarFecha     && <button className="act-btn act-btn--success" data-tooltip="Aprobar fecha del cliente" disabled={saving} onClick={() => onAprobarFecha(ped)}><Check size={15} /></button>}
+      {canProponerFecha    && <button className="act-btn act-btn--info"    data-tooltip="Proponer otra fecha"    disabled={saving} onClick={() => onProponerFecha(ped)}><Calendar size={15} /></button>}
       {canResolverEscalado && <button className="act-btn act-btn--warning" data-tooltip="Resolver escalado"     disabled={saving} onClick={() => onResolverEscalado(ped)}><AlertTriangle size={15} /></button>}
       {canMarcarListo      && <button className="act-btn act-btn--success" data-tooltip="Marcar como listo"     disabled={saving} onClick={() => onMarcarListo(ped)}><Package size={15} /></button>}
       {canEntregarTienda   && <button className="act-btn act-btn--success" data-tooltip="Entregar en tienda"     disabled={saving} onClick={() => onEntregar(ped)}><Store size={15} /></button>}
@@ -2341,6 +2356,20 @@ export default function GestionPedidos() {
 
   const handleProponerFecha = (ped) => {
     setModal({ type: "proponerFecha", pedido: ped });
+  };
+
+  // Camino A: aprobar en 1 clic la fecha que el cliente ya pidió al hacer el pedido.
+  const handleAprobarFecha = async (ped) => {
+    setActionSaving(true);
+    try {
+      const pedidoActualizado = await aprobarFechaDirecta(ped.id);
+      setPedidos(prev => prev.map(p => p.id === ped.id ? pedidoActualizado : p));
+      showToast(`Fecha aprobada para ${ped.numero}. El pedido está ahora ${pedidoActualizado.estado}.`);
+    } catch (err) {
+      showToast(err.message || "No se pudo aprobar la fecha", "error");
+    } finally {
+      setActionSaving(false);
+    }
   };
 
   const handleResolverEscalado = (ped) => {
@@ -2693,12 +2722,13 @@ export default function GestionPedidos() {
                     <div style={{ display: "grid", gap: 2 }}>
                       {[
                         { val: "todos",            label: "Todos",            dot: "#bdbdbd" },
-                        { val: "Pendiente",        label: "Pendiente",        dot: ESTADO_CONFIG["Pendiente"]?.dot },
+                        { val: "Pendiente",        label: "Pendiente de Aprobación", dot: ESTADO_CONFIG["Pendiente"]?.dot },
+                        { val: "Esperando pago",   label: "Esperando pago",   dot: ESTADO_CONFIG["Esperando pago"]?.dot },
                         { val: "En producción",    label: "En producción",    dot: ESTADO_CONFIG["En producción"]?.dot },
                         { val: "Fecha propuesta",  label: "Fecha propuesta",  dot: ESTADO_CONFIG["Fecha propuesta"]?.dot },
                         { val: "Fecha rechazada",  label: "Fecha rechazada",  dot: ESTADO_CONFIG["Fecha rechazada"]?.dot },
                         { val: "Escalado a admin", label: "Escalado a admin", dot: ESTADO_CONFIG["Escalado a admin"]?.dot },
-                        { val: "Confirmado",       label: "Confirmado",       dot: ESTADO_CONFIG["Confirmado"]?.dot },
+                        { val: "Confirmado",       label: "Confirmado / En Alistamiento", dot: ESTADO_CONFIG["Confirmado"]?.dot },
                         { val: "Listo",         label: "Listo",          dot: ESTADO_CONFIG["Listo"]?.dot },
                         { val: "Asignado",      label: "Asignado",       dot: ESTADO_CONFIG["Asignado"]?.dot },
                         { val: "En camino",     label: "En camino",      dot: ESTADO_CONFIG["En camino"]?.dot },
@@ -2938,6 +2968,7 @@ export default function GestionPedidos() {
                             onEntregar={handleEntregarPedido}
                             onAsignarDomicilio={ped => setModal({ type: "asignarDomiciliario", pedido: ped })}
                             onCancelar={handleCancelarPedido}
+                            onAprobarFecha={handleAprobarFecha}
                             onProponerFecha={handleProponerFecha}
                             onResolverEscalado={handleResolverEscalado}
                             onVerComprobante={handleVerComprobante}

@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { FEATURE_DIVISION_PEDIDOS } from '../../../config/featureFlags';
-import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, guardarEnvioCompletoDomingo, getItemsListos, crearGruposEnvio } from '../../../services/pedidosService';
+import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, solicitarEscalado, pagarPedido, guardarEnvioCompletoDomingo, getItemsListos, crearGruposEnvio } from '../../../services/pedidosService';
+import { getLandingConfig } from '../../../services/landingConfigService';
 import { subirImagenCloudinary } from '../../../utils/cloudinary.js';
 import { crearDevolucion } from '../../../services/devolucionesService';
 import { fmtFecha } from '../../../utils/dateUtils.js';
@@ -146,6 +147,15 @@ const ESTADO_CONFIG = {
     text: 'text-blue-700',
     border: 'border-blue-200',
     badge: 'bg-blue-100 text-blue-700'
+  },
+  'Esperando pago': {
+    color: 'orange',
+    icon: Banknote,
+    label: 'Esperando pago',
+    bg: 'bg-orange-50',
+    text: 'text-orange-700',
+    border: 'border-orange-200',
+    badge: 'bg-orange-100 text-orange-700'
   },
   'Confirmado': {
     color: 'emerald',
@@ -454,6 +464,22 @@ const PedidosClientePage = () => {
   const [editComprobantePreview, setEditComprobantePreview] = useState(null); // URL | dataURL | null
   // Monto en efectivo para Mixto
   const [editMontoEfectivo,    setEditMontoEfectivo]    = useState('');
+  // Cantidades + fecha al reabrir la negociación desde "Editar pedido"
+  // (Pendiente de Aprobación / Fecha propuesta).
+  const [editCantidades,       setEditCantidades]       = useState({});
+  const [editFechaEntrega,     setEditFechaEntrega]     = useState('');
+
+  // Pagar el pedido (o su anticipo) mientras está 'Esperando pago'
+  const [pagoArchivo,     setPagoArchivo]     = useState(null);
+  const [pagoPreview,     setPagoPreview]     = useState(null);
+  const [pagoMonto,       setPagoMonto]       = useState('');
+  const [pagoGuardando,   setPagoGuardando]   = useState(false);
+  const [pagoError,       setPagoError]       = useState('');
+
+  // Canal de excepción: el cliente pide hablar directo con el admin en vez
+  // de seguir rechazando la fecha contraofrecida.
+  const [escalando,       setEscalando]       = useState(false);
+  const [contactoAdmin,   setContactoAdmin]   = useState(null);
 
   // Ref para acceder al pedido seleccionado dentro del interval sin recrear el callback
   const selectedPedidoRef = useRef(null);
@@ -475,6 +501,13 @@ const PedidosClientePage = () => {
         }
       }
     }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    getLandingConfig().then(cfg => setContactoAdmin({
+      telefono1: cfg?.contactPhone1 || '',
+      telefono2: cfg?.contactPhone2 || '',
+    })).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -602,8 +635,14 @@ const PedidosClientePage = () => {
     // Pre-poblar el preview si ya tienen comprobante con ese método
     setEditComprobantePreview(lleva ? (pedido.comprobante || null) : null);
     setEditMontoEfectivo(pedido.monto_efectivo != null ? String(pedido.monto_efectivo) : '');
+    // Reabrir negociación (Pendiente de Aprobación / Fecha propuesta): cantidades
+    // de las líneas ya pedidas + la fecha límite deseada.
+    setEditCantidades(Object.fromEntries((pedido.productosItems || []).map(it => [it.idProducto, it.cantidad])));
+    setEditFechaEntrega(pedido.fecha_propuesta ? pedido.fecha_propuesta.slice(0, 10) : '');
     setEditModal(pedido);
   };
+
+  const puedeReabrirNegociacion = (pedido) => ['Pendiente', 'Fecha propuesta'].includes(pedido?.estado) && pedido?.requiereFechaPropuesta;
 
   const handleEditarPedido = async () => {
     setEditGuardando(true);
@@ -669,6 +708,24 @@ const PedidosClientePage = () => {
         }
       }
 
+      // Reabrir negociación: cantidades y/o fecha límite deseada. Solo mientras
+      // el pedido está Pendiente de Aprobación o con una fecha propuesta.
+      if (puedeReabrirNegociacion(editModal)) {
+        const cantidadesOriginales = Object.fromEntries((editModal.productosItems || []).map(it => [it.idProducto, it.cantidad]));
+        const cambioCantidades = Object.entries(editCantidades).some(
+          ([id, cant]) => Number(cant) !== Number(cantidadesOriginales[id])
+        );
+        if (cambioCantidades) {
+          datos.productos = Object.entries(editCantidades).map(([id, cant]) => ({
+            ID_Producto: Number(id), Cantidad: Number(cant),
+          }));
+        }
+        const fechaOriginal = editModal.fecha_propuesta ? editModal.fecha_propuesta.slice(0, 10) : '';
+        if (editFechaEntrega && editFechaEntrega !== fechaOriginal) {
+          datos.Fecha_entrega_esperada = `${editFechaEntrega}T00:00:00`;
+        }
+      }
+
       if (!Object.keys(datos).length) {
         setEditModal(null);
         return;
@@ -688,9 +745,9 @@ const PedidosClientePage = () => {
     setAccionFecha("aceptar");
     setAccionFechaErr('');
     try {
-      await aceptarFechaProduccion(pedido.id);
+      const actualizado = await aceptarFechaProduccion(pedido.id);
+      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
       fetchPedidos();
-      setSelectedPedido(prev => prev ? { ...prev, estado: 'Confirmado' } : prev);
     } catch (e) {
       setAccionFechaErr(e.message || 'No se pudo aceptar la fecha');
     } finally {
@@ -702,14 +759,57 @@ const PedidosClientePage = () => {
     setAccionFecha("rechazar");
     setAccionFechaErr('');
     try {
-      await rechazarFechaProduccion(pedido.id, motivoRechazo.trim() || null);
+      const actualizado = await rechazarFechaProduccion(pedido.id, motivoRechazo.trim() || null);
       setMotivoRechazo('');
+      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
       fetchPedidos();
-      // keep modal open so user sees the "Fecha rechazada" / "Escalado a admin" state
+      // keep modal open so user sees the "Pendiente de Aprobación" state again
     } catch (e) {
       setAccionFechaErr(e.message || 'No se pudo rechazar la fecha');
     } finally {
       setAccionFecha(null);
+    }
+  };
+
+  // Canal de excepción: pide hablar directo con el admin en vez de seguir
+  // rechazando la contraoferta de fecha.
+  const handleSolicitarEscalado = async (pedido) => {
+    setEscalando(true);
+    setAccionFechaErr('');
+    try {
+      const actualizado = await solicitarEscalado(pedido.id);
+      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
+      fetchPedidos();
+    } catch (e) {
+      setAccionFechaErr(e.message || 'No se pudo enviar la solicitud');
+    } finally {
+      setEscalando(false);
+    }
+  };
+
+  // Sube el comprobante (o el anticipo) de un pedido 'Esperando pago'.
+  const handlePagarPedido = async (pedido) => {
+    if (!pagoArchivo) { setPagoError('Adjunta el comprobante de la transferencia.'); return; }
+    const minimo = pedido.requiere_anticipo ? Number(pedido.anticipo_requerido || 0) : null;
+    const monto  = pedido.requiere_anticipo ? Number(pagoMonto || 0) : null;
+    if (pedido.requiere_anticipo && monto < minimo) {
+      setPagoError(`El anticipo mínimo es ${COP(minimo)} (50% del pedido).`);
+      return;
+    }
+    setPagoGuardando(true);
+    setPagoError('');
+    try {
+      const comprobante_url = await subirImagenCloudinary(pagoArchivo);
+      const actualizado = await pagarPedido(pedido.id, { comprobante_url, monto });
+      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
+      setPagoArchivo(null);
+      setPagoPreview(null);
+      setPagoMonto('');
+      fetchPedidos();
+    } catch (e) {
+      setPagoError(e.message || 'No se pudo enviar el pago. Intenta de nuevo.');
+    } finally {
+      setPagoGuardando(false);
     }
   };
 
@@ -731,6 +831,10 @@ const PedidosClientePage = () => {
     setSelectedPedido(pedido);
     setConfirmCancel(false);
     setCancelError('');
+    setPagoArchivo(null);
+    setPagoPreview(null);
+    setPagoMonto('');
+    setPagoError('');
     // Carga el detalle completo (con grupos_envio) en segundo plano.
     setModalDetailLoading(true);
     getMiVenta(pedido.id)
@@ -820,7 +924,7 @@ const PedidosClientePage = () => {
               >
                 Todos
               </button>
-              {['Pendiente', 'En producción', 'Fecha propuesta', 'Fecha rechazada', 'Escalado a admin', 'En camino', 'Entregado', 'Cancelado'].map(estado => (
+              {['Pendiente', 'Esperando pago', 'En producción', 'Fecha propuesta', 'Fecha rechazada', 'Escalado a admin', 'En camino', 'Entregado', 'Cancelado'].map(estado => (
                 <button
                   key={estado}
                   className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
@@ -1042,15 +1146,134 @@ const PedidosClientePage = () => {
             {/* Body */}
             <div className="modal-body" style={{ flex: 1, overflowY: 'auto' }}>
 
-              {/* Aviso de producción */}
-              {selectedPedido.orden_produccion && selectedPedido.estado === 'Pendiente' && (
-                <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 12, padding: '12px 14px' }}>
-                  <p style={{ fontSize: 12, fontWeight: 800, color: '#1565c0', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5 }}><Package size={13} /> Pedido en espera de producción</p>
-                  <p style={{ fontSize: 11, color: '#1976d2', lineHeight: 1.5, margin: 0 }}>
-                    Uno o más productos requieren producción. El equipo te propondrá una fecha de entrega pronto.
+              {/* Pendiente de Aprobación: el cliente ya puso su fecha, falta que el
+                  admin la apruebe o proponga otra. */}
+              {selectedPedido.estado === 'Pendiente' && selectedPedido.requiereFechaPropuesta && (
+                <div style={{ background: '#fff8e1', border: '1.5px solid #ffe082', borderRadius: 12, padding: '12px 14px' }}>
+                  <p style={{ fontSize: 12, fontWeight: 800, color: '#f57f17', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5 }}><Package size={13} /> Pendiente de aprobación</p>
+                  <p style={{ fontSize: 11, color: '#e65100', lineHeight: 1.5, margin: 0 }}>
+                    Uno o más productos requieren producción.
+                    {selectedPedido.fecha_propuesta && (
+                      <> Pediste tenerlo para el <strong>{new Date(selectedPedido.fecha_propuesta.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}</strong>.</>
+                    )} {' '}El administrador va a revisar esa fecha contra la capacidad de la planta y la aprueba o te propone otra.
                   </p>
                 </div>
               )}
+              {/* Legado: pedidos que ya tenían orden de producción antes de este cambio. */}
+              {selectedPedido.orden_produccion && selectedPedido.estado === 'Pendiente' && !selectedPedido.requiereFechaPropuesta && (
+                <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 12, padding: '12px 14px' }}>
+                  <p style={{ fontSize: 12, fontWeight: 800, color: '#1565c0', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5 }}><Package size={13} /> Pedido en espera de producción</p>
+                  <p style={{ fontSize: 11, color: '#1976d2', lineHeight: 1.5, margin: 0 }}>
+                    Uno o más productos requieren producción. El equipo te avisará cuando avance.
+                  </p>
+                </div>
+              )}
+
+              {/* Esperando pago: el total (sin producción) o el anticipo (con
+                  fecha ya aprobada) — siempre por transferencia. */}
+              {selectedPedido.estado === 'Esperando pago' && (() => {
+                const yaSubido   = selectedPedido.estado_pago === 'pendiente_validacion';
+                const rechazado  = selectedPedido.estado_pago === 'comprobante_rechazado';
+                const minimo     = selectedPedido.requiere_anticipo ? Number(selectedPedido.anticipo_requerido || 0) : Number(selectedPedido.total || 0);
+                return (
+                  <div style={{ background: 'linear-gradient(135deg,#fff3e0 0%,#fff8e1 100%)', border: '2px solid #ffb74d', borderRadius: 16, padding: '16px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <Banknote size={20} color="#e65100" />
+                      <p style={{ fontSize: 13, fontWeight: 800, color: '#e65100', margin: 0 }}>
+                        {selectedPedido.requiere_anticipo ? 'Falta el anticipo' : 'Falta el pago'}
+                      </p>
+                    </div>
+
+                    {rechazado && (
+                      <div style={{ background: '#fff', border: '1.5px solid #ef9a9a', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+                        <p style={{ fontSize: 12, fontWeight: 800, color: '#c62828', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <AlertTriangle size={13} /> El comprobante anterior fue rechazado
+                        </p>
+                        {selectedPedido.motivo_rechazo_comprobante && (
+                          <p style={{ fontSize: 11, color: '#b71c1c', margin: 0 }}>{selectedPedido.motivo_rechazo_comprobante}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {yaSubido ? (
+                      <div style={{ background: '#e8f5e9', border: '1.5px solid #a5d6a7', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <CheckCircle2 size={16} color="#2e7d32" />
+                        <p style={{ fontSize: 12, fontWeight: 700, color: '#2e7d32', margin: 0 }}>
+                          Comprobante enviado. El administrador lo está revisando.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {selectedPedido.requiere_anticipo && (
+                          <div style={{ marginBottom: 10 }}>
+                            <p style={{ fontSize: 11, color: '#e65100', lineHeight: 1.5, marginBottom: 8 }}>
+                              Tu fecha de entrega ya quedó aprobada. Este pedido pide un anticipo mínimo del
+                              50% (<strong>{COP(minimo)}</strong>) por transferencia antes de empezar a producir; puedes anticipar más si quieres.
+                            </p>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                              <button type="button" onClick={() => setPagoMonto(String(minimo))}
+                                style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `2px solid ${Number(pagoMonto) === minimo ? '#f9a825' : '#e0e0e0'}`, background: Number(pagoMonto) === minimo ? '#fff8e1' : '#fff', fontWeight: 700, fontSize: 11, cursor: 'pointer' }}>
+                                Mínimo (50%)
+                              </button>
+                              <button type="button" onClick={() => setPagoMonto(String(Number(selectedPedido.total || 0)))}
+                                style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: `2px solid ${Number(pagoMonto) === Number(selectedPedido.total || 0) ? '#f9a825' : '#e0e0e0'}`, background: Number(pagoMonto) === Number(selectedPedido.total || 0) ? '#fff8e1' : '#fff', fontWeight: 700, fontSize: 11, cursor: 'pointer' }}>
+                                Pagar todo
+                              </button>
+                            </div>
+                            <input
+                              type="number" min={minimo} step={100} placeholder={`Mínimo ${COP(minimo)}`}
+                              value={pagoMonto} onChange={e => setPagoMonto(e.target.value)}
+                              style={{ width: '100%', boxSizing: 'border-box', padding: '9px 11px', borderRadius: 10, border: '1.5px solid #ffcc80', fontFamily: 'inherit', fontSize: 12 }}
+                            />
+                          </div>
+                        )}
+
+                        <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+                          {[
+                            ['Banco', CUENTA_TRANSFERENCIA.banco], ['Titular', CUENTA_TRANSFERENCIA.titular],
+                            ['Tipo', CUENTA_TRANSFERENCIA.tipo], ['Número', CUENTA_TRANSFERENCIA.numero],
+                          ].map(([l, v]) => (
+                            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                              <span style={{ fontSize: 11, color: '#1565c0', fontWeight: 600 }}>{l}</span>
+                              <span style={{ fontSize: 12, color: '#0d47a1', fontWeight: 800 }}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {pagoPreview ? (
+                          <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', marginBottom: 8 }}>
+                            <ImageLightbox src={pagoPreview} alt="Comprobante" label="Ver comprobante"
+                              thumbStyle={{ width: '100%', maxHeight: 150, objectFit: 'contain', display: 'block', borderRadius: 10 }} />
+                            <button type="button" onClick={() => { setPagoArchivo(null); setPagoPreview(null); }}
+                              style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer' }}>
+                              <X size={11} />
+                            </button>
+                          </div>
+                        ) : (
+                          <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 76, borderRadius: 10, border: '2px dashed #ffb74d', background: '#fff', cursor: 'pointer', gap: 4, marginBottom: 8 }}>
+                            <input type="file" accept="image/*" hidden onChange={e => {
+                              const f = e.target.files[0];
+                              if (!f) return;
+                              const r = new FileReader();
+                              r.onload = ev => { setPagoArchivo(f); setPagoPreview(ev.target.result); };
+                              r.readAsDataURL(f);
+                            }} />
+                            <Upload size={18} style={{ color: '#e65100' }} />
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#e65100' }}>Subir comprobante</span>
+                          </label>
+                        )}
+
+                        {pagoError && <p style={{ fontSize: 11, color: '#c62828', fontWeight: 700, marginBottom: 8 }}>{pagoError}</p>}
+
+                        <button disabled={pagoGuardando} onClick={() => handlePagarPedido(selectedPedido)}
+                          style={{ width: '100%', padding: '11px 0', borderRadius: 10, border: 'none', background: '#e65100', color: '#fff', fontWeight: 800, fontSize: 13, cursor: pagoGuardando ? 'not-allowed' : 'pointer' }}>
+                          {pagoGuardando ? 'Enviando…' : 'Enviar comprobante'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Aviso de fecha propuesta */}
               {selectedPedido.estado === 'Fecha propuesta' && (
@@ -1088,7 +1311,7 @@ const PedidosClientePage = () => {
                     }}
                   />
                   {accionFechaErr && <p style={{ fontSize: 11, color: '#c62828', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}><AlertTriangle size={12} /> {accionFechaErr}</p>}
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     <button disabled={!!accionFecha} onClick={() => handleAceptarFecha(selectedPedido)}
                       style={{ flex: 1, padding: '11px 0', borderRadius: 10, border: 'none', background: '#2e7d32', color: '#fff', fontWeight: 800, fontSize: 13, cursor: accionFecha ? 'not-allowed' : 'pointer', opacity: accionFecha === 'rechazar' ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                       {accionFecha === 'aceptar' ? 'Aceptando…' : <><Check size={14} /> Sí, acepto esta fecha</>}
@@ -1097,6 +1320,38 @@ const PedidosClientePage = () => {
                       style={{ flex: 1, padding: '11px 0', borderRadius: 10, border: 'none', background: '#c62828', color: '#fff', fontWeight: 800, fontSize: 13, cursor: accionFecha ? 'not-allowed' : 'pointer', opacity: accionFecha === 'aceptar' ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                       {accionFecha === 'rechazar' ? 'Rechazando…' : <><X size={14} /> Rechazar fecha</>}
                     </button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button disabled={editGuardando} onClick={() => abrirEditModal(selectedPedido)}
+                      style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: '1.5px solid #9fa8da', background: '#fff', color: '#3949ab', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                      <PenLine size={13} /> Editar cantidades o fecha
+                    </button>
+                  </div>
+                  {/* Canal de excepción: en vez de rechazar de nuevo, negociar por
+                      teléfono. Se resalta más a partir de cierto número de intentos,
+                      pero siempre está disponible. */}
+                  <div style={{
+                    marginTop: 10, padding: '10px 12px', borderRadius: 10,
+                    background: selectedPedido.resaltarCanalExcepcion ? '#fff3e0' : '#f5f5ff',
+                    border: `1.5px solid ${selectedPedido.resaltarCanalExcepcion ? '#ffb74d' : '#c5cae9'}`,
+                  }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, color: '#4a4a4a', margin: '0 0 8px', lineHeight: 1.5 }}>
+                      {selectedPedido.resaltarCanalExcepcion
+                        ? 'Ya llevas varios intentos: mejor hablemos directo y lo resolvemos por teléfono.'
+                        : '¿Prefieres resolverlo hablando directo con nosotros?'}
+                    </p>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {contactoAdmin?.telefono1 && (
+                        <a href={`https://wa.me/57${contactoAdmin.telefono1.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                          style={{ flex: '1 1 auto', textAlign: 'center', padding: '8px 10px', borderRadius: 8, background: '#25d366', color: '#fff', fontWeight: 700, fontSize: 11, textDecoration: 'none' }}>
+                          WhatsApp {contactoAdmin.telefono1}
+                        </a>
+                      )}
+                      <button disabled={escalando} onClick={() => handleSolicitarEscalado(selectedPedido)}
+                        style={{ flex: '1 1 auto', padding: '8px 10px', borderRadius: 8, border: '1.5px solid #f9a825', background: '#fff', color: '#e65100', fontWeight: 700, fontSize: 11, cursor: escalando ? 'not-allowed' : 'pointer' }}>
+                        {escalando ? 'Enviando…' : 'Avisar al admin que voy a llamar'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1123,7 +1378,8 @@ const PedidosClientePage = () => {
                     <p style={{ fontSize: 13, fontWeight: 800, color: '#880e4f', margin: 0 }}>Pedido en revisión por el administrador</p>
                   </div>
                   <p style={{ fontSize: 11, color: '#ad1457', lineHeight: 1.5, margin: 0 }}>
-                    Rechazaste la fecha propuesta varias veces. Un administrador revisará tu pedido y te contactará para acordar una solución.
+                    Pediste hablar directo sobre la fecha de entrega. Un administrador te contactará
+                    para acordarla por teléfono; en cuanto quede lista, tu pedido sigue su curso normal.
                   </p>
                 </div>
               )}
@@ -1754,6 +2010,41 @@ const PedidosClientePage = () => {
 
             {/* Body */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '18px 22px' }}>
+              {/* Reabrir negociación: cantidades de lo que ya pediste + fecha límite.
+                  No se pueden agregar productos nuevos, solo ajustar cuánto de
+                  cada uno. */}
+              {puedeReabrirNegociacion(editModal) && (
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#616161', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Cantidades
+                  </label>
+                  <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 10, padding: '4px 12px', marginBottom: 12 }}>
+                    {(editModal.productosItems || []).map(item => (
+                      <div key={item.idProducto} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#424242', flex: 1 }}>{item.nombre}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <button type="button"
+                            onClick={() => setEditCantidades(prev => ({ ...prev, [item.idProducto]: Math.max(1, (Number(prev[item.idProducto]) || 1) - 1) }))}
+                            style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid #e0e0e0', background: '#fff', cursor: 'pointer', fontWeight: 800 }}>−</button>
+                          <span style={{ fontSize: 13, fontWeight: 800, minWidth: 20, textAlign: 'center' }}>{editCantidades[item.idProducto] ?? item.cantidad}</span>
+                          <button type="button"
+                            onClick={() => setEditCantidades(prev => ({ ...prev, [item.idProducto]: (Number(prev[item.idProducto]) || 1) + 1 }))}
+                            style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid #e0e0e0', background: '#fff', cursor: 'pointer', fontWeight: 800 }}>+</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#616161', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    ¿Para cuándo lo necesitas?
+                  </label>
+                  <input type="date" value={editFechaEntrega} onChange={e => setEditFechaEntrega(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', marginBottom: 4 }} />
+                  <p style={{ fontSize: 10, color: '#9e9e9e', margin: 0 }}>
+                    Guardar cambios aquí vuelve a poner el pedido en "Pendiente de Aprobación".
+                  </p>
+                </div>
+              )}
+
               {/* Método de pago */}
               <div style={{ marginBottom: 18 }}>
                 <label style={{ fontSize: 11, fontWeight: 700, color: '#616161', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Método de pago</label>

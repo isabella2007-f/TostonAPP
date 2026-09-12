@@ -95,6 +95,10 @@ class _Base(unittest.TestCase):
         datos = dict(
             ID_Usuario=ID_CLIENTE, Metodo_Pago="Efectivo",
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=PEDIDAS)],
+            # Fecha límite obligatoria para lo que hay que fabricar (checkout
+            # nuevo); se reemplaza más abajo por una fecha lejana de todos
+            # modos, esto solo evita el 400 al crear.
+            Fecha_entrega_esperada=datetime.now() + timedelta(days=2),
         )
         if con_domicilio:
             datos["domicilio"] = DomicilioVentaInput(

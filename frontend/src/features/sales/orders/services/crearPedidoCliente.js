@@ -1,5 +1,4 @@
 import { crearPedido } from '../../../../services/pedidosService';
-import { subirImagenCloudinary } from '../../../../utils/cloudinary.js';
 import { getCart } from './cartService';
 import { getUser } from '../../../../services/authService';
 
@@ -7,14 +6,12 @@ import { getUser } from '../../../../services/authService';
  * Envío de un pedido hecho por el cliente.
  *
  * Existe porque el checkout se abre desde dos pantallas —la landing y "Hacer
- * pedidos"— y cada una tenía su propia copia de este envío. La de la landing se
- * quedó atrás: no subía el comprobante ni mandaba los datos del anticipo, así
- * que los pedidos llegaban sin respaldo de pago y el backend los rechazaba.
- * Con un solo camino, una mejora aquí vale para las dos pantallas.
+ * pedidos"— y cada una tenía su propia copia de este envío. Con un solo
+ * camino, una mejora aquí vale para las dos pantallas.
  *
- * Sube los comprobantes a Cloudinary y arma el cuerpo que espera la API. Lanza
- * un Error con el motivo si algo falla; quien llama decide qué mostrar y qué
- * hacer después (limpiar carrito, cerrar el modal, avisar…).
+ * Arma el cuerpo que espera la API. Lanza un Error con el motivo si algo
+ * falla; quien llama decide qué mostrar y qué hacer después (limpiar carrito,
+ * cerrar el modal, avisar…).
  */
 
 /**
@@ -41,32 +38,14 @@ const metodoPagoApi = (metodo) =>
   : metodo === 'mixto' ? 'Mixto'
   : 'Efectivo';
 
-/** Método del anticipo: el checkout usa 'digital' | 'efectivo' | 'credito'. */
-const metodoAnticipoApi = (metodo) =>
-  metodo === 'digital' ? 'Transferencia' : metodo === 'credito' ? 'Credito' : 'Efectivo';
-
-/** Sube un archivo y garantiza que devuelve una URL utilizable. */
-const subirComprobante = async (archivo, queEs) => {
-  let url;
-  try {
-    url = await subirImagenCloudinary(archivo);
-  } catch (e) {
-    throw new Error(`No se pudo subir ${queEs}: ${e?.message || 'intenta de nuevo'}`);
-  }
-  if (!url) throw new Error(`No se pudo guardar ${queEs}. Intenta de nuevo.`);
-  return url;
-};
-
 /** Fecha de entrega en el formato que espera la API, o null. */
 const fechaEntregaApi = (fecha, hora) =>
   fecha ? `${fecha}T${hora || '00:00'}:00` : null;
 
 export async function crearPedidoCliente({
   paymentMethod,
-  comprobante,
   saldoAFavor,
   deliveryInfo,
-  anticipoData,
   orderDetails,
 }) {
   const usuario = getUser();
@@ -74,27 +53,10 @@ export async function crearPedidoCliente({
 
   const entrega = resolverEntrega(deliveryInfo, orderDetails);
 
-  // Comprobante del pedido: aplica cuando hay transferencia (pure o mixto).
-  const comprobanteUrl = (paymentMethod === 'digital' || paymentMethod === 'mixto') && comprobante
-    ? await subirComprobante(comprobante, 'el comprobante')
-    : null;
-
-  // Comprobante del anticipo: solo si el anticipo se paga por transferencia.
-  const anticipoComprobanteUrl =
-    anticipoData?.requiere && anticipoData.metodo === 'digital' && anticipoData.comprobante
-      ? await subirComprobante(anticipoData.comprobante, 'el comprobante del anticipo')
-      : null;
-
-  // El anticipo cuenta como registrado si el crédito lo cubre, si el cliente
-  // confirmó haberlo pagado en efectivo, o si adjuntó el comprobante.
-  // El anticipo en efectivo lo registra el empleado/admin desde su panel;
-  // el cliente no puede auto-confirmarlo para no depender de su reporte.
-  const anticipoRegistrado = !!(anticipoData?.requiere && (
-    anticipoData.creditoCubreAnticipo ? true
-      : anticipoData.metodo === 'efectivo' ? false
-      : !!anticipoComprobanteUrl
-  ));
-
+  // El comprobante ya no se sube al crear el pedido: si no necesita
+  // producción, se adjunta después desde "Mis pedidos" ('Esperando pago'); si
+  // necesita producción, se pide (junto con el anticipo, si aplica) recién
+  // cuando el admin apruebe la fecha de entrega.
   const payload = {
     ID_Usuario:  usuario?.id || null,
     productos:   carrito.map(item => ({
@@ -112,21 +74,7 @@ export async function crearPedidoCliente({
     // cliente pide mas de lo que tiene, alla se recorta.
     credito_monto:          saldoAFavor?.usar ? (saldoAFavor.monto ?? null) : null,
     codigo_descuento:       null,
-    // Con anticipo, el archivo que sube el cliente es el del anticipo y el
-    // comprobante del pedido queda vacío: entonces todas las vistas dicen "sin
-    // comprobante adjunto" y el pedido ni siquiera se puede marcar como
-    // entregado. Es el mismo soporte de pago, así que sirve para los dos campos.
-    comprobante_pago:       comprobanteUrl || anticipoComprobanteUrl,
     Fecha_entrega_esperada: fechaEntregaApi(entrega.date, entrega.time),
-
-    requiere_anticipo:        !!anticipoData?.requiere,
-    anticipo_monto:           anticipoData?.monto ?? null,
-    anticipo_metodo_pago:     anticipoData?.requiere ? metodoAnticipoApi(anticipoData.metodo) : null,
-    anticipo_comprobante_url: anticipoComprobanteUrl,
-    anticipo_registrado:      anticipoRegistrado,
-    // Señal explícita de que el cliente eligió pagar el total ahora: el backend
-    // la usa para marcar pago_final_registrado=1 sin comparar montos exactos.
-    pagar_todo:               !!(anticipoData?.requiere && anticipoData?.pagarTodo),
 
     domicilio: entrega.tieneDomicilio && entrega.address && entrega.idBarrio ? {
       Direccion_entrega:    entrega.address,

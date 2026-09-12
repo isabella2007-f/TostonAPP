@@ -16,7 +16,7 @@ from .schemas import (
 from .service import (
     obtener_ventas, obtener_venta, obtener_mi_venta, crear_venta, cambiar_estado,
     obtener_mis_ventas, obtener_mi_credito, obtener_credito_cliente,
-    proponer_fecha, aceptar_fecha, rechazar_fecha,
+    proponer_fecha, aceptar_fecha, rechazar_fecha, aprobar_fecha_directa, solicitar_escalado,
     registrar_pago_final, guardar_envio_completo_domingo,
     resolver_escalado_acuerdo_manual, resolver_escalado_cancelar,
     obtener_items_listos, crear_grupos_envio,
@@ -113,9 +113,9 @@ def registrar_venta(
         # dirección de entrega que eligiera el atacante. El mostrador sí
         # puede vender a nombre de un tercero: por eso solo se fuerza aquí.
         datos.ID_Usuario = actual["registro"].ID_Usuario
-        # El cliente NO fija la fecha de entrega en el checkout: la propone
-        # el administrador después. Se ignora cualquier fecha que envíe.
-        datos.Fecha_entrega_esperada = None
+        # El domicilio no trae su propia fecha de entrega: si el pedido
+        # necesita producción, hereda la fecha límite que el cliente puso más
+        # abajo (Fecha_entrega_esperada); `crear_venta` la valida.
         if datos.domicilio is not None:
             datos.domicilio.Fecha_entrega = None
     return crear_venta(db, datos)
@@ -152,8 +152,30 @@ def aceptar_fecha_endpoint(
     db:       Session = Depends(get_db),
     actual:   dict    = Depends(obtener_usuario_actual),
 ):
-    """El cliente acepta la fecha propuesta → pedido pasa a Confirmado (4)."""
+    """El cliente acepta la fecha que contraofreció el admin."""
     return aceptar_fecha(db, id_venta, actual)
+
+
+@router.patch("/{id_venta}/aprobar-fecha", response_model=VentaResponse)
+def aprobar_fecha_endpoint(
+    id_venta: int,
+    db:       Session = Depends(get_db),
+    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
+):
+    """Admin aprueba en 1 clic la fecha que el cliente pidió al hacer el pedido
+    (Camino A), sin pasar por 'Fecha propuesta'."""
+    return aprobar_fecha_directa(db, id_venta, actual)
+
+
+@router.patch("/{id_venta}/solicitar-escalado", response_model=VentaResponse)
+def solicitar_escalado_endpoint(
+    id_venta: int,
+    db:       Session = Depends(get_db),
+    actual:   dict    = Depends(obtener_usuario_actual),
+):
+    """El cliente pide hablar directamente con el admin (canal de excepción)
+    en vez de seguir rechazando la fecha contraofrecida."""
+    return solicitar_escalado(db, id_venta, actual)
 
 
 @router.post("/{id_venta}/registrar-pago-final", response_model=VentaResponse)
@@ -185,9 +207,9 @@ def rechazar_fecha_endpoint(
     db:       Session = Depends(get_db),
     actual:   dict    = Depends(obtener_usuario_actual),
 ):
-    """El cliente rechaza la fecha propuesta → pedido pasa a Fecha rechazada (17).
-    Si supera el límite de intentos, pasa a Escalado a admin (19).
-    """
+    """El cliente rechaza la fecha contraofrecida, con causa opcional →
+    pedido vuelve a 'Pendiente de Aprobación' para que el admin apruebe otra
+    fecha o proponga una nueva."""
     return rechazar_fecha(db, id_venta, actual, motivo=datos.motivo)
 
 

@@ -177,6 +177,15 @@ class CrearVentaBase(unittest.TestCase):
         return DomicilioVentaInput(**base)
 
     def crear(self, datos):
+        # La fecha límite es obligatoria para lo que hay que fabricar desde
+        # que el checkout la exige (antes la proponía el admin después de
+        # crear el pedido). Estos tests llaman a crear_venta() directo, sin
+        # pasar por el checkout: se les pone una fecha futura por defecto
+        # salvo que el caso ya haya puesto la suya — no aplica si el pedido
+        # no necesita producción, crear_venta la ignora en ese caso.
+        if getattr(datos, "Fecha_entrega_esperada", None) is None and not datos.creado_por_admin:
+            from datetime import datetime, timedelta
+            datos.Fecha_entrega_esperada = datetime.now() + timedelta(days=2)
         resultado = crear_venta(self.db, datos)
         self.db.commit()
         return resultado

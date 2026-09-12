@@ -317,12 +317,15 @@ def migrate_db():
             "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) VALUES (17, 17, 'Fecha rechazada')",
             "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) VALUES (18, 18, 'Parcialmente entregado')",
             "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) VALUES (19, 19, 'Escalado a admin')",
+            # 20 = Esperando pago (fecha aprobada, o pedido sin producción, en
+            # espera del comprobante/anticipo antes de pasar a producción/alistamiento)
+            "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) VALUES (20, 20, 'Esperando pago')",
         ]:
             try:
                 conn.execute(text(stmt))
                 conn.commit()
             except Exception as exc:
-                _log.error("migración estados 16-19 FALLÓ — %s", exc, exc_info=True)
+                _log.error("migración estados 16-20 FALLÓ — %s", exc, exc_info=True)
 
     # ── Columna intentos_rechazo en Ventas ────────────────────────────────────
     with engine.connect() as conn:
