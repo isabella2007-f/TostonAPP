@@ -491,9 +491,6 @@ export default function CrearPedido({ onClose, onSave }) {
       // el selector del pedido no se muestra y no hay nada que validar arriba.
       if (!requiereAnticipo) {
         if (!form.metodo_pago) e.metodo_pago = "Selecciona un método de pago";
-        if (llevaTransferencia(form.metodo_pago) && !form.comprobantePreview) {
-          e.comprobante = "Es obligatorio adjuntar el comprobante de transferencia";
-        }
         // Un mixto tiene que tener las dos partes: si una queda en cero, lo
         // que corresponde es el otro método a secas.
         if (esMixto) {

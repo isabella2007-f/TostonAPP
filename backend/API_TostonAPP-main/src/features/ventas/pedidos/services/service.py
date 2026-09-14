@@ -667,8 +667,8 @@ def registrar_cobro_pedido(db: Session, id_venta: int, datos, id_usuario_actual:
 def aprobar_comprobante(db: Session, id_venta: int) -> dict:
     """
     Admin aprueba el comprobante de transferencia.
-    Estado_Pago: 'pendiente_validacion' → 'pagado_completo'.
-    Solo aplica si el método de pago es Transferencia.
+    - Mixto o anticipo sin pago final registrado → 'anticipo_pagado'.
+    - Anticipo con pago final ya registrado, o pago único → 'pagado_completo'.
     """
     pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
     if not pedido:
@@ -689,7 +689,11 @@ def aprobar_comprobante(db: Session, id_venta: int) -> dict:
 
     # En un mixto aprobar el comprobante salda solo la mitad transferida: falta
     # el efectivo, salvo que ya lo hayan cobrado.
+    # En un pedido con anticipo, aprobar el comprobante confirma solo el anticipo
+    # si aún no se registró el pago final completo.
     if _es_mixto(pedido.Metodo_Pago) and estado_pago in _ESTADOS_MIXTO_A_MEDIAS:
+        pedido.Estado_Pago = "anticipo_pagado"
+    elif getattr(pedido, "Requiere_Anticipo", 0) and not getattr(pedido, "Pago_Final_Registrado", 0):
         pedido.Estado_Pago = "anticipo_pagado"
     else:
         pedido.Estado_Pago = "pagado_completo"

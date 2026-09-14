@@ -101,5 +101,46 @@ class EntregaConAnticipoTests(PanelBase):
             {"Estado": DOM_ENTREGADO}))
 
 
+class AprobarComprobanteAnticipoTests(PanelBase):
+    """Aprobar el comprobante de un anticipo no marca el pedido como pagado."""
+
+    def _pedido_con_anticipo_esperando(self, metodo="Transferencia"):
+        pedido = self.pedido_con_faltante_aprobado(
+            cantidad=12, domicilio=self.direccion(), metodo_pago=metodo)
+        id_venta = pedido["ID_Venta"]
+        venta = self.venta(id_venta)
+        anticipo = float(venta.Anticipo_Requerido or 0)
+        self.assertGreater(anticipo, 0, "el pedido debe exigir anticipo")
+        self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/pagar", self.cliente,
+            {"comprobante_url": "https://cloudinary.test/anticipo.jpg",
+             "monto": anticipo}))
+        return id_venta
+
+    def test_aprobar_anticipo_deja_estado_anticipo_pagado(self):
+        id_venta = self._pedido_con_anticipo_esperando()
+        self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/aprobar-comprobante", self.admin))
+        venta = self.venta(id_venta)
+        self.assertEqual(
+            venta.Estado_Pago, "anticipo_pagado",
+            "aprobar el comprobante del anticipo no debe marcar el pedido como pagado_completo")
+
+    def test_pagar_total_y_aprobar_deja_pagado_completo(self):
+        id_venta = self._pedido_con_anticipo_esperando()
+        venta = self.venta(id_venta)
+        total = float(venta.Total or 0)
+        self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/pagar", self.cliente,
+            {"comprobante_url": "https://cloudinary.test/total.jpg",
+             "monto": total}))
+        self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/aprobar-comprobante", self.admin))
+        venta = self.venta(id_venta)
+        self.assertEqual(
+            venta.Estado_Pago, "pagado_completo",
+            "pagar el total completo y aprobar debe dejar pagado_completo")
+
+
 if __name__ == "__main__":
     unittest.main()
