@@ -83,15 +83,19 @@ const adminMenuItems = [
 
 /* El repartidor ve su panel y nada más: sin pedidos ajenos, sin los
    domicilios de sus compañeros, sin liquidaciones. Las mismas rutas están en
-   adminMenuItems para cualquier otro rol que tenga el privilegio. */
+   adminMenuItems para cualquier otro rol que tenga el privilegio.
+
+   Tres secciones, las mismas tres pestañas que tiene la app: dónde va ahora,
+   qué hizo, y cómo viene el día. Eran siete para un trabajo de tres, y en un
+   celular apoyado en el manubrio cada renglón de más es uno que estorba.
+
+   Lo que salió de acá no se perdió, está donde se busca: las notificaciones
+   en la campanita de arriba —con su contador— y el perfil y cerrar sesión en
+   el menú del usuario, al lado. */
 const repartidorMenuItems = [
-  { section: "Mis Entregas",    Icon: Navigation,      link: "/admin/mis-entregas" },
-  { section: "Pedido Actual",   Icon: Package,         link: "/admin/pedido-actual" },
-  { section: "Mi Dashboard",    Icon: LayoutDashboard, link: "/admin/mi-dashboard" },
-  { section: "Historial",       Icon: History,         link: "/admin/historial-entregas" },
-  { section: "Lo que entregué", Icon: Banknote,        link: "/admin/mis-ganancias" },
-  { section: "Notificaciones",  Icon: Bell,            link: "/admin/mis-notificaciones" },
-  { section: "Mi Perfil",       Icon: UserCircle,      link: "/admin/mi-perfil-repartidor" },
+  { section: "Mis Entregas",  Icon: Navigation,      link: "/admin/mis-entregas" },
+  { section: "Historial",     Icon: History,         link: "/admin/historial-entregas" },
+  { section: "Mi Dashboard",  Icon: LayoutDashboard, link: "/admin/mi-dashboard" },
 ];
 
 const clienteMenuItems = [
