@@ -21,7 +21,7 @@ class DomiciliarioEnPedidoTests(PanelBase):
         """Un pedido con domicilio, repartidor asignado y en la calle."""
         pedido = self.crear_pedido(domicilio=self.direccion())
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_LISTO}))
         dom = self.domicilio(id_venta)
@@ -33,11 +33,17 @@ class DomiciliarioEnPedidoTests(PanelBase):
             {"Estado": DOM_EN_CAMINO}))
         return id_venta
 
-    def venta(self, id_venta):
+    def venta_api(self, id_venta):
+        """El pedido como lo devuelve la API.
+
+        Se llama distinto del `venta()` del harness, que devuelve la fila de la
+        base: con el mismo nombre lo tapaba y los ayudantes compartidos
+        recibían un dict donde esperaban un modelo.
+        """
         return self.afirmar_ok(self.get(f"/ventas/{id_venta}", self.admin))
 
     def test_el_detalle_trae_el_nombre_del_domiciliario(self):
-        cuerpo = self.venta(self.pedido_en_camino())
+        cuerpo = self.venta_api(self.pedido_en_camino())
         self.assertTrue(
             cuerpo.get("nombre_domiciliario"),
             "sin el nombre, el panel escribe 'Sin asignar' en un pedido que "
@@ -46,7 +52,7 @@ class DomiciliarioEnPedidoTests(PanelBase):
     def test_el_detalle_trae_el_id_del_repartidor(self):
         # Es el respaldo del panel cuando el nombre no viene: sin él, la única
         # forma de resolverlo contra la lista de empleados queda muerta.
-        cuerpo = self.venta(self.pedido_en_camino())
+        cuerpo = self.venta_api(self.pedido_en_camino())
         self.assertEqual(cuerpo.get("ID_Empleado"), ID_REPARTIDOR)
 
     def test_el_listado_tambien(self):
@@ -62,7 +68,7 @@ class DomiciliarioEnPedidoTests(PanelBase):
         # "Sin asignar" tiene que seguir siendo posible: es cierto hasta que
         # alguien lo toma.
         pedido = self.crear_pedido(domicilio=self.direccion())
-        cuerpo = self.venta(pedido["ID_Venta"])
+        cuerpo = self.venta_api(pedido["ID_Venta"])
         self.assertIsNone(cuerpo.get("nombre_domiciliario"))
         self.assertIsNone(cuerpo.get("ID_Empleado"))
 
@@ -80,7 +86,7 @@ class DomiciliarioConEntregaDivididaTests(PanelBase):
 
         pedido = self.crear_pedido(domicilio=self.direccion())
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
 
         grupo = GrupoEnvio(ID_Venta=id_venta, Tipo="listo", Tipo_Entrega="domicilio")
         self.db.add(grupo)

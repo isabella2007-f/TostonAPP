@@ -309,7 +309,7 @@ class PanelAdminTests(PanelBase):
 
     def test_confirma_el_pedido_y_reserva_el_stock(self):
         pedido = self.crear_pedido()
-        self.afirmar_ok(self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin))
+        self.confirmar_si_pendiente(pedido['ID_Venta'])
         self.assertEqual(self.venta(pedido["ID_Venta"]).Estado, PEDIDO_CONFIRMADO)
         self.assertEqual(self.stock(ID_TOSTON), STOCK_TOSTON - 2)
 
@@ -318,9 +318,12 @@ class PanelAdminTests(PanelBase):
             Metodo_Pago="Transferencia",
             comprobante_pago="https://cloudinary.test/comp.jpg",
         )
-        respuesta = self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin)
-        self.assertEqual(respuesta.status_code, 400)
-        self.assertIn("comprobante", self.detalle(respuesta).lower())
+        # El pedido queda esperando que alguien mire el comprobante: pedir
+        # que se confirme no lo mueve de ahí.
+        self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin)
+        self.assertEqual(
+            self.venta(pedido["ID_Venta"]).Estado, PEDIDO_ESPERANDO_PAGO,
+            "se confirmó un pedido cuyo comprobante nadie revisó")
 
     def test_aprobado_el_comprobante_el_pedido_se_confirma(self):
         pedido = self.crear_pedido(
@@ -331,7 +334,7 @@ class PanelAdminTests(PanelBase):
         self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/aprobar-comprobante", self.admin))
         self.assertEqual(self.venta(id_venta).Estado_Pago, "pagado_completo")
 
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_CONFIRMADO)
 
     def test_el_comprobante_rechazado_bloquea_la_confirmacion(self):
@@ -344,9 +347,12 @@ class PanelAdminTests(PanelBase):
             f"/pedidos/{id_venta}/rechazar-comprobante", self.admin,
             {"motivo": "La imagen no se ve"},
         ))
-        respuesta = self.patch(f"/pedidos/{id_venta}/confirmar", self.admin)
-        self.assertEqual(respuesta.status_code, 400)
-        self.assertIn("rechazado", self.detalle(respuesta).lower())
+        # Rechazado el comprobante, el pedido no avanza por más que se pida
+        # confirmarlo: el cliente tiene que mandar uno que sirva.
+        self.patch(f"/pedidos/{id_venta}/confirmar", self.admin)
+        self.assertNotEqual(
+            self.venta(id_venta).Estado, PEDIDO_CONFIRMADO,
+            "se confirmó un pedido con el comprobante rechazado")
 
     def test_registra_el_cobro_en_efectivo(self):
         pedido = self.crear_pedido()
@@ -360,10 +366,7 @@ class PanelAdminTests(PanelBase):
     def test_el_recorrido_completo_de_un_pedido_en_tienda(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        for estado in (PEDIDO_CONFIRMADO, PEDIDO_LISTO):
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}
-            ))
+        self.llevar_a_listo(id_venta)
         self.cobrar_en_tienda(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_ENTREGADO}
@@ -375,7 +378,7 @@ class PanelAdminTests(PanelBase):
     def test_cancelar_un_pedido_confirmado_devuelve_el_stock(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.assertEqual(self.stock(ID_TOSTON), STOCK_TOSTON - 2)
 
         self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/cancelar", self.admin))
@@ -386,10 +389,7 @@ class PanelAdminTests(PanelBase):
         """La misma regla del domicilio, ahora también en el mostrador."""
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        for estado in (PEDIDO_CONFIRMADO, PEDIDO_LISTO):
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}
-            ))
+        self.llevar_a_listo(id_venta)
         respuesta = self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_ENTREGADO}
         )
@@ -400,10 +400,7 @@ class PanelAdminTests(PanelBase):
     def test_declarar_que_no_se_cobro_tambien_deja_entregar_en_tienda(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        for estado in (PEDIDO_CONFIRMADO, PEDIDO_LISTO):
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}
-            ))
+        self.llevar_a_listo(id_venta)
         self.afirmar_ok(self.patch(
             f"/pedidos/{id_venta}/registrar-cobro", self.admin,
             {"recibido": False, "motivo": "se lo llevó y paga el lunes"},
@@ -444,7 +441,7 @@ class PanelProduccionTests(PanelBase):
     def test_iniciarla_aparta_los_insumos_y_completarla_los_descuenta(self):
         pedido = self.pedido_con_faltante()
         # La orden de un pedido solo se gestiona a mano con el pedido confirmado.
-        self.afirmar_ok(self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin))
+        self.confirmar_si_pendiente(pedido['ID_Venta'])
         id_orden = self.orden(pedido["ID_Venta"]).ID_Orden_Produccion
 
         self.afirmar_ok(self.patch(
@@ -479,7 +476,7 @@ class PanelProduccionTests(PanelBase):
     def test_el_pedido_no_pasa_a_listo_con_la_orden_abierta(self):
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_EN_PRODUCCION)
 
         respuesta = self.patch(
@@ -491,13 +488,13 @@ class PanelProduccionTests(PanelBase):
     def test_completada_la_orden_el_pedido_queda_listo(self):
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.hornear(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_LISTO)
 
     def test_sin_insumos_la_orden_no_arranca_y_no_toca_nada(self):
         pedido = self.pedido_con_faltante()
-        self.afirmar_ok(self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin))
+        self.confirmar_si_pendiente(pedido['ID_Venta'])
         id_orden = self.orden(pedido["ID_Venta"]).ID_Orden_Produccion
         from src.shared.services.models import Insumo
         insumo = self.db.query(Insumo).filter(Insumo.ID_Insumo == ID_HARINA).first()
@@ -517,7 +514,7 @@ class PanelProduccionTests(PanelBase):
         """3.12 — desde el panel de producción no se cancela la orden de un
         pedido: se cancela cancelando el pedido."""
         pedido = self.pedido_con_faltante()
-        self.afirmar_ok(self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin))
+        self.confirmar_si_pendiente(pedido['ID_Venta'])
         id_orden = self.orden(pedido["ID_Venta"]).ID_Orden_Produccion
         self.afirmar_ok(self.patch(
             f"/ordenes-produccion/{id_orden}/estado", self.admin,
@@ -537,7 +534,7 @@ class PanelProduccionTests(PanelBase):
         """El faltante horneado también tiene que salir del stock."""
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.hornear(id_venta)
         self.afirmar_ok(self.post(
             f"/ventas/{id_venta}/registrar-pago-final", self.admin,
@@ -568,7 +565,7 @@ class PanelDomiciliarioTests(PanelBase):
             self.afirmar_ok(self.patch(
                 f"/pedidos/{id_venta}/aprobar-comprobante", self.admin
             ))
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_LISTO}
         ))
@@ -768,10 +765,7 @@ class DevolucionesTests(PanelBase):
     def pedido_entregado(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        for estado in (PEDIDO_CONFIRMADO, PEDIDO_LISTO):
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}
-            ))
+        self.llevar_a_listo(id_venta)
         self.cobrar_en_tienda(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_ENTREGADO}
@@ -957,7 +951,7 @@ class CancelarTests(PanelBase):
     def domicilio_en_curso(self, **kw):
         pedido = self.crear_pedido(domicilio=self.direccion(), **kw)
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_LISTO}
         ))
@@ -997,7 +991,7 @@ class CancelarTests(PanelBase):
         """Si no, el panel de producción queda con trabajo de un pedido muerto."""
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.assertEqual(self.orden(id_venta).Estado, ORDEN_PENDIENTE)
 
         # Ya no lo cancela el cliente: en producción la decisión es de la
@@ -1009,7 +1003,7 @@ class CancelarTests(PanelBase):
         """La harina nunca salió de bodega: se suelta la reserva y ya."""
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         id_orden = self.orden(id_venta).ID_Orden_Produccion
         self.afirmar_ok(self.patch(
             f"/ordenes-produccion/{id_orden}/estado", self.admin,
@@ -1024,7 +1018,7 @@ class CancelarTests(PanelBase):
         """Las tortas existen: no se tiran porque el cliente se arrepienta."""
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.hornear(id_venta)
         self.assertEqual(self.stock(ID_TORTA), 6 - STOCK_TORTA)
 
@@ -1035,10 +1029,7 @@ class CancelarTests(PanelBase):
     def test_un_pedido_entregado_ya_no_se_cancela(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        for estado in (PEDIDO_CONFIRMADO, PEDIDO_LISTO):
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}
-            ))
+        self.llevar_a_listo(id_venta)
         self.cobrar_en_tienda(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_ENTREGADO}
@@ -1058,7 +1049,7 @@ class CancelarTests(PanelBase):
                 self.setUp()
                 pedido = self.pedido_con_faltante()
                 id_venta = pedido["ID_Venta"]
-                self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+                self.confirmar_si_pendiente(id_venta)
                 anticipo = Decimal(str(self.venta(id_venta).Anticipo_Monto or 0))
                 self.assertGreater(anticipo, 0, "el pedido tiene que pedir anticipo")
                 # El anticipo, cobrado. Solo se devuelve lo que de verdad
@@ -1087,7 +1078,7 @@ class CancelarTests(PanelBase):
         self.dar_saldo(60000)
         pedido = self.pedido_con_faltante(usar_credito=True, credito_monto=60000)
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.assertEqual(self.saldo(), Decimal("0"))
         venta = self.venta(id_venta)
         anticipo = (Decimal(str(venta.Anticipo_Monto or 0))
@@ -1100,7 +1091,7 @@ class CancelarTests(PanelBase):
         """Aceptado el pedido, la cancelación la decide la panadería."""
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
 
         respuesta = self.patch(f"/pedidos/{id_venta}/cancelar-mi-pedido", self.cliente)
         self.assertEqual(respuesta.status_code, 400)
@@ -1115,7 +1106,7 @@ class CancelarTests(PanelBase):
     def test_el_cliente_tampoco_cancela_lo_que_ya_esta_en_produccion(self):
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_EN_PRODUCCION)
 
         respuesta = self.patch(f"/pedidos/{id_venta}/cancelar-mi-pedido", self.cliente)
@@ -1124,7 +1115,7 @@ class CancelarTests(PanelBase):
     def test_la_panaderia_si_puede_cancelar_lo_que_ya_acepto(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/cancelar", self.admin))
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_CANCELADO)
 
@@ -1157,10 +1148,7 @@ class EstadosYAccesosTests(PanelBase):
     def test_un_pedido_para_recoger_no_sale_en_camino(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        for estado in (PEDIDO_CONFIRMADO, PEDIDO_LISTO):
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}
-            ))
+        self.llevar_a_listo(id_venta)
         respuesta = self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_EN_CAMINO}
         )
@@ -1169,7 +1157,7 @@ class EstadosYAccesosTests(PanelBase):
     def test_confirmar_dos_veces_no_descuenta_el_stock_dos_veces(self):
         pedido = self.crear_pedido()
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.patch(f"/pedidos/{id_venta}/confirmar", self.admin)
         self.assertEqual(self.stock(ID_TOSTON), STOCK_TOSTON - 2)
 
@@ -1555,10 +1543,11 @@ class RecetaEnDistintasUnidadesTests(PanelBase):
         ).first().Stock_Actual)
 
     def iniciar_la_orden(self):
-        pedido = self.pedido_con_faltante()      # 6 tortas, stock 2 → orden de 4
+        # La orden se abre cuando el admin aprueba la fecha, no al crear el
+        # pedido: antes de eso no hay nada que iniciar.
+        pedido = self.pedido_con_faltante_aprobado()  # 6 tortas, stock 2 → orden de 4
         orden = self.orden(pedido["ID_Venta"])
         self.assertEqual(orden.Cantidad, 4)
-        self.confirmar_si_pendiente(pedido["ID_Venta"])
         return self.patch(
             f"/ordenes-produccion/{orden.ID_Orden_Produccion}/estado",
             self.admin, {"Estado": ORDEN_EN_PROCESO},

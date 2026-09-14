@@ -22,7 +22,7 @@ class ObservacionRepartidorTests(PanelBase):
     def domicilio_en_camino(self):
         pedido = self.crear_pedido(domicilio=self.direccion())
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_LISTO}))
         dom = self.domicilio(id_venta)

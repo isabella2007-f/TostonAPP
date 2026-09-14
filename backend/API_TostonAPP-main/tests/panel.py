@@ -105,6 +105,7 @@ PEDIDO_LISTO = 11
 PEDIDO_EN_PRODUCCION = 13
 PEDIDO_FECHA_PROPUESTA = 16
 PEDIDO_FECHA_RECHAZADA = 17
+PEDIDO_ESPERANDO_PAGO = 20   # esperando que entre la plata
 PEDIDO_ESCALADO        = 19
 
 DOM_PENDIENTE = 3
@@ -321,11 +322,18 @@ class PanelBase(unittest.TestCase):
 
     # ── Datos que arman las pantallas ────────────────────────────────────
     def cuerpo_pedido(self, **kw):
-        """Lo que manda el checkout del cliente: tostones que hay en vitrina."""
+        """Lo que manda el checkout del cliente: tostones que hay en vitrina.
+
+        Incluye para cuándo lo necesita: es obligatorio desde que el cliente
+        elige la fecha y el admin la aprueba, en vez de proponerla él.
+        """
+        from datetime import datetime, timedelta
         cuerpo = {
             "ID_Usuario": ID_CLIENTE,
             "Metodo_Pago": "Efectivo",
             "productos": [{"ID_Producto": ID_TOSTON, "Cantidad": 2}],
+            "Fecha_entrega_esperada":
+                (datetime.now() + timedelta(days=2)).isoformat(),
         }
         cuerpo.update(kw)
         return cuerpo
@@ -494,6 +502,23 @@ class PanelBase(unittest.TestCase):
             self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
         else:
             self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+
+    def poner_estado(self, id_venta, estado):
+        """Deja el pedido en ese estado, saltándose los que ya pasó.
+
+        Un pedido que ya nace confirmado no acepta que lo confirmen otra vez;
+        lo que la prueba quiere es llegar al estado, no recorrer el camino.
+        """
+        if self.venta(id_venta).Estado == estado:
+            return
+        self.afirmar_ok(self.patch(
+            f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}))
+
+    def llevar_a_listo(self, id_venta):
+        """Pedido listo para salir, venga del estado que venga."""
+        self.confirmar_si_pendiente(id_venta)
+        self.poner_estado(id_venta, PEDIDO_CONFIRMADO)
+        self.poner_estado(id_venta, PEDIDO_LISTO)
 
     def hornear(self, id_venta):
         """Inicia y completa la orden del pedido, como el panel de producción."""

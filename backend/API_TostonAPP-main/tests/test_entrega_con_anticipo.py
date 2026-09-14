@@ -20,19 +20,33 @@ from panel import (
 class EntregaConAnticipoTests(PanelBase):
     def pedido_con_anticipo_en_camino(self, metodo="Transferencia"):
         """Pedido que exige anticipo, con el anticipo cobrado y en la calle."""
-        pedido = self.pedido_con_faltante(domicilio=self.direccion(),
-                                          metodo_pago=metodo)
+        # Por encima del umbral del anticipo ($100.000): por debajo el pedido
+        # no lo pide y la prueba no ejercería nada. Y aprobado por el admin,
+        # que es cuando se exige el anticipo en el flujo nuevo: al crearlo
+        # todavía no existe.
+        pedido = self.pedido_con_faltante_aprobado(
+            cantidad=12, domicilio=self.direccion(), metodo_pago=metodo)
         id_venta = pedido["ID_Venta"]
         venta = self.venta(id_venta)
-        self.assertTrue(Decimal(str(venta.Anticipo_Monto or 0)) > 0,
-                        "el pedido tiene que exigir anticipo")
-        # El anticipo entró; el saldo todavía no.
+        self.assertTrue(
+            Decimal(str(venta.Anticipo_Requerido or 0)) > 0,
+            "el pedido tiene que exigir anticipo")
+        # El cliente manda el comprobante del anticipo y el admin lo aprueba:
+        # recién ahí se abre la producción. El saldo sigue debiéndose.
+        self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/pagar", self.cliente,
+            {"comprobante_url": "https://cloudinary.test/anticipo.jpg",
+             "monto": float(venta.Anticipo_Requerido)}))
+        self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/aprobar-comprobante", self.admin))
+        venta = self.venta(id_venta)
+        venta.Anticipo_Monto      = venta.Anticipo_Requerido
         venta.Anticipo_Registrado = 1
-        venta.Estado_Pago = "anticipo_pagado"
+        venta.Pago_Final_Registrado = 0
+        venta.Estado_Pago         = "anticipo_pagado"
         self.db.commit()
 
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
-        # `hornear` ya deja el pedido listo para salir.
+        # `hornear` deja el pedido listo para salir.
         self.hornear(id_venta)
         dom = self.domicilio(id_venta)
         self.afirmar_ok(self.patch(
@@ -72,7 +86,7 @@ class EntregaConAnticipoTests(PanelBase):
         venta = self.venta(id_venta)
         venta.Estado_Pago = "pagado_completo"
         self.db.commit()
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": PEDIDO_LISTO}))
         dom = self.domicilio(id_venta)

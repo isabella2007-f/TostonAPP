@@ -52,7 +52,7 @@ class DomicilioHuerfanoTests(PanelBase):
     def pedido_dividido(self):
         pedido = self.crear_pedido(domicilio=self.direccion())
         id_venta = pedido["ID_Venta"]
-        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        self.confirmar_si_pendiente(id_venta)
         # Dividir exige una fecha ya acordada con el cliente.
         venta = self.venta(id_venta)
         venta.Fecha_entrega_esperada = datetime.now() + timedelta(days=5)
