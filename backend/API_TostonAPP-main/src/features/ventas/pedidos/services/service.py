@@ -341,10 +341,17 @@ _VENTANA_EDICION = timedelta(minutes=10)
 
 
 def _dentro_ventana_edicion(venta: Venta) -> bool:
-    """True si el pedido fue creado hace menos de 10 minutos."""
+    """True si el pedido fue creado hace menos de 10 minutos.
+
+    Se mide con `_now()` —hora de Bogotá, sin zona— porque es con ese mismo
+    reloj con el que se escribió `Fecha_Venta` al crear el pedido. Restaba
+    `utcnow()`, que acá son cinco horas más: un pedido recién hecho nacía con
+    cinco horas de antigüedad y la ventana estaba vencida siempre, así que el
+    cliente no podía cancelar ni corregir su pedido nunca.
+    """
     if not venta.Fecha_Venta:
         return False
-    return datetime.utcnow() - venta.Fecha_Venta < _VENTANA_EDICION
+    return _now() - venta.Fecha_Venta < _VENTANA_EDICION
 
 
 def _reabrir_pedido_produccion(db: Session, pedido: Venta, productos_nuevos, fecha_nueva) -> None:
