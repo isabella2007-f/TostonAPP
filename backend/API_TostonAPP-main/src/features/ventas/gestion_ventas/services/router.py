@@ -9,13 +9,14 @@ from src.features.auth.services.dependencies import (
 from .schemas import (
     VentaCreate, VentaEstado, VentaResponse, VentaListResponse,
     FechaEntregaInput, PagoFinalCreate, EnvioCompletoDomingoInput,
-    RechazarFechaInput, AcuerdoManualInput,
+    RechazarFechaInput, AcuerdoManualInput, RechazarPagoFinalInput,
 )
 from .service import (
     obtener_ventas, obtener_venta, obtener_mi_venta, crear_venta, cambiar_estado,
     obtener_mis_ventas, obtener_mi_credito, obtener_credito_cliente,
     proponer_fecha, aceptar_fecha, rechazar_fecha, aprobar_fecha_directa, solicitar_escalado,
-    registrar_pago_final, guardar_envio_completo_domingo,
+    registrar_pago_final, aprobar_pago_final, rechazar_pago_final,
+    guardar_envio_completo_domingo,
     resolver_escalado_acuerdo_manual, resolver_escalado_cancelar,
 )
 
@@ -180,8 +181,29 @@ def registrar_pago_final_endpoint(
     db:       Session = Depends(get_db),
     _:        dict    = Depends(requiere_permiso("editar_pedidos")),
 ):
-    """Registra el pago del saldo restante al momento de entrega. Solo para pedidos con anticipo."""
+    """Registra el pago del saldo restante. Queda pendiente de validación por admin."""
     return registrar_pago_final(db, id_venta, datos)
+
+
+@router.patch("/{id_venta}/aprobar-pago-final", response_model=VentaResponse)
+def aprobar_pago_final_endpoint(
+    id_venta: int,
+    db:       Session = Depends(get_db),
+    _:        dict    = Depends(requiere_permiso("editar_pedidos")),
+):
+    """Admin aprueba el comprobante del saldo final."""
+    return aprobar_pago_final(db, id_venta)
+
+
+@router.patch("/{id_venta}/rechazar-pago-final", response_model=VentaResponse)
+def rechazar_pago_final_endpoint(
+    id_venta: int,
+    datos:    RechazarPagoFinalInput,
+    db:       Session = Depends(get_db),
+    _:        dict    = Depends(requiere_permiso("editar_pedidos")),
+):
+    """Admin rechaza el comprobante del saldo final. Tres rechazos cancelan el pedido."""
+    return rechazar_pago_final(db, id_venta, datos.motivo)
 
 
 @router.patch("/{id_venta}/envio-completo-domingo", response_model=VentaResponse)

@@ -192,3 +192,8 @@ class RechazoComprobante(BaseModel):
     motivo: str
 
 
+# ── Rechazar pago final (saldo) ──
+class RechazarPagoFinalInput(BaseModel):
+    motivo: str
+
+

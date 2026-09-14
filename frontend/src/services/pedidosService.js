@@ -17,6 +17,7 @@ const ESTADO_PEDIDO_MAP = {
   18: "Parcialmente entregado",
   19: "Escalado a admin",
   20: "Esperando pago",
+  21: "Retenido en tienda",
 };
 
 const adaptPedido = (p) => {
@@ -89,6 +90,9 @@ const adaptPedido = (p) => {
     pago_final_fecha:          p.pago_final_fecha    || null,
     estado_pago:               p.estado_pago         || null,
     motivo_rechazo_comprobante: p.motivo_rechazo_comprobante || null,
+    intentos_rechazo_comprobante: p.intentos_rechazo_comprobante ?? 0,
+    contraoferta_admin_count: p.contraoferta_admin_count ?? 0,
+    propuesta_final_cliente:  !!(p.propuesta_final_cliente),
     envio_completo_domingo:
       p.envio_completo_domingo == null ? null : !!p.envio_completo_domingo,
     cliente: {
@@ -264,4 +268,14 @@ export const registrarCobroPedido = async (id, { recibido, monto = null, motivo 
   apiFetch(`/pedidos/${id}/registrar-cobro`, {
     method: "PATCH",
     body: JSON.stringify({ recibido, monto, motivo }),
+  });
+
+// PUNTO 5: aprobación/rechazo del pago final (saldo)
+export const aprobarPagoFinal = async (id) =>
+  apiFetch(`/ventas/${id}/aprobar-pago-final`, { method: "PATCH" });
+
+export const rechazarPagoFinal = async (id, motivo) =>
+  apiFetch(`/ventas/${id}/rechazar-pago-final`, {
+    method: "PATCH",
+    body: JSON.stringify({ motivo }),
   });

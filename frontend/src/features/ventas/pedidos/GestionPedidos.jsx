@@ -6,7 +6,7 @@ import { fmtFecha, getRecordDate } from "../../../utils/dateUtils.js";
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
 import SelectorBarrioEntrega from "../../../shared/components/SelectorBarrioEntrega";
 import { descargarFacturaPedido } from "../../../utils/facturaGenerator.js";
-import { getPedidos, getPedido, getHistorialPedidos, confirmarPedido, cancelarPedido, crearPedido, editarPedido, cambiarEstadoVenta, proponerFechaProduccion, aprobarFechaDirecta, registrarPagoFinal, aprobarComprobante, rechazarComprobante, registrarCobroPedido, resolverEscaladoAcuerdo, resolverEscaladoCancelar } from "../../../services/pedidosService.js";
+import { getPedidos, getPedido, getHistorialPedidos, confirmarPedido, cancelarPedido, crearPedido, editarPedido, cambiarEstadoVenta, proponerFechaProduccion, aprobarFechaDirecta, registrarPagoFinal, aprobarComprobante, rechazarComprobante, registrarCobroPedido, resolverEscaladoAcuerdo, resolverEscaladoCancelar, aprobarPagoFinal, rechazarPagoFinal } from "../../../services/pedidosService.js";
 import { subirImagenCloudinary } from "../../../utils/cloudinary.js";
 import { asignarRepartidor } from "../../../services/domiciliosService.js";
 import { registrarSalida } from "../../../services/salidasService.js";
@@ -71,6 +71,7 @@ const ESTADO_CONFIG = {
   "Parcialmente entregado":  { bg: "#e8f5e9", color: "#1b5e20", border: "#a5d6a7", dot: "#43a047" },
   "Cancelado":               { bg: "#ffebee", color: "#c62828", border: "#ef9a9a", dot: "#e53935" },
   "Entregado":               { bg: "#e8f5e9", color: "#2e7d32", border: "#a5d6a7", dot: "#43a047" },
+  "Retenido en tienda":      { bg: "#fff3e0", color: "#bf360c", border: "#ffcc80", dot: "#e64a19" },
 };
 
 const getEstadoDisplay = (pedido) => {
@@ -1557,7 +1558,7 @@ function ModalVerComprobante({ pedido, saving, onClose, onAprobar, onRechazar })
 /* ═══════════════════════════════════════════════════════════
    MENÚ DE ACCIONES POR FILA
    ═══════════════════════════════════════════════════════════ */
-function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onAprobarFecha, onProponerFecha, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro }) {
+function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onAprobarFecha, onProponerFecha, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro, onAprobarPagoFinal, onRechazarPagoFinal, onRetenerEnTienda }) {
   const necesitaProduccion  = ped.requiereFechaPropuesta;
   const canEdit             = puedeEditarsePedido(ped.estado);
   const canAdvance          = ped.estado === "Pendiente" && !necesitaProduccion
@@ -1599,6 +1600,10 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
     (!ped.comprobante || ped.estado_pago === "comprobante_rechazado");
   const _faltaEfectivoMixto = esPagoMixto(ped.metodo_pago) && ped.estado_pago === "anticipo_pagado";
   const canRegistrarCobro   = esEfectivo && !_terminalState && (!_pagoRegistrado || _faltaEfectivoMixto);
+  const canAprobarPagoFinal = ped.estado_pago === "pago_final_pendiente_validacion";
+  const canRechazarPagoFinal = ped.estado_pago === "pago_final_pendiente_validacion";
+  const canRetenerEnTienda  = ped.estado === "Listo" && !ped.domicilio;
+  const esRetenido          = ped.estado === "Retenido en tienda";
 
   return (
     <div className="actions-cell">
@@ -1609,12 +1614,17 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
       {canProponerFecha    && <button className="act-btn act-btn--info"    data-tooltip="Proponer otra fecha"    disabled={saving} onClick={() => onProponerFecha(ped)}><Calendar size={15} /></button>}
       {canResolverEscalado && <button className="act-btn act-btn--warning" data-tooltip="Resolver escalado"     disabled={saving} onClick={() => onResolverEscalado(ped)}><AlertTriangle size={15} /></button>}
       {canMarcarListo      && <button className="act-btn act-btn--success" data-tooltip="Marcar como listo"     disabled={saving} onClick={() => onMarcarListo(ped)}><Package size={15} /></button>}
-      {canEntregarTienda   && <button className="act-btn act-btn--success" data-tooltip="Entregar en tienda"     disabled={saving} onClick={() => onEntregar(ped)}><Store size={15} /></button>}
-      {canAsignarDomicilio && <button className="act-btn act-btn--info"    data-tooltip="Asignar domiciliario"   disabled={saving} onClick={() => onAsignarDomicilio(ped)}><Bike size={15} /></button>}
+      {canEntregarTienda && !esRetenido && <button className="act-btn act-btn--success" data-tooltip="Entregar en tienda" disabled={saving} onClick={() => onEntregar(ped)}><Store size={15} /></button>}
+      {canRetenerEnTienda  && <button className="act-btn act-btn--warning" data-tooltip="Retener en tienda (cobro pendiente)" disabled={saving} onClick={() => onRetenerEnTienda(ped)}><AlertCircle size={15} /></button>}
+      {esRetenido          && <button className="act-btn act-btn--info"    data-tooltip="Reintentar entrega en tienda" disabled={saving} onClick={() => onMarcarListo(ped)}><RotateCcw size={15} /></button>}
+      {esRetenido          && <button className="act-btn act-btn--info"    data-tooltip="Convertir a domicilio" disabled={saving} onClick={() => onAsignarDomicilio(ped)}><Bike size={15} /></button>}
+      {canAsignarDomicilio && !esRetenido && <button className="act-btn act-btn--info" data-tooltip="Asignar domiciliario" disabled={saving} onClick={() => onAsignarDomicilio(ped)}><Bike size={15} /></button>}
       {canEntregar         && <button className="act-btn act-btn--success" data-tooltip="Registrar entrega"      disabled={saving} onClick={() => onEntregar(ped)}><Truck size={15} /></button>}
       {canSubirComprobante && <button className="act-btn act-btn--info"    data-tooltip="Subir comprobante"    disabled={saving} onClick={() => onSubirComprobante(ped)}><Paperclip size={15} /></button>}
       {canRegistrarCobro   && <button className="act-btn act-btn--success" data-tooltip="Registrar cobro efectivo" disabled={saving} onClick={() => onRegistrarCobro(ped)}><Banknote size={15} /></button>}
       {canVerComprobante && <button className="act-btn act-btn--info" data-tooltip="Ver comprobante" disabled={saving} onClick={() => onVerComprobante(ped)}><Eye size={15} /></button>}
+      {canAprobarPagoFinal && <button className="act-btn act-btn--success" data-tooltip="Aprobar saldo final" disabled={saving} onClick={() => onAprobarPagoFinal(ped)}><CheckCircle2 size={15} /></button>}
+      {canRechazarPagoFinal && <button className="act-btn act-btn--delete" data-tooltip="Rechazar saldo final" disabled={saving} onClick={() => onRechazarPagoFinal(ped)}><XCircle size={15} /></button>}
       {canCancel           && <button className="act-btn act-btn--delete"  data-tooltip="Cancelar pedido"        disabled={saving} onClick={() => onCancelar(ped)}><X size={15} /></button>}
     </div>
   );
@@ -2011,6 +2021,47 @@ export default function GestionPedidos() {
       setModal(null);
     } catch (err) {
       setModal({ type: "errorEstado", mensaje: err.message || "No se pudo rechazar el comprobante." });
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleAprobarPagoFinal = async (ped) => {
+    setActionSaving(true);
+    try {
+      const actualizado = await aprobarPagoFinal(ped.id);
+      await cargarDatos();
+      showToast(`Saldo final de ${ped.numero} aprobado`);
+      setModal(null);
+    } catch (err) {
+      setModal({ type: "errorEstado", mensaje: err.message || "No se pudo aprobar el pago final." });
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleRechazarPagoFinal = async (id, motivo) => {
+    setActionSaving(true);
+    try {
+      await rechazarPagoFinal(id, motivo);
+      await cargarDatos();
+      showToast(`Saldo final rechazado`);
+      setModal(null);
+    } catch (err) {
+      setModal({ type: "errorEstado", mensaje: err.message || "No se pudo rechazar el pago final." });
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleRetenerEnTienda = async (ped) => {
+    setActionSaving(true);
+    try {
+      await cambiarEstadoVenta(ped.id, 21);
+      await cargarDatos();
+      showToast(`Pedido ${ped.numero} retenido en tienda`);
+    } catch (err) {
+      showToast(err.message || "No se pudo retener el pedido", "error");
     } finally {
       setActionSaving(false);
     }
@@ -2503,6 +2554,9 @@ export default function GestionPedidos() {
                             onVerComprobante={handleVerComprobante}
                             onSubirComprobante={handleSubirComprobante}
                             onRegistrarCobro={handleRegistrarCobro}
+                            onAprobarPagoFinal={handleAprobarPagoFinal}
+                            onRechazarPagoFinal={ped => setModal({ type: "rechazarPagoFinal", pedido: ped })}
+                            onRetenerEnTienda={handleRetenerEnTienda}
                           />
                         )}
                       </td>
@@ -2552,6 +2606,14 @@ export default function GestionPedidos() {
       )}
       {modal?.type === "errorEstado" && <ModalErrorEstadoPedido mensaje={modal.mensaje} onClose={() => setModal(null)} />}
       {modal?.type === "avisoProduccion" && <ModalAvisoProduccion items={modal.items} pedidoNumero={modal.pedidoNumero} onClose={() => setModal(null)} />}
+      {modal?.type === "rechazarPagoFinal" && (
+        <ModalRechazarComprobante
+          pedido={modal.pedido}
+          saving={actionSaving}
+          onClose={() => setModal(null)}
+          onConfirm={(id, motivo) => handleRechazarPagoFinal(id, motivo)}
+        />
+      )}
 
       <Toast toast={toast} />
     </div>

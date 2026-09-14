@@ -15,6 +15,7 @@ class EstadoPedido(IntEnum):
     PARCIALMENTE_ENTREGADO = 18  # grupo A entregado, grupo B de producción pendiente
     ESCALADO_A_ADMIN       = 19  # cliente pidió hablar directamente con el admin (canal de excepción)
     ESPERANDO_PAGO         = 20  # fecha aprobada (o sin producción): esperando comprobante/anticipo
+    RETENIDO_EN_TIENDA     = 21  # pedido listo pero el cobro en tienda no se completó
 
 
 ESTADOS_FINALES = frozenset({EstadoPedido.ENTREGADO, EstadoPedido.CANCELADO})
@@ -39,6 +40,7 @@ ESTADOS_ACTIVOS = frozenset({
     EstadoPedido.PARCIALMENTE_ENTREGADO,
     EstadoPedido.ESCALADO_A_ADMIN,
     EstadoPedido.ESPERANDO_PAGO,
+    EstadoPedido.RETENIDO_EN_TIENDA,
 })
 
 TRANSICIONES: dict[int, frozenset[int]] = {
@@ -50,7 +52,7 @@ TRANSICIONES: dict[int, frozenset[int]] = {
     # confirmado → listo (saltar preparando) es válido si el pedido ya está listo de inmediato
     EstadoPedido.CONFIRMADO:      frozenset({EstadoPedido.PREPARANDO, EstadoPedido.LISTO, EstadoPedido.CANCELADO}),
     EstadoPedido.PREPARANDO:      frozenset({EstadoPedido.LISTO, EstadoPedido.CANCELADO}),
-    EstadoPedido.LISTO:           frozenset({EstadoPedido.EN_CAMINO, EstadoPedido.ENTREGADO, EstadoPedido.CANCELADO}),
+    EstadoPedido.LISTO:           frozenset({EstadoPedido.EN_CAMINO, EstadoPedido.ENTREGADO, EstadoPedido.CANCELADO, EstadoPedido.RETENIDO_EN_TIENDA}),
     EstadoPedido.EN_CAMINO:       frozenset({EstadoPedido.ENTREGADO, EstadoPedido.CANCELADO}),
     EstadoPedido.ENTREGADO:       frozenset(),
     EstadoPedido.CANCELADO:       frozenset(),
@@ -68,6 +70,10 @@ TRANSICIONES: dict[int, frozenset[int]] = {
     # Esperando pago: al aprobarse el comprobante/anticipo, sigue el flujo de
     # producción/despacho normal; si se rechaza el comprobante se queda aquí.
     EstadoPedido.ESPERANDO_PAGO:  frozenset({EstadoPedido.CONFIRMADO, EstadoPedido.PREPARANDO, EstadoPedido.LISTO, EstadoPedido.CANCELADO}),
+    # Retenido en tienda: el pedido estaba listo para recogida pero el cobro
+    # en caja no se completó. Desde aquí se puede: reintentar el cobro (→ Listo),
+    # convertirlo a domicilio (→ En camino), o cancelar.
+    EstadoPedido.RETENIDO_EN_TIENDA: frozenset({EstadoPedido.LISTO, EstadoPedido.EN_CAMINO, EstadoPedido.ENTREGADO, EstadoPedido.CANCELADO}),
 }
 
 
@@ -107,4 +113,9 @@ def validar_transicion(actual: int, nuevo: int, tiene_domicilio: bool) -> None:
             raise HTTPException(
                 400,
                 detail="Un pedido con domicilio debe pasar por 'en_camino' antes de entregarse",
+            )
+        if e_nuevo == EstadoPedido.RETENIDO_EN_TIENDA and tiene_domicilio:
+            raise HTTPException(
+                400,
+                detail="Solo pedidos de recogida en tienda pueden quedar retenidos",
             )

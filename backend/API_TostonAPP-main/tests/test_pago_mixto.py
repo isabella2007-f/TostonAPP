@@ -74,33 +74,33 @@ class MixtoConAnticipoTests(unittest.TestCase):
 
 
 class PideAnticipoTests(unittest.TestCase):
-    """Qué pedido pide anticipo. Las dos condiciones tienen que darse.
+    """Qué pedido pide anticipo: total >= $100.000 sin importar si hay producción.
 
-    El síntoma que motivó el cambio: se pedía anticipo en TODOS los pedidos,
-    con stock de sobra y por cualquier monto.
+    Regla nueva (PUNTO 1): el riesgo que cubre el anticipo es el monto
+    comprometido, no si hay que fabricar. Un pedido grande de stock también
+    inmoviliza recursos.
     """
 
-    def test_hay_que_fabricar_y_el_pedido_pesa(self):
-        self.assertTrue(_pide_anticipo(True, Decimal("50001")))
+    def test_pedido_grande_pide_anticipo_sin_importar_si_hay_produccion(self):
+        self.assertTrue(_pide_anticipo(Decimal("100001")))
 
-    def test_lo_que_sale_del_stock_no_pide_nada_por_caro_que_sea(self):
-        # El producto ya existe: si el cliente no aparece, se le vende al
-        # siguiente. No hay plata arriesgada por adelantado.
-        self.assertFalse(_pide_anticipo(False, Decimal("500000")))
+    def test_pedido_grande_de_solo_stock_tambien_pide_anticipo(self):
+        # Ya no importa si hay que fabricar: el monto es el que manda.
+        self.assertTrue(_pide_anticipo(Decimal("500000")))
 
-    def test_el_pedido_chico_no_pide_anticipo_aunque_haya_que_hornearlo(self):
-        self.assertFalse(_pide_anticipo(True, Decimal("30000")))
+    def test_pedido_chico_no_pide_anticipo(self):
+        self.assertFalse(_pide_anticipo(Decimal("30000")))
 
-    def test_el_umbral_no_se_cuenta_a_sí_mismo(self):
-        """Justo $50.000 todavía no pide: la regla es "más de"."""
-        self.assertFalse(_pide_anticipo(True, UMBRAL_ANTICIPO))
-        self.assertTrue(_pide_anticipo(True, UMBRAL_ANTICIPO + Decimal("1")))
+    def test_el_umbral_se_cuenta_a_si_mismo(self):
+        """Exactamente $100.000 ya pide: la regla es '>='."""
+        self.assertTrue(_pide_anticipo(UMBRAL_ANTICIPO))
+        self.assertFalse(_pide_anticipo(UMBRAL_ANTICIPO - Decimal("1")))
 
     def test_acepta_el_total_venga_como_venga(self):
         """El total llega como Decimal, float o str según quién pregunte."""
-        for total in (Decimal("60000"), 60000.0, 60000, "60000"):
+        for total in (Decimal("150000"), 150000.0, 150000, "150000"):
             with self.subTest(total=total):
-                self.assertTrue(_pide_anticipo(True, total))
+                self.assertTrue(_pide_anticipo(total))
 
 
 class PartirPagoMixtoTests(unittest.TestCase):

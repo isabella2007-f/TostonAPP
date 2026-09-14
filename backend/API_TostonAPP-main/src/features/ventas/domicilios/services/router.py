@@ -17,6 +17,7 @@ from .service import (
     editar_domicilio, asignar_repartidor, cambiar_estado,
     obtener_resumen_dia, obtener_mensajes, enviar_mensaje,
     obtener_repartidores, registrar_pago_efectivo,
+    listar_efectivo_pendiente, liquidar_efectivo,
 )
 
 router = APIRouter(prefix="/domicilios", tags=["Domicilios"])
@@ -207,3 +208,22 @@ def actualizar_estado(
     """Cambia el estado. Si es Entregado → registra Fecha_entrega automáticamente. Acepta Observaciones opcional."""
     _exigir_domicilio_propio(db, actual, id_domicilio)
     return cambiar_estado(db, id_domicilio, datos.Estado, datos.Observaciones)
+
+
+@router.get("/efectivo-pendiente")
+def efectivo_pendiente_endpoint(
+    db:     Session = Depends(get_db),
+    _:      dict    = Depends(requiere_permiso("editar_domicilios")),
+):
+    """Lista los domicilios entregados con pago en efectivo que aún no se liquidaron al admin."""
+    return listar_efectivo_pendiente(db)
+
+
+@router.patch("/{id_domicilio}/liquidar-efectivo", response_model=DomicilioResponse)
+def liquidar_efectivo_endpoint(
+    id_domicilio: int,
+    db:           Session = Depends(get_db),
+    actual:       dict    = Depends(requiere_permiso("editar_domicilios")),
+):
+    """Admin registra que el repartidor entregó el efectivo cobrado."""
+    return liquidar_efectivo(db, id_domicilio, actual["registro"].ID_Usuario)

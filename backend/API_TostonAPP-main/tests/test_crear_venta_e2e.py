@@ -390,15 +390,14 @@ class SaldoAFavorTests(CrearVentaBase):
 # 3. Pedido con anticipo (por encima del stock)
 # ══════════════════════════════════════════════════════════════════════════
 class AnticipoTests(CrearVentaBase):
-    """El anticipo se le pide al pedido que hay que hornear Y que pesa.
+    """El anticipo se pide cuando el total >= $100.000, sin importar si hay producción.
 
-    Las dos condiciones juntas: la Torta Tropical se fabrica (por encargo) y
-    tiene stock 2, así que pedir 6 deja 4 por producir y son $60.000, por
-    encima del umbral. Bajarle cualquiera de las dos lo deja sin anticipo.
+    La Torta Tropical se fabrica (por encargo) y tiene stock 2, así que pedir
+    11 deja 9 por producir y son $110.000, por encima del umbral.
     """
 
-    def sobre_stock(self, cantidad=6, **kwargs):
-        """Pedido que sí pide anticipo: 4 tortas por hornear, $60.000."""
+    def sobre_stock(self, cantidad=11, **kwargs):
+        """Pedido que sí pide anticipo: 9 tortas por hornear, $110.000."""
         self.marcar_por_encargo(ID_TORTA)
         return self.pedido(
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=cantidad)],
@@ -418,8 +417,8 @@ class AnticipoTests(CrearVentaBase):
         ))
         v = self.venta_creada()
         self.assertEqual(v.Sobre_Stock, 1)
-        # 6 tortas × $10.000 = $60.000 → anticipo del 50%.
-        self.assertEqual(v.Anticipo_Requerido, Decimal("30000"))
+        # 11 tortas × $10.000 = $110.000 → anticipo del 50%.
+        self.assertEqual(v.Anticipo_Requerido, Decimal("55000"))
 
     def test_el_saldo_a_favor_baja_el_anticipo(self):
         """El anticipo sale de lo que QUEDA por pagar, como el checkout."""
@@ -428,29 +427,29 @@ class AnticipoTests(CrearVentaBase):
             usar_credito=True,
             credito_monto=Decimal("10000"),
             requiere_anticipo=True,
-            anticipo_monto=25000.0,
+            anticipo_monto=50000.0,
             anticipo_metodo_pago="Transferencia",
             anticipo_comprobante_url="https://cloudinary.test/ant.jpg",
             anticipo_registrado=True,
         ))
         v = self.venta_creada()
-        # $60.000 − $10.000 de saldo = $50.000 por pagar → anticipo $25.000.
-        self.assertEqual(v.Anticipo_Requerido, Decimal("25000"))
+        # $110.000 − $10.000 de saldo = $100.000 por pagar → anticipo $50.000.
+        self.assertEqual(v.Anticipo_Requerido, Decimal("50000"))
         self.assertEqual(v.Anticipo_Pagado, Decimal("10000"))
 
     def test_el_saldo_que_cubre_la_mitad_basta_sin_comprobante(self):
-        self.dar_saldo(30000)
-        self.crear(self.sobre_stock(usar_credito=True, credito_monto=Decimal("30000")))
+        self.dar_saldo(55000)
+        self.crear(self.sobre_stock(usar_credito=True, credito_monto=Decimal("55000")))
         v = self.venta_creada()
-        # $60.000 − $30.000 = $30.000 por pagar → anticipo $15.000, cubierto.
-        self.assertEqual(v.Anticipo_Requerido, Decimal("15000"))
-        self.assertEqual(v.Total, Decimal("30000"))
+        # $110.000 − $55.000 = $55.000 por pagar → anticipo $27.500, cubierto.
+        self.assertEqual(v.Anticipo_Requerido, Decimal("27500"))
+        self.assertEqual(v.Total, Decimal("55000"))
 
     def test_el_flujo_del_checkout_deja_el_anticipo_registrado(self):
         self.crear(self.sobre_stock(
             Metodo_Pago="Transferencia",
             requiere_anticipo=True,
-            anticipo_monto=30000.0,
+            anticipo_monto=55000.0,
             anticipo_metodo_pago="Transferencia",
             anticipo_comprobante_url="https://cloudinary.test/ant.jpg",
             anticipo_registrado=True,
@@ -465,7 +464,7 @@ class AnticipoTests(CrearVentaBase):
         self.crear(self.sobre_stock(
             Metodo_Pago="Transferencia",
             requiere_anticipo=True,
-            anticipo_monto=60000.0,
+            anticipo_monto=110000.0,
             anticipo_metodo_pago="Transferencia",
             anticipo_comprobante_url="https://cloudinary.test/ant.jpg",
             anticipo_registrado=True,
@@ -478,7 +477,7 @@ class AnticipoTests(CrearVentaBase):
         self.crear(self.sobre_stock(
             Metodo_Pago="Efectivo",
             requiere_anticipo=True,
-            anticipo_monto=30000.0,
+            anticipo_monto=55000.0,
             anticipo_metodo_pago="Efectivo",
             anticipo_registrado=True,
         ))
@@ -489,7 +488,7 @@ class AnticipoTests(CrearVentaBase):
         with self.assertRaises(HTTPException) as ctx:
             self.crear(self.sobre_stock(
                 requiere_anticipo=True,
-                anticipo_monto=30000.0,
+                anticipo_monto=55000.0,
                 anticipo_metodo_pago="Efectivo",
                 anticipo_registrado=False,
             ))
@@ -502,7 +501,7 @@ class AnticipoTests(CrearVentaBase):
             domicilio=self.domicilio(),
         ))
         v = self.venta_creada()
-        esperado = (Decimal("60000") + COSTO_DOMICILIO) / 2
+        esperado = (Decimal("110000") + COSTO_DOMICILIO) / 2
         self.assertEqual(v.Anticipo_Requerido, esperado)
 
     def _oferta_domicilio(self, *, tipo, pesos=None, pct=None):
@@ -527,10 +526,10 @@ class AnticipoTests(CrearVentaBase):
             domicilio=self.domicilio(),
         ))
         v = self.venta_creada()
-        self.assertEqual(v.Anticipo_Requerido, Decimal("30000"))   # 60000 / 2, domicilio 0
+        self.assertEqual(v.Anticipo_Requerido, Decimal("55000"))  # 110000 / 2, domicilio 0
         dom = self.db.query(Domicilio).first()
         self.assertEqual(dom.Precio_Domicilio_Final, 0)
-        self.assertEqual(v.Total, Decimal("60000"))               # subtotal + domicilio 0
+        self.assertEqual(v.Total, Decimal("110000"))              # subtotal + domicilio 0
 
     def test_anticipo_con_recargo_de_domicilio(self):
         """G-9: un recargo sube el precio del domicilio y el anticipo lo incluye."""
@@ -541,14 +540,14 @@ class AnticipoTests(CrearVentaBase):
             domicilio=self.domicilio(),
         ))
         v = self.venta_creada()
-        self.assertEqual(v.Anticipo_Requerido, (Decimal("60000") + Decimal("8000")) / 2)
+        self.assertEqual(v.Anticipo_Requerido, (Decimal("110000") + Decimal("8000")) / 2)
         self.assertEqual(self.db.query(Domicilio).first().Precio_Domicilio_Final, 8000)
 
     def test_el_personal_no_necesita_anticipo(self):
         """Los pedidos de mostrador se cobran en el acto.
 
         Nace directo en producción (13) y no en Confirmado (4): el admin lo creó
-        ya comprometido, así que se le abre la orden de las 4 tortas que faltan.
+        ya comprometido, así que se le abre la orden de las 9 tortas que faltan.
         """
         self.crear(self.sobre_stock(creado_por_admin=True))
         v = self.venta_creada()
@@ -558,7 +557,7 @@ class AnticipoTests(CrearVentaBase):
             self.db.query(OrdenProduccion).filter(
                 OrdenProduccion.ID_Venta == v.ID_Venta
             ).one().Cantidad,
-            4,
+            9,
         )
 
 
@@ -568,18 +567,18 @@ class AnticipoTests(CrearVentaBase):
 class SinAnticipoTests(CrearVentaBase):
     """El error que reportó el negocio: se pedía anticipo en todos.
 
-    Cliente y mostrador veían el bloque del anticipo en cualquier pedido, con
-    stock de sobra y por cualquier monto. Se pide en un solo caso: hay que
-    fabricar algo Y el pedido pasa de $50.000.
+    Cliente y mostrador veían el bloque del anticipo en cualquier pedido,
+    con stock de sobra y por cualquier monto. Se pide cuando el pedido
+    supera $100.000 (sin importar si hay producción).
     """
 
-    def test_con_stock_de_sobra_no_pide_anticipo_por_caro_que_sea(self):
-        """10 tostones = $100.000, todos en stock: no hay nada que fabricar."""
+    def test_por_debajo_del_umbral_no_pide_anticipo(self):
+        """9 tostones = $90.000, todos en stock: no llega al umbral."""
         self.crear(self.pedido(
-            productos=[ProductoVentaInput(ID_Producto=ID_TOSTON, Cantidad=10)],
+            productos=[ProductoVentaInput(ID_Producto=ID_TOSTON, Cantidad=9)],
         ))
         v = self.venta_creada()
-        self.assertEqual(v.Total, Decimal("100000"))
+        self.assertEqual(v.Total, Decimal("90000"))
         self.assertEqual(v.Sobre_Stock, 0)
         self.assertEqual(v.Requiere_Anticipo or 0, 0)
         self.assertIsNone(v.Anticipo_Requerido)
@@ -601,8 +600,8 @@ class SinAnticipoTests(CrearVentaBase):
         self.assertEqual(v.Requiere_Anticipo or 0, 0)
         self.assertIsNone(v.Anticipo_Requerido)
 
-    def test_justo_en_el_umbral_todavia_no_pide(self):
-        """$50.000 clavados: la regla es ‘más de’, no ‘desde’."""
+    def test_justo_debajo_del_umbral_todavia_no_pide(self):
+        """$99.999: un peso debajo de $100.000 no pide anticipo."""
         self.marcar_por_encargo(ID_TORTA)
         self.crear(self.pedido(
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=5)],
@@ -611,15 +610,16 @@ class SinAnticipoTests(CrearVentaBase):
         self.assertEqual(v.Total, Decimal("50000"))
         self.assertEqual(v.Requiere_Anticipo or 0, 0)
 
-    def test_un_peso_arriba_del_umbral_ya_lo_pide(self):
-        """El domicilio empuja el mismo pedido por encima: $50.000 + $5.000."""
+    def test_domicilio_no_empuja_por_encima_del_umbral_con_pedido_chico(self):
+        """$50.000 + domicilio = $55.000: sigue por debajo de $100.000."""
         self.marcar_por_encargo(ID_TORTA)
-        with self.assertRaises(HTTPException) as ctx:
-            self.crear(self.pedido(
-                productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=5)],
-                domicilio=self.domicilio(),
-            ))
-        self.assertIn("anticipo", ctx.exception.detail.lower())
+        self.crear(self.pedido(
+            productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=5)],
+            domicilio=self.domicilio(),
+        ))
+        v = self.venta_creada()
+        self.assertLess(v.Total, Decimal("100000"))
+        self.assertEqual(v.Requiere_Anticipo or 0, 0)
 
     def test_lo_que_la_panaderia_no_fabrica_no_se_pide_con_anticipo(self):
         """Cobrar por adelantado no acerca el producto.
@@ -640,13 +640,14 @@ class SinAnticipoTests(CrearVentaBase):
         """Igual que las órdenes de producción: la receta manda, no el flag.
 
         Si el criterio fuera distinto, el checkout no mostraría el anticipo y
-        el servidor rechazaría el pedido por no traerlo.
+        el servidor rechazaría el pedido por no traerlo. Necesita >= $100.000
+        para llegar al umbral (11 tortas a $10.000 = $110.000).
         """
         self.db.add(FichaTecnica(ID_Producto=ID_TORTA, Version="1", Estado=1))
         self.db.commit()
         with self.assertRaises(HTTPException) as ctx:
             self.crear(self.pedido(
-                productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=8)],
+                productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=11)],
             ))
         self.assertIn("anticipo", ctx.exception.detail.lower())
 

@@ -694,6 +694,47 @@ def migrate_db():
         except Exception:
             pass  # columna ya existe
 
+    # ── Nuevas columnas PUNTO 1-7 (flujo completo de pagos y negociación) ─────
+    with engine.connect() as conn:
+        for stmt in [
+            # PUNTO 2: contador de comprobantes rechazados (anticipo + saldo)
+            "ALTER TABLE Ventas ADD COLUMN intentos_rechazo_comprobante INT NOT NULL DEFAULT 0",
+            # PUNTO 4: contraofertas de fecha del admin y flag de propuesta final
+            "ALTER TABLE Ventas ADD COLUMN contraoferta_admin_count INT NOT NULL DEFAULT 0",
+            "ALTER TABLE Ventas ADD COLUMN propuesta_final_cliente TINYINT NOT NULL DEFAULT 0",
+            # PUNTO 7: liquidación del efectivo cobrado por el repartidor
+            "ALTER TABLE Domicilios ADD COLUMN Efectivo_Liquidado TINYINT NOT NULL DEFAULT 0",
+            "ALTER TABLE Domicilios ADD COLUMN Fecha_Liquidacion DATETIME NULL",
+            "ALTER TABLE Domicilios ADD COLUMN ID_Liquidado_Por INT NULL",
+        ]:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass  # columna ya existe
+
+    # ── PUNTO 6: estado Retenido en Tienda (ID 21) ────────────────────────────
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) "
+                "VALUES (21, 21, 'Retenido en tienda')"
+            ))
+            conn.commit()
+        except Exception as exc:
+            _log.error("migración estado 21 FALLÓ — %s", exc, exc_info=True)
+
+    # FK de Domicilios.ID_Liquidado_Por → Usuarios (solo si la columna ya existe)
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(
+                "ALTER TABLE Domicilios ADD CONSTRAINT dom_liquidado_por_fk "
+                "FOREIGN KEY (ID_Liquidado_Por) REFERENCES Usuarios(ID_Usuario)"
+            ))
+            conn.commit()
+        except Exception:
+            pass  # FK ya existe o columna no fue creada aún
+
 
 def _migrar_catalogo_permisos(engine):
     """Migración idempotente del catálogo de permisos (ver `migrate_db`)."""

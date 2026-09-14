@@ -31,13 +31,14 @@ export const lineaPorProducir = (linea = {}) =>
 export const hayQueProducir = (lineas = []) => lineas.some(lineaPorProducir);
 
 /**
- * La regla completa: hay que fabricar algo Y el pedido pasa del umbral.
+ * La regla completa: el total del pedido supera el umbral.
  *
  * `totalPedido` es lo que cuesta el pedido (productos − descuento + domicilio),
  * ANTES del saldo a favor: el mismo total con el que el servidor decide.
+ * Ya no importa si hay que fabricar: cualquier pedido >= $100.000 pide anticipo.
  */
-export const pideAnticipo = (lineas, totalPedido) =>
-  hayQueProducir(lineas) && Number(totalPedido || 0) > UMBRAL_ANTICIPO;
+export const pideAnticipo = (_lineas, totalPedido) =>
+  Number(totalPedido || 0) >= UMBRAL_ANTICIPO;
 
 /**
  * Un producto cuenta como fabricable si está marcado o si tiene ficha técnica.

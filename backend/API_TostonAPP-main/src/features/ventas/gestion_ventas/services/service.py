@@ -59,24 +59,14 @@ ESTADO_DOMICILIO_CANCELADO = 5
 UMBRAL_ANTICIPO = Decimal("100000")
 
 
-def _pide_anticipo(necesita_produccion: bool, total_pedido) -> bool:
-    """Si este pedido tiene que dejar anticipo antes de entrar a producción.
+def _pide_anticipo(total_pedido) -> bool:
+    """Si este pedido tiene que dejar anticipo.
 
-    Dos condiciones, las dos necesarias:
-
-    - Hay que FABRICAR algo. Fabricar es lo único que arriesga plata por
-      adelantado: se compran insumos y se ocupa el horno antes de tener nada que
-      cobrar, y si el cliente no aparece, ese gasto ya se hizo. Lo que sale del
-      stock del día no arriesga nada: el producto ya existe y se le vende al
-      siguiente.
-    - Y el pedido pesa (más de UMBRAL_ANTICIPO). Por debajo de eso la pérdida
-      posible no justifica pedirle a nadie que transfiera por adelantado.
-
-    `necesita_produccion` es el mismo criterio con el que se abren las órdenes
-    de producción (`_productos_producibles`): se le pide anticipo exactamente al
-    pedido al que se le va a abrir una orden, ni a uno más.
+    Un solo criterio: el total supera el umbral ($100.000 COP). Se aplica
+    por igual a pedidos de stock y de producción; lo que protege no es solo
+    el costo de fabricar sino el riesgo del monto comprometido.
     """
-    return bool(necesita_produccion) and Decimal(str(total_pedido)) > UMBRAL_ANTICIPO
+    return Decimal(str(total_pedido)) >= UMBRAL_ANTICIPO
 
 
 def _calcular_anticipo(total_pedido: Decimal, credito_aplicado: Decimal) -> Decimal:
@@ -572,6 +562,12 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         # énfasis el canal de excepción (hablar con el admin) — no bloquea ni
         # cancela nada por sí solo, es puramente informativo.
         "resaltar_canal_excepcion": int(getattr(venta, "intentos_rechazo", 0) or 0) >= LIMITE_INTENTOS_RECHAZO,
+        # Comprobantes rechazados acumulados (anticipo + saldo)
+        "intentos_rechazo_comprobante": int(getattr(venta, "intentos_rechazo_comprobante", 0) or 0),
+        # Contraofertas de fecha usadas por el admin (máximo 1)
+        "contraoferta_admin_count": int(getattr(venta, "contraoferta_admin_count", 0) or 0),
+        # True cuando el admin usó su única contraoferta: al cliente solo le queda aceptar o cancelar
+        "propuesta_final_cliente": bool(getattr(venta, "propuesta_final_cliente", 0)),
         # None = no contestó, True = quiere todo junto el domingo, False = prefiere recibir lo disponible ya
         "envio_completo_domingo": (
             None if getattr(venta, "Envio_Completo_Domingo", None) is None
@@ -858,10 +854,10 @@ def _batch_ventas(ventas: list, db: Session) -> list:
             "requiere_fecha_propuesta": rfp,
             "fecha_rechazada":  getattr(venta, "Fecha_Rechazada", None),
             "intentos_rechazo": int(getattr(venta, "intentos_rechazo", 0) or 0),
-        # A partir de este número de rechazos, el frontend resalta con más
-        # énfasis el canal de excepción (hablar con el admin) — no bloquea ni
-        # cancela nada por sí solo, es puramente informativo.
-        "resaltar_canal_excepcion": int(getattr(venta, "intentos_rechazo", 0) or 0) >= LIMITE_INTENTOS_RECHAZO,
+            "resaltar_canal_excepcion": int(getattr(venta, "intentos_rechazo", 0) or 0) >= LIMITE_INTENTOS_RECHAZO,
+            "intentos_rechazo_comprobante": int(getattr(venta, "intentos_rechazo_comprobante", 0) or 0),
+            "contraoferta_admin_count": int(getattr(venta, "contraoferta_admin_count", 0) or 0),
+            "propuesta_final_cliente": bool(getattr(venta, "propuesta_final_cliente", 0)),
             "envio_completo_domingo": (
                 None if getattr(venta, "Envio_Completo_Domingo", None) is None
                 else bool(venta.Envio_Completo_Domingo)
@@ -1200,7 +1196,7 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
         #
         # Valor real del pedido antes de aplicar créditos (lo que cuesta).
         total_pedido         = subtotal_bruto - descuento_aplicado + costo_domicilio
-        anticipo_obligatorio = _pide_anticipo(necesita_produccion, total_pedido)
+        anticipo_obligatorio = _pide_anticipo(total_pedido)
         anticipo_requerido   = Decimal("0")
 
         # El pago mixto no sirve para anticipar: ver _mixto_bloqueado_por_anticipo.
@@ -1337,7 +1333,7 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
             # (`_avanzar_tras_fecha_confirmada`); si ya se sabe que el método
             # mixto no serviría para eso, se corta acá en vez de dejarlo pasar
             # y fallar más adelante.
-            if _mixto_bloqueado_por_anticipo(datos.Metodo_Pago, _pide_anticipo(True, nueva_venta.Total)):
+            if _mixto_bloqueado_por_anticipo(datos.Metodo_Pago, _pide_anticipo(nueva_venta.Total)):
                 db.rollback()
                 raise HTTPException(
                     status_code=400,
@@ -1349,10 +1345,32 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
                 )
         else:
             # Sin producción: no hay nada que aprobar en planta. Va directo a
-            # Esperando Pago (transferencia/mixto) o En Alistamiento (efectivo);
-            # el comprobante se adjunta después, ya no aquí.
+            # Esperando Pago (transferencia/mixto) o En Alistamiento (efectivo).
+            # Si el total supera el umbral se marca anticipo requerido igual
+            # que en el flujo de producción.
+            anticipo_stock = _pide_anticipo(nueva_venta.Total)
+            if anticipo_stock:
+                if _mixto_bloqueado_por_anticipo(datos.Metodo_Pago, True):
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Este pedido supera $100.000 y requiere anticipo; "
+                            "el método mixto no sirve para anticipar. Elige Efectivo o Transferencia."
+                        ),
+                    )
+                nueva_venta.Requiere_Anticipo  = 1
+                nueva_venta.Anticipo_Requerido = _calcular_anticipo(nueva_venta.Total, credito_aplicado)
             if _es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago):
-                nueva_venta.Estado = EstadoPedido.ESPERANDO_PAGO
+                if nueva_venta.Total <= 0:
+                    # El crédito cubrió el total: no hace falta comprobante
+                    nueva_venta.Estado      = EstadoPedido.CONFIRMADO
+                    nueva_venta.Estado_Pago = "pagado_completo"
+                    nueva_venta.Pago_Final_Registrado = 1
+                    if not datos.domicilio:
+                        _descontar_stock_venta(db, nueva_venta.ID_Venta, PARTE_TODO)
+                else:
+                    nueva_venta.Estado = EstadoPedido.ESPERANDO_PAGO
             else:
                 nueva_venta.Estado = EstadoPedido.CONFIRMADO
                 # Como al confirmar cualquier pedido sin domicilio: reservar
@@ -1531,14 +1549,90 @@ def registrar_pago_final(db: Session, id_venta: int, datos) -> dict:
         )
 
     # ── Registro del pago final ────────────────────────
-    # Si pasó las 3 validaciones anteriores, se guarda el pago
-    # y se marca la venta como completamente pagada.
+    # Queda pendiente de validación: el admin aprueba o rechaza igual que con
+    # el anticipo. `Pago_Final_Registrado` se pone en 1 solo cuando el admin
+    # aprueba (ver `aprobar_pago_final`).
     venta.Pago_Final_Monto           = datos.monto
     venta.Pago_Final_Metodo_Pago     = datos.metodo_pago
     venta.Pago_Final_Comprobante_Url = datos.comprobante_url
     venta.Pago_Final_Fecha           = _now()
-    venta.Pago_Final_Registrado      = 1
-    venta.Estado_Pago                = "pagado_completo"
+    venta.Estado_Pago                = "pago_final_pendiente_validacion"
+
+    notificar(
+        db, "pago_final_pendiente", "Pago final pendiente de validación",
+        f"El cliente subió el comprobante del saldo final del pedido #{id_venta}. Revisalo.",
+        id_venta, "/ventas/pedidos",
+    )
+
+    db.commit()
+    db.refresh(venta)
+    return _formato_venta(venta, db)
+
+
+def aprobar_pago_final(db: Session, id_venta: int) -> dict:
+    """Admin aprueba el comprobante del saldo final."""
+    venta = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if (getattr(venta, "Estado_Pago", "") or "").strip() != "pago_final_pendiente_validacion":
+        raise HTTPException(
+            status_code=400,
+            detail="El pago final no está pendiente de validación",
+        )
+
+    venta.Pago_Final_Registrado = 1
+    venta.Estado_Pago           = "pagado_completo"
+
+    notificar(
+        db, "pago_final_aprobado", "Pago final aprobado",
+        f"Tu saldo final del pedido #{id_venta} fue aprobado.",
+        id_venta, "/ventas/pedidos",
+    )
+
+    db.commit()
+    db.refresh(venta)
+    return _formato_venta(venta, db)
+
+
+def rechazar_pago_final(db: Session, id_venta: int, motivo: str) -> dict:
+    """Admin rechaza el comprobante del saldo final.
+
+    Usa el mismo contador de rechazos que el anticipo; al tercer rechazo
+    acumulado el pedido se cancela automáticamente.
+    """
+    venta = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if (getattr(venta, "Estado_Pago", "") or "").strip() != "pago_final_pendiente_validacion":
+        raise HTTPException(
+            status_code=400,
+            detail="El pago final no está pendiente de validación",
+        )
+
+    intentos = int(getattr(venta, "intentos_rechazo_comprobante", 0) or 0) + 1
+    venta.intentos_rechazo_comprobante = intentos
+    venta.Estado_Pago                  = "pago_final_rechazado"
+    venta.Motivo_Rechazo_Comprobante   = motivo.strip()
+
+    if intentos >= LIMITE_INTENTOS_RECHAZO:
+        notificar(
+            db, "pago_final_rechazado",
+            f"Pedido #{id_venta} cancelado — saldo final rechazado 3 veces",
+            f"Último motivo: {motivo}. Pedido cancelado automáticamente.",
+            id_venta, "/ventas/pedidos",
+        )
+        db.flush()
+        cambiar_estado(db, id_venta, int(EstadoPedido.CANCELADO))
+        db.refresh(venta)
+        return _formato_venta(venta, db)
+
+    notificar(
+        db, "pago_final_rechazado", f"Saldo final rechazado — Pedido #{id_venta}",
+        f"Motivo: {motivo}. Intento {intentos}/{LIMITE_INTENTOS_RECHAZO}.",
+        id_venta, "/ventas/pedidos",
+    )
 
     db.commit()
     db.refresh(venta)
@@ -1997,6 +2091,22 @@ def proponer_fecha(db: Session, id_venta: int, fecha_entrega, id_admin: int | No
             status_code=400,
             detail="La fecha de entrega propuesta no puede ser en el pasado",
         )
+    # Una contraoferta es cuando el cliente ya rechazó la propuesta anterior.
+    # El admin solo tiene derecho a una: si ya la usó, tiene que escalar.
+    es_contraoferta = venta.Estado == EstadoPedido.FECHA_RECHAZADA
+    if es_contraoferta:
+        conteo = int(getattr(venta, "contraoferta_admin_count", 0) or 0)
+        if conteo >= 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Ya se usó la única contraoferta permitida. "
+                    "Escala el pedido para negociar manualmente con el cliente."
+                ),
+            )
+        venta.contraoferta_admin_count = conteo + 1
+        venta.propuesta_final_cliente  = 1
+
     descartar_notificacion(db, "produccion_requerida", id_venta)
     descartar_notificacion(db, "pedido_sobre_stock",   id_venta)
     venta.Estado = EstadoPedido.FECHA_PROPUESTA
@@ -2004,7 +2114,12 @@ def proponer_fecha(db: Session, id_venta: int, fecha_entrega, id_admin: int | No
     _guardar_historial_fecha(db, id_venta, "propuesta", fecha_entrega, id_usuario=id_admin)
     notificar(
         db, "fecha_propuesta", "Fecha de entrega propuesta",
-        f"El administrador propuso una fecha de entrega para tu pedido #{id_venta}",
+        (
+            f"El administrador hizo su propuesta final para el pedido #{id_venta}. "
+            "Aceptá o cancelá el pedido."
+        ) if es_contraoferta else (
+            f"El administrador propuso una fecha de entrega para tu pedido #{id_venta}"
+        ),
         id_venta, "/ventas/pedidos",
     )
     db.commit()
@@ -2040,7 +2155,7 @@ def _avanzar_tras_fecha_confirmada(db: Session, venta: Venta, fecha_entrega, id_
     venta.Fecha_entrega_esperada = fecha_entrega
     venta.intentos_rechazo = 0
 
-    anticipo_obligatorio = _pide_anticipo(True, venta.Total)
+    anticipo_obligatorio = _pide_anticipo(venta.Total)
     if anticipo_obligatorio:
         venta.Anticipo_Requerido = _calcular_anticipo(venta.Total, Decimal("0"))
         venta.Requiere_Anticipo  = 1

@@ -127,6 +127,10 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
         "estado_pago":          venta.Estado_Pago if venta else None,
         "productos":            productos,
         "telefono_cliente":     cliente.Telefono if cliente else "",
+        # Liquidación del efectivo cobrado por el repartidor
+        "efectivo_liquidado":   bool(getattr(dom, "Efectivo_Liquidado", 0)),
+        "fecha_liquidacion":    getattr(dom, "Fecha_Liquidacion", None),
+        "id_liquidado_por":     getattr(dom, "ID_Liquidado_Por", None),
     }
 
 
@@ -834,6 +838,43 @@ def registrar_pago_efectivo(
     # la entrega, y mezclarle las líneas [COBRO|...] las volvía ilegibles.
     auditoria = dom.Cobro_Auditoria or ""
     dom.Cobro_Auditoria = f"{auditoria}\n{audit_line}".strip()
+
+    db.commit()
+    db.refresh(dom)
+    return _formato_domicilio(dom, db)
+
+
+def listar_efectivo_pendiente(db: Session) -> list[dict]:
+    """Lista los domicilios donde el repartidor cobró efectivo y aún no se liquidó."""
+    from sqlalchemy import or_
+    doms = (
+        db.query(Domicilio)
+        .join(Venta, Venta.ID_Venta == Domicilio.ID_Venta)
+        .filter(
+            Domicilio.Efectivo_Liquidado.in_([0, None]),
+            Domicilio.Estado == int(EstadoDomicilio.ENTREGADO),
+            or_(
+                Venta.Metodo_Pago.ilike("%efectivo%"),
+                Venta.Metodo_Pago.ilike("%mixto%"),
+            ),
+        )
+        .all()
+    )
+    return [_formato_domicilio(d, db) for d in doms]
+
+
+def liquidar_efectivo(db: Session, id_domicilio: int, id_usuario_actual: int) -> dict:
+    """Admin registra que el efectivo cobrado por el repartidor fue entregado."""
+    dom = db.query(Domicilio).filter(Domicilio.ID_Domicilio == id_domicilio).first()
+    if not dom:
+        raise HTTPException(status_code=404, detail="Domicilio no encontrado")
+
+    if int(getattr(dom, "Efectivo_Liquidado", 0) or 0) == 1:
+        raise HTTPException(status_code=409, detail="Este domicilio ya fue liquidado")
+
+    dom.Efectivo_Liquidado = 1
+    dom.Fecha_Liquidacion  = _now()
+    dom.ID_Liquidado_Por   = id_usuario_actual
 
     db.commit()
     db.refresh(dom)

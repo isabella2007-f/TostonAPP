@@ -121,3 +121,10 @@ export const registrarPagoEfectivo = async (id, { recibido, monto = null, motivo
     body: JSON.stringify({ recibido, monto, motivo }),
   });
 };
+
+// PUNTO 7: liquidación del efectivo cobrado por repartidores
+export const getEfectivoPendiente = async () =>
+  apiFetch("/domicilios/efectivo-pendiente");
+
+export const liquidarEfectivo = async (id) =>
+  apiFetch(`/domicilios/${id}/liquidar-efectivo`, { method: "PATCH" });

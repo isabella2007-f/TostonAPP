@@ -435,6 +435,13 @@ class Venta(Base):
     # escala nada por sí solo; a partir de LIMITE_INTENTOS_RECHAZO el frontend
     # resalta con más énfasis el canal de excepción (hablar con el admin).
     intentos_rechazo         = Column(Integer,      default=0,           nullable=True)
+    # Comprobantes de pago rechazados (anticipo + saldo final acumulados).
+    # Al llegar a LIMITE_INTENTOS_RECHAZO el pedido se cancela automáticamente.
+    intentos_rechazo_comprobante = Column(Integer,  default=0,           nullable=True)
+    # Contraofertas de fecha que el admin ya hizo (máximo 1).
+    contraoferta_admin_count = Column(Integer,      default=0,           nullable=True)
+    # 1 cuando el admin ya usó su contraoferta: al cliente solo le queda aceptar o cancelar.
+    propuesta_final_cliente  = Column(Integer,      default=0,           nullable=True)
 
     usuario            = relationship("Usuario", back_populates="ventas")
     productos          = relationship("VentaXProducto", back_populates="venta")
@@ -521,9 +528,17 @@ class Domicilio(Base):
     Precio_Domicilio_Final = Column(Integer, nullable=True)
     Desglose_Ofertas       = Column(JSON, nullable=True)
 
-    venta    = relationship("Venta", back_populates="domicilios")
-    empleado = relationship("Usuario", foreign_keys=[ID_Empleado])
-    barrio   = relationship("Barrio", foreign_keys=[ID_Barrio])
+    # ── Liquidación del efectivo cobrado por el repartidor ──────────────────
+    # Cuando el método de pago es efectivo, el repartidor cobra en el domicilio
+    # y el admin registra aquí que esa plata ya fue entregada a la empresa.
+    Efectivo_Liquidado  = Column(Integer, default=0, nullable=True)   # 0 = pendiente, 1 = liquidado
+    Fecha_Liquidacion   = Column(DateTime, nullable=True)
+    ID_Liquidado_Por    = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
+
+    venta          = relationship("Venta", back_populates="domicilios")
+    empleado       = relationship("Usuario", foreign_keys=[ID_Empleado])
+    liquidado_por  = relationship("Usuario", foreign_keys=[ID_Liquidado_Por])
+    barrio         = relationship("Barrio", foreign_keys=[ID_Barrio])
 
 
 class Devolucion(Base):

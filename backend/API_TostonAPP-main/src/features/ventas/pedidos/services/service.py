@@ -12,6 +12,7 @@ from src.shared.services.models import (
 from src.features.ventas.gestion_ventas.services.service import (
     _formato_venta, _now, cambiar_estado as _gv_cambiar_estado,
     _abonar_credito, _avanzar_tras_pago_aprobado, _validar_fecha_entrega_esperada,
+    LIMITE_INTENTOS_RECHAZO,
 )
 from src.features.ventas.ubicaciones.services.service import resolver_domicilio
 from src.features.ventas.domicilios.services.estados import EstadoDomicilio
@@ -778,14 +779,31 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
     if estado_pago == "comprobante_rechazado":
         raise HTTPException(status_code=409, detail="El comprobante ya fue rechazado")
 
+    intentos = int(getattr(pedido, "intentos_rechazo_comprobante", 0) or 0) + 1
+    pedido.intentos_rechazo_comprobante = intentos
     pedido.Estado_Pago = "comprobante_rechazado"
     pedido.Motivo_Rechazo_Comprobante = motivo.strip()
+
+    if intentos >= LIMITE_INTENTOS_RECHAZO:
+        # Auto-cancelar: el cliente agotó sus intentos de comprobante
+        notificar(
+            db,
+            "comprobante_rechazado",
+            f"Pedido #{id_venta} cancelado — comprobante rechazado 3 veces",
+            f"Último motivo: {motivo}. Se canceló el pedido automáticamente por superar el límite de intentos.",
+            id_venta,
+            "/ventas/pedidos",
+        )
+        db.flush()
+        _gv_cambiar_estado(db, id_venta, int(EstadoPedido.CANCELADO))
+        db.refresh(pedido)
+        return _formato_venta(pedido, db)
 
     notificar(
         db,
         "comprobante_rechazado",
         f"Comprobante rechazado — Pedido #{id_venta}",
-        f"Motivo: {motivo}",
+        f"Motivo: {motivo}. Intento {intentos}/{LIMITE_INTENTOS_RECHAZO}.",
         id_venta,
         "/ventas/pedidos",
     )
