@@ -161,6 +161,17 @@ def migrate_db():
             # Marca que el propio cliente eliminó su cuenta (para distinguirla de
             # una desactivada por un admin y poder recuperarla).
             "ALTER TABLE Usuarios ADD COLUMN Auto_Eliminado TINYINT(1) NOT NULL DEFAULT 0",
+            # Domicilios fantasma de pedidos ya divididos: la fila original
+            # (sin grupo) dejó de ser un viaje cuando cada grupo hizo el suyo,
+            # pero las divididas antes del arreglo quedaron Pendientes y sin
+            # repartidor, ofreciéndose en el tablero para asignar. Se cierran;
+            # la fila se conserva porque de ella salen la dirección que
+            # heredaron los grupos y el precio que se descontó del total.
+            """UPDATE Domicilios d
+               JOIN (SELECT DISTINCT ID_Venta FROM Domicilios
+                      WHERE ID_Grupo IS NOT NULL) g ON g.ID_Venta = d.ID_Venta
+                SET d.Estado = 5, d.ID_Empleado = NULL
+              WHERE d.ID_Grupo IS NULL AND d.Estado NOT IN (5, 8)""",
             # Chat de domicilios persistido en BD (antes se perdía en cada reinicio)
             """CREATE TABLE IF NOT EXISTS MensajesChat (
                 ID_Mensaje       INT AUTO_INCREMENT PRIMARY KEY,

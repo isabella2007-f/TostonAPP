@@ -8,7 +8,7 @@ import {
   MapPin, AlertTriangle, AlertCircle, User, ShoppingBag, CreditCard, Calendar,
   Banknote, Building2, Scale, Eye, Globe, Zap, PenLine, FileText,
   Check, X, Ban, Navigation, ClipboardList, BarChart2, Truck, ChevronRight,
-  ChevronDown,
+  ChevronDown, History,
   Utensils,
 } from "lucide-react";
 import { getDomicilios, asignarRepartidor, actualizarDomicilio, cambiarEstadoDomicilio, registrarPagoEfectivo } from "../../../services/domiciliosService.js";
@@ -1165,6 +1165,11 @@ export default function GestionDomicilios() {
       emp ? `${emp.nombre} ${emp.apellidos}` : "",
     ].filter(Boolean).some(v => v.toLowerCase().includes(q));
 
+  // La pestaña decide de qué mitad se habla; los chips filtran dentro.
+  const enSuPestana = tab === "historial"
+    ? !esDomicilioActivo(p.estadoId)
+    : esDomicilioActivo(p.estadoId);
+
   const matchE =
     filterEstado === "todos"       ? true :
     filterEstado === "activos"     ? esDomicilioActivo(p.estadoId) :
@@ -1180,13 +1185,15 @@ export default function GestionDomicilios() {
       if (filterHasta && fecha && new Date(`${filterHasta}T00:00:00`) < fecha) matchFecha = false;
     }
 
-    return matchQ && matchE && matchFecha;
+    return enSuPestana && matchQ && matchE && matchFecha;
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const safePage   = Math.min(page, totalPages);
   const paged      = filtered.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
-  useEffect(() => setPage(1), [search, filterEstado, filterDesde, filterHasta]);
+  useEffect(() => setPage(1), [search, filterEstado, filterDesde, filterHasta, tab]);
+  // Los chips de estado de una pestaña no significan nada en la otra.
+  useEffect(() => setFilterEstado("todos"), [tab]);
 
   const hasFilter = filterEstado !== "todos" || filterDesde || filterHasta;
 
@@ -1357,8 +1364,9 @@ export default function GestionDomicilios() {
         {/* ── Tabs ── */}
         <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
           {[
-            { key: "tabla",     label: "Lista de domicilios",       Icon: ClipboardList },
-            { key: "historial", label: "Historial por domiciliario", Icon: BarChart2 },
+            { key: "tabla",       label: "Activos",     Icon: Bike },
+            { key: "historial",   label: "Historial",   Icon: History },
+            { key: "domiciliario", label: "Por domiciliario", Icon: BarChart2 },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key)} style={{
               padding: "9px 18px", borderRadius: "10px 10px 0 0", border: "none",
@@ -1373,7 +1381,7 @@ export default function GestionDomicilios() {
         </div>
 
         {/* ══ TAB: Tabla ══ */}
-        {tab === "tabla" && (
+        {(tab === "tabla" || tab === "historial") && (
           <>
             {totalDomicilios > 100 && !search && !filterDesde && !filterHasta && (
               <div className="info-box info-box--warning" style={{ marginBottom: 12 }}>
@@ -1457,48 +1465,61 @@ export default function GestionDomicilios() {
               </div>
             </div>
 
-            {sinAsignarLista.length > 0 && (
-              <div className="aviso-sin-asignar">
+            {tab === "tabla" && sinAsignarLista.length > 0 && (
+              <section className="sin-asignar">
                 <button
                   type="button"
-                  className="aviso-head"
+                  className="sin-asignar__head"
                   aria-expanded={avisoAbierto}
                   onClick={() => setAvisoAbierto(v => !v)}
                 >
-                  <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-                  <span className="aviso-head__txt">
-                    {sinAsignarLista.length === 1
-                      ? "Hay 1 domicilio sin domiciliario"
-                      : `Hay ${sinAsignarLista.length} domicilios sin domiciliario`}
+                  <span className="sin-asignar__icono"><Bike size={16} /></span>
+                  <span className="sin-asignar__txt">
+                    <strong>Esperando domiciliario</strong>
+                    <em>
+                      {sinAsignarLista.length === 1
+                        ? "1 pedido listo para salir, sin quién lo lleve"
+                        : `${sinAsignarLista.length} pedidos listos para salir, sin quién los lleve`}
+                    </em>
                   </span>
-                  <span className="aviso-badge">{sinAsignarLista.length}</span>
-                  <ChevronDown size={17} className="aviso-chevron" />
+                  <span className="sin-asignar__badge">{sinAsignarLista.length}</span>
+                  <ChevronDown size={18} className="sin-asignar__chevron" />
                 </button>
 
                 {avisoAbierto && (
-                  <div className="aviso-body">
-                    El pedido ya está listo para salir. Haz clic en uno para
-                    asignarle domiciliario.
-                    <div className="aviso-chips">
-                      {sinAsignarLista.map(d => (
+                  <div className="sin-asignar__grid">
+                    {sinAsignarLista.map(d => (
+                      <article key={d.id} className="sa-card">
+                        <header className="sa-card__top">
+                          <span className="sa-card__num">{d.numero}</span>
+                          {d.total != null && (
+                            <span className="sa-card__total">{formatCOP(d.total)}</span>
+                          )}
+                        </header>
+                        <p className="sa-card__cliente">
+                          <User size={12} /> {d.cliente?.nombre || "Sin nombre"}
+                        </p>
+                        {d.direccion_entrega && (
+                          <p className="sa-card__dir">
+                            <MapPin size={12} />
+                            <span>
+                              {d.direccion_entrega}
+                              {d.barrio_entrega ? ` · ${d.barrio_entrega}` : ""}
+                            </span>
+                          </p>
+                        )}
                         <button
-                          key={d.id}
                           type="button"
-                          className="aviso-chip"
-                          title={`Asignar domiciliario a ${d.numero}`}
+                          className="sa-card__btn"
                           onClick={() => abrirReasignar(d)}
                         >
-                          <Bike size={11} style={{ flexShrink: 0 }} />
-                          <span className="aviso-chip__nom">
-                            {d.cliente?.nombre || d.numero}
-                          </span>
-                          {d.direccion_entrega && <em>{d.direccion_entrega}</em>}
+                          <Bike size={13} /> Asignar domiciliario
                         </button>
-                      ))}
-                    </div>
+                      </article>
+                    ))}
                   </div>
                 )}
-              </div>
+              </section>
             )}
 
             <div className="card">
@@ -1691,7 +1712,7 @@ export default function GestionDomicilios() {
         )}
 
         {/* ══ TAB: Historial ══ */}
-        {tab === "historial" && (
+        {tab === "domiciliario" && (
           <div className="card" style={{ padding: 20 }}>
             <HistorialDomiciliario
               domicilios={gestionables}
