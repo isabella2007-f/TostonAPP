@@ -420,68 +420,6 @@ def migrate_db():
         except Exception as exc:
             _log.error("migración Envio_Completo_Domingo FALLÓ — %s", exc, exc_info=True)
 
-    # ── Tablas de grupos de envío ─────────────────────────────────────────────
-    with engine.connect() as conn:
-        for stmt in [
-            """CREATE TABLE IF NOT EXISTS Grupos_Envio (
-                ID_Grupo      INT AUTO_INCREMENT PRIMARY KEY,
-                ID_Venta      INT NOT NULL,
-                Tipo          VARCHAR(20) NOT NULL,
-                Fecha_Entrega DATETIME NULL,
-                Tipo_Entrega  VARCHAR(20) NULL,
-                Estado        VARCHAR(20) NOT NULL DEFAULT 'pendiente',
-                FOREIGN KEY (ID_Venta) REFERENCES Ventas(ID_Venta)
-            )""",
-            """CREATE TABLE IF NOT EXISTS Grupo_Envio_Item (
-                ID_Item     INT AUTO_INCREMENT PRIMARY KEY,
-                ID_Grupo    INT NOT NULL,
-                ID_Venta    INT NOT NULL,
-                ID_Producto INT NOT NULL,
-                FOREIGN KEY (ID_Grupo)    REFERENCES Grupos_Envio(ID_Grupo),
-                FOREIGN KEY (ID_Venta)    REFERENCES Ventas(ID_Venta),
-                FOREIGN KEY (ID_Producto) REFERENCES Productos(ID_Producto)
-            )""",
-        ]:
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception as exc:
-                _log.error("migración grupos_envio FALLÓ — %s", exc, exc_info=True)
-        _log.info("migración Grupos_Envio / Grupo_Envio_Item: tablas listas")
-
-    # ── Columna Cantidad en Grupo_Envio_Item (soporte para cantidades parciales) ─
-    with engine.connect() as conn:
-        col_existe = conn.execute(text(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS "
-            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Grupo_Envio_Item' AND COLUMN_NAME = 'Cantidad'"
-        )).scalar()
-        if not col_existe:
-            conn.execute(text("ALTER TABLE Grupo_Envio_Item ADD COLUMN Cantidad INT NOT NULL DEFAULT 1"))
-            conn.commit()
-            _log.info("migración: columna Cantidad añadida a Grupo_Envio_Item")
-        else:
-            _log.info("migración Grupo_Envio_Item.Cantidad: ya existe")
-
-    # ── Columna ID_Grupo en Domicilios (domicilios de grupos de envío) ─────────
-    with engine.connect() as conn:
-        col_existe = conn.execute(text(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS "
-            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Domicilios' AND COLUMN_NAME = 'ID_Grupo'"
-        )).scalar()
-        if not col_existe:
-            try:
-                conn.execute(text("ALTER TABLE Domicilios ADD COLUMN ID_Grupo INT NULL"))
-                conn.execute(text(
-                    "ALTER TABLE Domicilios ADD CONSTRAINT fk_domicilios_grupo "
-                    "FOREIGN KEY (ID_Grupo) REFERENCES Grupos_Envio(ID_Grupo)"
-                ))
-                conn.commit()
-                _log.info("migración: columna ID_Grupo añadida a Domicilios")
-            except Exception as exc:
-                _log.error("migración Domicilios.ID_Grupo FALLÓ — %s", exc, exc_info=True)
-        else:
-            _log.info("migración Domicilios.ID_Grupo: ya existe")
-
     # ── Refactor del catálogo de permisos ─────────────────────────────────────
     # Renombres, fusión de "ventas" en "pedidos", retiro de permisos sin uso y
     # migración de los endpoints que usaban un permiso "proxy" de otro módulo a

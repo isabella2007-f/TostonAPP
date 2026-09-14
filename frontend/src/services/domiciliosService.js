@@ -34,8 +34,6 @@ const adaptDomicilio = (d) => {
     estado_pago:        d.estado_pago        || null,
     domicilio:          true,
     venta_estado_id:    d.venta_estado ?? null,
-    id_grupo:           d.ID_Grupo    ?? null,
-    tipo_grupo:         d.tipo_grupo  ?? null,
     cliente: {
       nombre:   d.nombre_cliente   || "",
       correo:   "",

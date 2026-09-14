@@ -1,5 +1,4 @@
 ﻿import { useState, useEffect, useRef } from "react";
-import { FEATURE_DIVISION_PEDIDOS } from "../../../config/featureFlags";
 import { esEmpleadoRepartidor } from "../../../utils/roles.js";
 import { Navigate } from "react-router-dom";
 import { formatCOP } from "../../../utils/formato";

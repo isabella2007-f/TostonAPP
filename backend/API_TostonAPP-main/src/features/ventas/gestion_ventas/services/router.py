@@ -10,8 +10,6 @@ from .schemas import (
     VentaCreate, VentaEstado, VentaResponse, VentaListResponse,
     FechaEntregaInput, PagoFinalCreate, EnvioCompletoDomingoInput,
     RechazarFechaInput, AcuerdoManualInput,
-    CrearGruposEnvioInput, ActualizarEstadoGrupoInput, ActualizarTipoEntregaGrupoInput,
-    EditarGrupoInput,
 )
 from .service import (
     obtener_ventas, obtener_venta, obtener_mi_venta, crear_venta, cambiar_estado,
@@ -19,9 +17,6 @@ from .service import (
     proponer_fecha, aceptar_fecha, rechazar_fecha, aprobar_fecha_directa, solicitar_escalado,
     registrar_pago_final, guardar_envio_completo_domingo,
     resolver_escalado_acuerdo_manual, resolver_escalado_cancelar,
-    obtener_items_listos, crear_grupos_envio,
-    actualizar_estado_grupo, actualizar_tipo_entrega_grupo, cancelar_grupo_pendiente,
-    editar_grupo,
 )
 
 router = APIRouter(prefix="/ventas", tags=["Gestión de Ventas"])
@@ -232,94 +227,3 @@ def resolver_escalado_cancelar_endpoint(
 ):
     """Admin cancela el pedido escalado y devuelve el crédito usado."""
     return resolver_escalado_cancelar(db, id_venta, actual)
-
-
-# ── Grupos de envío ────────────────────────────────────────────────────────
-
-@router.get("/{id_venta}/items-listos")
-def ver_items_listos(
-    id_venta: int,
-    db:       Session = Depends(get_db),
-    actual:   dict    = Depends(obtener_usuario_actual),
-):
-    """Retorna qué productos del pedido ya están listos y cuáles no.
-    Disponible para el cliente dueño y para admin/empleados."""
-    return obtener_items_listos(db, id_venta, actual)
-
-
-@router.post("/{id_venta}/crear-grupos-envio", response_model=VentaResponse)
-def crear_grupos_envio_endpoint(
-    id_venta: int,
-    datos:    CrearGruposEnvioInput,
-    db:       Session = Depends(get_db),
-    actual:   dict    = Depends(obtener_usuario_actual),
-):
-    """El cliente divide el pedido en dos grupos de envío:
-    Grupo A (anticipado, items listos) con la fecha que elige y
-    Grupo B (programado, items en producción) con la fecha acordada."""
-    return crear_grupos_envio(
-        db, id_venta,
-        datos.fecha_anticipada,
-        datos.tipo_entrega_a,
-        datos.tipo_entrega_b,
-        actual,
-        datos.direccion_a,   datos.id_barrio_a,
-        datos.direccion_b,   datos.id_barrio_b,
-    )
-
-
-@router.patch("/{id_venta}/grupos/{id_grupo}/estado", response_model=VentaResponse)
-def actualizar_estado_grupo_endpoint(
-    id_venta:  int,
-    id_grupo:  int,
-    datos:     ActualizarEstadoGrupoInput,
-    db:        Session = Depends(get_db),
-    actual:    dict    = Depends(requiere_permiso("editar_pedidos")),
-):
-    """Admin avanza el estado de un grupo de envío: pendiente → enviado → entregado."""
-    return actualizar_estado_grupo(db, id_venta, id_grupo, datos.estado, actual)
-
-
-@router.patch("/{id_venta}/grupos/{id_grupo}/tipo-entrega", response_model=VentaResponse)
-def actualizar_tipo_entrega_grupo_endpoint(
-    id_venta:  int,
-    id_grupo:  int,
-    datos:     ActualizarTipoEntregaGrupoInput,
-    db:        Session = Depends(get_db),
-    actual:    dict    = Depends(obtener_usuario_actual),
-):
-    """Cliente o admin actualiza el tipo de entrega de un grupo (domicilio/tienda)."""
-    return actualizar_tipo_entrega_grupo(
-        db, id_venta, id_grupo, datos.tipo_entrega, actual,
-        id_barrio=datos.id_barrio, direccion=datos.direccion,
-    )
-
-
-@router.delete("/{id_venta}/grupos/{id_grupo}", response_model=VentaResponse)
-def cancelar_grupo_pendiente_endpoint(
-    id_venta: int,
-    id_grupo: int,
-    db:       Session = Depends(get_db),
-    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
-):
-    """Admin cancela cualquier grupo de un pedido dividido.
-    Devuelve al cliente el anticipo proporcional al valor del grupo cancelado."""
-    return cancelar_grupo_pendiente(db, id_venta, id_grupo, actual)
-
-
-@router.put("/{id_venta}/grupos/{id_grupo}", response_model=VentaResponse)
-def editar_grupo_endpoint(
-    id_venta: int,
-    id_grupo: int,
-    datos:    EditarGrupoInput,
-    db:       Session = Depends(get_db),
-    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
-):
-    """Admin edita fecha y/o tipo de entrega de un grupo en estado 'pendiente'.
-    Bloqueado si el domicilio ya tiene repartidor asignado."""
-    return editar_grupo(
-        db, id_venta, id_grupo,
-        datos.fecha_entrega, datos.tipo_entrega,
-        datos.direccion_entrega, datos.id_barrio,
-        actual,
-    )
