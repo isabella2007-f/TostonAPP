@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
-import { FEATURE_DIVISION_PEDIDOS } from '../../../config/featureFlags';
-import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, guardarEnvioCompletoDomingo } from '../../../services/pedidosService';
+import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, solicitarEscalado, pagarPedido } from '../../../services/pedidosService';
+import { getLandingConfig } from '../../../services/landingConfigService';
 import { subirImagenCloudinary } from '../../../utils/cloudinary.js';
 import { crearDevolucion } from '../../../services/devolucionesService';
 import { fmtFecha } from '../../../utils/dateUtils.js';
@@ -433,22 +433,6 @@ const PedidosClientePage = () => {
   const [motivoRechazo, setMotivoRechazo] = useState('');
   const [devModal,             setDevModal]             = useState(null);
   const [devToast,             setDevToast]             = useState(null);
-  const [guardandoEnvio,       setGuardandoEnvio]       = useState(false);
-  const [itemsListos,          setItemsListos]          = useState(null);
-  const [loadingItemsListos,   setLoadingItemsListos]   = useState(false);
-  const [fechaAnticipada,      setFechaAnticipada]      = useState('');
-  const [tipoEntregaA,         setTipoEntregaA]         = useState('');
-  const [tipoEntregaB,         setTipoEntregaB]         = useState('');
-  // Un domicilio por viaje: cada grupo a domicilio elige su barrio (precio propio).
-  const [direccionA,           setDireccionA]           = useState('');
-  const [idBarrioA,            setIdBarrioA]            = useState(null);
-  const [coberturaA,           setCoberturaA]           = useState(null);
-  const [direccionB,           setDireccionB]           = useState('');
-  const [idBarrioB,            setIdBarrioB]            = useState(null);
-  const [coberturaB,           setCoberturaB]           = useState(null);
-  const [creandoGrupos,        setCreandoGrupos]        = useState(false);
-  const [gruposError,          setGruposError]          = useState('');
-  const [itemsListosError,     setItemsListosError]     = useState(null);
   const [modalDetailLoading,   setModalDetailLoading]   = useState(false);
   const [editModal,            setEditModal]            = useState(null);
   const [editMetodoPago,       setEditMetodoPago]       = useState('');
@@ -489,14 +473,11 @@ const PedidosClientePage = () => {
       const lista = data.pedidos || [];
       setPedidos(lista);
       // Actualizar el modal si está abierto.
-      // La lista devuelve grupos_envio: [] (evita N+1); preservamos los ya cargados.
       const curr = selectedPedidoRef.current;
       if (curr) {
         const actualizado = lista.find(p => p.id === curr.id);
         if (actualizado) {
-          setSelectedPedido(prev =>
-            prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado
-          );
+          setSelectedPedido(actualizado);
         }
       }
     }).catch(() => {});
@@ -528,76 +509,6 @@ const PedidosClientePage = () => {
     const matchEstado = filterEstado === 'todos' || p.estado === filterEstado;
     return matchSearch && matchEstado;
   }).sort((a, b) => new Date(b.fecha_pedido) - new Date(a.fecha_pedido));
-
-  const handleEnvioCompletoDomingo = async (pedido, valor) => {
-    setGuardandoEnvio(true);
-    try {
-      const actualizado = await guardarEnvioCompletoDomingo(pedido.id, valor);
-      setPedidos(prev => prev.map(p => p.id === actualizado.id ? actualizado : p));
-      setSelectedPedido(actualizado);
-    } catch {
-      // silencioso: la UI ya muestra el estado
-    } finally {
-      setGuardandoEnvio(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!selectedPedido || selectedPedido.envio_completo_domingo !== false || (selectedPedido.grupos_envio && selectedPedido.grupos_envio.length > 0)) {
-      setItemsListos(null);
-      setItemsListosError(null);
-      return;
-    }
-    let cancelado = false;
-    setLoadingItemsListos(true);
-    setItemsListosError(null);
-    getItemsListos(selectedPedido.id)
-      .then(data => { if (!cancelado) setItemsListos(data); })
-      .catch(err => {
-        if (!cancelado) {
-          setItemsListos(null);
-          setItemsListosError(err?.message || String(err) || 'Error desconocido');
-        }
-      })
-      .finally(() => { if (!cancelado) setLoadingItemsListos(false); });
-    return () => { cancelado = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPedido?.id, selectedPedido?.envio_completo_domingo, selectedPedido?.grupos_envio?.length]);
-
-  const hayPendientesGrupo = !!(itemsListos?.pendientes && itemsListos.pendientes.length > 0);
-  // Cada grupo a domicilio necesita un barrio con cobertura.
-  const grupoADomicilioOk = tipoEntregaA !== 'domicilio' || (idBarrioA && coberturaA?.disponible);
-  const grupoBDomicilioOk = !hayPendientesGrupo || tipoEntregaB !== 'domicilio' || (idBarrioB && coberturaB?.disponible);
-  const puedeCrearGrupos = !!fechaAnticipada && grupoADomicilioOk && grupoBDomicilioOk;
-
-  const handleCrearGrupos = async () => {
-    if (!puedeCrearGrupos) return;
-    setCreandoGrupos(true);
-    setGruposError('');
-    try {
-      const actualizado = await crearGruposEnvio(selectedPedido.id, {
-        fechaAnticipada: fechaAnticipada + 'T00:00:00',
-        tipoEntregaA:  tipoEntregaA || null,
-        tipoEntregaB:  tipoEntregaB || null,
-        direccionA:    tipoEntregaA === 'domicilio' ? direccionA || null : null,
-        idBarrioA:     tipoEntregaA === 'domicilio' ? idBarrioA  || null : null,
-        direccionB:    tipoEntregaB === 'domicilio' ? direccionB || null : null,
-        idBarrioB:     tipoEntregaB === 'domicilio' ? idBarrioB  || null : null,
-      });
-      setItemsListos(null);
-      setPedidos(prev => prev.map(p => p.id === actualizado.id ? actualizado : p));
-      setSelectedPedido(actualizado);
-      setFechaAnticipada('');
-      setTipoEntregaA('');
-      setTipoEntregaB('');
-      setIdBarrioA(null); setCoberturaA(null); setDireccionA('');
-      setIdBarrioB(null); setCoberturaB(null); setDireccionB('');
-    } catch (e) {
-      setGruposError(e.message || 'No se pudo guardar la entrega anticipada. Intenta de nuevo.');
-    } finally {
-      setCreandoGrupos(false);
-    }
-  };
 
   const handleRequestReturn = (pedido) => {
     closeModal();
@@ -745,7 +656,7 @@ const PedidosClientePage = () => {
     setAccionFechaErr('');
     try {
       const actualizado = await aceptarFechaProduccion(pedido.id);
-      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
+      setSelectedPedido(actualizado);
       fetchPedidos();
     } catch (e) {
       setAccionFechaErr(e.message || 'No se pudo aceptar la fecha');
@@ -760,7 +671,7 @@ const PedidosClientePage = () => {
     try {
       const actualizado = await rechazarFechaProduccion(pedido.id, motivoRechazo.trim() || null);
       setMotivoRechazo('');
-      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
+      setSelectedPedido(actualizado);
       fetchPedidos();
       // keep modal open so user sees the "Pendiente de Aprobación" state again
     } catch (e) {
@@ -777,7 +688,7 @@ const PedidosClientePage = () => {
     setAccionFechaErr('');
     try {
       const actualizado = await solicitarEscalado(pedido.id);
-      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
+      setSelectedPedido(actualizado);
       fetchPedidos();
     } catch (e) {
       setAccionFechaErr(e.message || 'No se pudo enviar la solicitud');
@@ -800,7 +711,7 @@ const PedidosClientePage = () => {
     try {
       const comprobante_url = await subirImagenCloudinary(pagoArchivo);
       const actualizado = await pagarPedido(pedido.id, { comprobante_url, monto });
-      setSelectedPedido(prev => prev ? { ...actualizado, grupos_envio: prev.grupos_envio } : actualizado);
+      setSelectedPedido(actualizado);
       setPagoArchivo(null);
       setPagoPreview(null);
       setPagoMonto('');
@@ -817,12 +728,6 @@ const PedidosClientePage = () => {
     setConfirmCancel(false);
     setCancelError('');
     setAccionFechaErr('');
-    setItemsListos(null);
-    setItemsListosError(null);
-    setFechaAnticipada('');
-    setTipoEntregaA('');
-    setTipoEntregaB('');
-    setGruposError('');
   };
 
   const openModal = (pedido) => {
@@ -834,7 +739,7 @@ const PedidosClientePage = () => {
     setPagoPreview(null);
     setPagoMonto('');
     setPagoError('');
-    // Carga el detalle completo (con grupos_envio) en segundo plano.
+    // Carga el detalle completo en segundo plano.
     setModalDetailLoading(true);
     getMiVenta(pedido.id)
       .then(full => {
@@ -976,29 +881,10 @@ const PedidosClientePage = () => {
                         </span>
                       </div>
                     </div>
-                    {(FEATURE_DIVISION_PEDIDOS && pedido.grupos_envio && pedido.grupos_envio.length > 0) ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-                        {pedido.grupos_envio.map((g, i) => {
-                          const gLabel = g.estado === 'entregado' ? 'Entregado' : g.estado === 'enviado' ? 'En camino' : 'Pendiente';
-                          const gCls   = g.estado === 'entregado'
-                            ? 'bg-green-100 text-green-800 border-green-200'
-                            : g.estado === 'enviado'
-                            ? 'bg-blue-100 text-blue-800 border-blue-200'
-                            : 'bg-amber-100 text-amber-800 border-amber-200';
-                          return (
-                            <div key={g.id_grupo} className={`flex items-center gap-1 px-2 py-1 rounded-lg ${gCls} border shadow-sm`}>
-                              <span className="text-[10px]">{i === 0 ? '📦' : '🕐'}</span>
-                              <span className="text-[9px] font-black uppercase tracking-widest leading-none">{gLabel}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl ${config.badge} border border-white shadow-sm`}>
-                        <StatusIcon size={12} strokeWidth={3} />
-                        <span className="text-[9px] font-black uppercase tracking-widest leading-none">{config.label}</span>
-                      </div>
-                    )}
+                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl ${config.badge} border border-white shadow-sm`}>
+                      <StatusIcon size={12} strokeWidth={3} />
+                      <span className="text-[9px] font-black uppercase tracking-widest leading-none">{config.label}</span>
+                    </div>
                   </div>
 
                   {!pedido.requiere_anticipo && <CountdownBanner fechaVenta={pedido.fecha_venta} />}
@@ -1383,238 +1269,11 @@ const PedidosClientePage = () => {
                 </div>
               )}
 
-              {/* ── Pregunta: ¿envío completo el domingo? ── */}
-              {FEATURE_DIVISION_PEDIDOS && (selectedPedido.requiereFechaPropuesta || selectedPedido.sobre_stock) && selectedPedido.fecha_propuesta && (
-                <div style={{ background: selectedPedido.envio_completo_domingo === null ? '#fffde7' : '#e8f5e9', border: `1.5px solid ${selectedPedido.envio_completo_domingo === null ? '#ffe082' : '#a5d6a7'}`, borderRadius: 14, padding: '14px 16px' }}>
-                  <p style={{ fontSize: 10, fontWeight: 800, color: '#f57f17', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <Truck size={12} /> Coordinar entrega
-                  </p>
-                  <p style={{ fontSize: 13, fontWeight: 700, color: '#4a4a4a', margin: '0 0 12px', lineHeight: 1.5 }}>
-                    {selectedPedido.fecha_propuesta
-                      ? `¿Está de acuerdo con que le enviemos todo el pedido junto el ${new Date(selectedPedido.fecha_propuesta.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}?`
-                      : '¿Está de acuerdo con que le enviemos todo el pedido junto en la fecha propuesta?'}
-                  </p>
-                  {selectedPedido.envio_completo_domingo === null ? (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button
-                        disabled={guardandoEnvio}
-                        onClick={() => handleEnvioCompletoDomingo(selectedPedido, true)}
-                        style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: 'none', background: '#2e7d32', color: '#fff', fontWeight: 800, fontSize: 13, cursor: guardandoEnvio ? 'not-allowed' : 'pointer', opacity: guardandoEnvio ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                        <Check size={14} /> {selectedPedido.fecha_propuesta ? `Sí, el ${new Date(selectedPedido.fecha_propuesta.slice(0,10)+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long'})} está bien` : 'Sí, estoy de acuerdo'}
-                      </button>
-                      <button
-                        disabled={guardandoEnvio}
-                        onClick={() => handleEnvioCompletoDomingo(selectedPedido, false)}
-                        style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: '1.5px solid #e0e0e0', background: '#fff', color: '#424242', fontWeight: 700, fontSize: 13, cursor: guardandoEnvio ? 'not-allowed' : 'pointer', opacity: guardandoEnvio ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                        <X size={14} /> Prefiero recibir antes lo disponible
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #c8e6c9', borderRadius: 10, padding: '10px 14px' }}>
-                      <Check size={14} color="#2e7d32" />
-                      <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#2e7d32' }}>
-                        {selectedPedido.envio_completo_domingo
-                          ? (selectedPedido.fecha_propuesta ? `Elegiste recibir todo junto el ${new Date(selectedPedido.fecha_propuesta.slice(0,10)+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long'})}.` : 'Elegiste recibir todo junto en la fecha acordada.')
-                          : 'Elegiste recibir primero lo que ya está disponible.'}
-                      </p>
-                      <button
-                        disabled={guardandoEnvio}
-                        onClick={() => handleEnvioCompletoDomingo(selectedPedido, !selectedPedido.envio_completo_domingo)}
-                        style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#757575', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                        Cambiar
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── Entrega anticipada (cuando eligió recibir antes lo disponible) ── */}
-              {FEATURE_DIVISION_PEDIDOS && selectedPedido.envio_completo_domingo === false && selectedPedido.fecha_propuesta && (!selectedPedido.grupos_envio || selectedPedido.grupos_envio.length === 0) && (
-                <div style={{ background: '#e3f2fd', border: '1.5px solid #90caf9', borderRadius: 14, padding: '14px 16px' }}>
-                  <p style={{ fontSize: 10, fontWeight: 800, color: '#1565c0', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <Truck size={12} /> Entrega anticipada
-                  </p>
-                  {loadingItemsListos && (
-                    <p style={{ fontSize: 12, color: '#5c6bc0', margin: 0 }}>Verificando disponibilidad de productos...</p>
-                  )}
-                  {!loadingItemsListos && itemsListosError && (
-                    <p style={{ fontSize: 12, color: '#c62828', margin: 0 }}>{itemsListosError}</p>
-                  )}
-                  {/* Ninguno listo aún: solo informativo, sin acción posible */}
-                  {!loadingItemsListos && itemsListos && itemsListos.listos && itemsListos.listos.length === 0 && (
-                    <p style={{ fontSize: 12, color: '#1565c0', margin: 0, lineHeight: 1.5 }}>
-                      Tus productos aún están en producción. Te avisaremos cuando haya disponibilidad para coordinar la entrega anticipada.
-                    </p>
-                  )}
-                  {/* Al menos uno listo (todos o algunos): mostrar formulario */}
-                  {!loadingItemsListos && itemsListos && itemsListos.listos && itemsListos.listos.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {/* Resumen de productos */}
-                      {itemsListos.pendientes && itemsListos.pendientes.length > 0 ? (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                          <div style={{ background: '#e8f5e9', borderRadius: 10, padding: '8px 10px' }}>
-                            <p style={{ fontSize: 9, fontWeight: 800, color: '#2e7d32', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 4px' }}>Listos ahora</p>
-                            {itemsListos.listos.map(p => (
-                              <p key={p.id_producto} style={{ fontSize: 11, color: '#1b5e20', margin: '0 0 2px' }}>{p.nombre} ×{p.cantidad}</p>
-                            ))}
-                          </div>
-                          <div style={{ background: '#fff8e1', borderRadius: 10, padding: '8px 10px' }}>
-                            <p style={{ fontSize: 9, fontWeight: 800, color: '#e65100', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 4px' }}>En producción</p>
-                            {itemsListos.pendientes.map(p => (
-                              <p key={p.id_producto} style={{ fontSize: 11, color: '#bf360c', margin: '0 0 2px' }}>{p.nombre} ×{p.cantidad}</p>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ background: '#e8f5e9', borderRadius: 10, padding: '8px 10px' }}>
-                          <p style={{ fontSize: 9, fontWeight: 800, color: '#2e7d32', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 4px' }}>Todos los productos listos</p>
-                          {itemsListos.listos.map(p => (
-                            <p key={p.id_producto} style={{ fontSize: 11, color: '#1b5e20', margin: '0 0 2px' }}>{p.nombre} ×{p.cantidad}</p>
-                          ))}
-                        </div>
-                      )}
-                      {/* Formulario: fecha + tipo de entrega por grupo */}
-                      <div>
-                        <p style={{ fontSize: 12, fontWeight: 700, color: '#1565c0', margin: '0 0 4px' }}>
-                          {itemsListos.pendientes && itemsListos.pendientes.length > 0
-                            ? '¿Cuándo quieres recibir los productos que ya están listos?'
-                            : '¿Cuándo quieres recibir el pedido?'}
-                        </p>
-                        <p style={{ fontSize: 10, color: '#5c6bc0', margin: '0 0 8px', lineHeight: 1.4 }}>
-                          {selectedPedido.fecha_propuesta
-                            ? `Debe ser al menos mañana y antes del ${new Date(selectedPedido.fecha_propuesta.slice(0,10)+'T00:00:00').toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long'})}.`
-                            : 'Debe ser al menos mañana y antes de la fecha de entrega acordada.'}
-                        </p>
-                        <input
-                          type="date"
-                          value={fechaAnticipada}
-                          onChange={e => { setFechaAnticipada(e.target.value); setGruposError(''); }}
-                          min={(() => { const d = new Date(); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })()}
-                          max={selectedPedido.fecha_propuesta ? (() => { const d = new Date(selectedPedido.fecha_propuesta.slice(0,10)+'T00:00:00'); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); })() : undefined}
-                          style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1.5px solid #90caf9', fontSize: 13, boxSizing: 'border-box', marginBottom: 8 }}
-                        />
-                        <p style={{ fontSize: 10, fontWeight: 700, color: '#1565c0', margin: '0 0 4px' }}>
-                          {itemsListos.pendientes && itemsListos.pendientes.length > 0 ? 'Tipo de entrega (productos listos)' : 'Tipo de entrega'}
-                        </p>
-                        <select
-                          value={tipoEntregaA}
-                          onChange={e => { setTipoEntregaA(e.target.value); if (e.target.value === 'domicilio' && !direccionA) setDireccionA(selectedPedido.direccion_entrega || ''); }}
-                          style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1.5px solid #90caf9', fontSize: 13, boxSizing: 'border-box', marginBottom: 8, background: '#fff' }}>
-                          <option value="">Sin especificar</option>
-                          <option value="domicilio">Domicilio</option>
-                          <option value="tienda">Retiro en tienda</option>
-                        </select>
-                        {tipoEntregaA === 'domicilio' && (
-                          <div style={{ marginBottom: 8 }}>
-                            <p style={{ fontSize: 10, fontWeight: 700, color: '#1565c0', margin: '0 0 3px' }}>Dónde recibes los productos listos</p>
-                            <input value={direccionA} onChange={e => setDireccionA(e.target.value)} maxLength={50} placeholder="Dirección exacta: calle, número, complemento" style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: '1.5px solid #90caf9', fontSize: 12, boxSizing: 'border-box', marginBottom: 6 }} />
-                            <SelectorBarrioEntrega
-                              compacto
-                              prefillIdBarrio={selectedPedido.id_barrio || null}
-                              onChange={(id, cob) => { setIdBarrioA(id); setCoberturaA(cob); }}
-                            />
-                          </div>
-                        )}
-                        {itemsListos.pendientes && itemsListos.pendientes.length > 0 && (
-                          <>
-                            <p style={{ fontSize: 10, fontWeight: 700, color: '#1565c0', margin: '0 0 4px' }}>Tipo de entrega (productos en producción)</p>
-                            <select
-                              value={tipoEntregaB}
-                              onChange={e => { setTipoEntregaB(e.target.value); if (e.target.value === 'domicilio' && !direccionB) setDireccionB(selectedPedido.direccion_entrega || ''); }}
-                              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1.5px solid #90caf9', fontSize: 13, boxSizing: 'border-box', marginBottom: 8, background: '#fff' }}>
-                              <option value="">Sin especificar</option>
-                              <option value="domicilio">Domicilio</option>
-                              <option value="tienda">Retiro en tienda</option>
-                            </select>
-                            {tipoEntregaB === 'domicilio' && (
-                              <div style={{ marginBottom: 8 }}>
-                                <p style={{ fontSize: 10, fontWeight: 700, color: '#1565c0', margin: '0 0 3px' }}>Dónde recibes los productos en producción</p>
-                                <input value={direccionB} onChange={e => setDireccionB(e.target.value)} maxLength={50} placeholder="Dirección exacta: calle, número, complemento" style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: '1.5px solid #90caf9', fontSize: 12, boxSizing: 'border-box', marginBottom: 6 }} />
-                                <SelectorBarrioEntrega
-                                  compacto
-                                  prefillIdBarrio={selectedPedido.id_barrio || null}
-                                  onChange={(id, cob) => { setIdBarrioB(id); setCoberturaB(cob); }}
-                                />
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {(tipoEntregaA === 'domicilio' || tipoEntregaB === 'domicilio') && (coberturaA?.disponible || coberturaB?.disponible) && (
-                          <p style={{ fontSize: 11, color: '#5c6bc0', margin: '0 0 8px', lineHeight: 1.4 }}>
-                            Cada entrega a domicilio se cobra por separado.
-                            {coberturaA?.disponible && ` Productos listos: ${coberturaA.final === 0 ? 'domicilio gratis' : `domicilio ${COP(coberturaA.final)}`}.`}
-                            {coberturaB?.disponible && ` En producción: ${coberturaB.final === 0 ? 'domicilio gratis' : `domicilio ${COP(coberturaB.final)}`}.`}
-                          </p>
-                        )}
-                        {gruposError && <p style={{ fontSize: 11, color: '#c62828', margin: '0 0 8px' }}>{gruposError}</p>}
-                        <button
-                          onClick={handleCrearGrupos}
-                          disabled={creandoGrupos || !puedeCrearGrupos}
-                          style={{ width: '100%', padding: '10px 0', borderRadius: 10, border: 'none', background: creandoGrupos || !puedeCrearGrupos ? '#b0bec5' : '#1565c0', color: '#fff', fontWeight: 800, fontSize: 13, cursor: creandoGrupos || !puedeCrearGrupos ? 'not-allowed' : 'pointer' }}>
-                          {creandoGrupos ? 'Guardando...' : 'Confirmar entrega anticipada'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Spinner mientras se cargan los grupos desde el endpoint de detalle */}
+              {/* Spinner mientras se carga el detalle */}
               {modalDetailLoading && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#f3f4f6', borderRadius: 10 }}>
                   <RefreshCw size={14} className="animate-spin" style={{ color: '#9ca3af' }} />
                   <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>Cargando detalle del pedido…</span>
-                </div>
-              )}
-
-              {/* ── Grupos de envío activos ── */}
-              {FEATURE_DIVISION_PEDIDOS && selectedPedido.grupos_envio && selectedPedido.grupos_envio.length > 0 && (
-                <div style={{ background: '#f3e5f5', border: '1.5px solid #ce93d8', borderRadius: 14, padding: '14px 16px' }}>
-                  <p style={{ fontSize: 10, fontWeight: 800, color: '#6a1b9a', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <Package size={12} /> División de entrega
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {selectedPedido.grupos_envio.map(g => (
-                      <div key={g.id_grupo} style={{ background: '#fff', border: '1px solid #e1bee7', borderRadius: 10, padding: '10px 12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <p style={{ fontSize: 12, fontWeight: 800, color: '#4a148c', margin: 0 }}>
-                            {g.tipo === 'anticipado' ? '📦 Entrega anticipada' : '🕐 Entrega programada'}
-                          </p>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: g.estado === 'entregado' ? '#e8f5e9' : g.estado === 'enviado' ? '#e3f2fd' : '#fff8e1', color: g.estado === 'entregado' ? '#2e7d32' : g.estado === 'enviado' ? '#1565c0' : '#e65100' }}>
-                            {g.estado === 'entregado' ? 'Entregado' : g.estado === 'enviado' ? 'En camino' : 'Pendiente'}
-                          </span>
-                        </div>
-                        {g.fecha && (
-                          <p style={{ fontSize: 11, color: '#7b1fa2', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <Calendar size={11} /> {new Date(typeof g.fecha === 'string' ? g.fecha.slice(0,10)+'T00:00:00' : g.fecha).toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}
-                          </p>
-                        )}
-                        {g.productos && g.productos.length > 0 && (
-                          <p style={{ fontSize: 10, color: '#9c27b0', margin: 0 }}>
-                            {g.productos.length} producto(s) en este grupo
-                          </p>
-                        )}
-                        <p style={{ fontSize: 11, color: '#4a148c', margin: '4px 0 0', display: 'flex', alignItems: 'center', gap: 4 }}>
-                          {g.tipo_entrega === 'domicilio' ? <><Truck size={11} /> Domicilio
-                            {g.precio_domicilio_final != null && (
-                              <span style={{ fontWeight: 800 }}>
-                                {' · '}
-                                {g.precio_domicilio_base != null && g.precio_domicilio_base !== g.precio_domicilio_final && (
-                                  <span style={{ textDecoration: 'line-through', color: '#9e9e9e', fontWeight: 500 }}>{COP(g.precio_domicilio_base)} </span>
-                                )}
-                                {g.precio_domicilio_final === 0 ? 'gratis' : COP(g.precio_domicilio_final)}
-                              </span>
-                            )}
-                          </> : g.tipo_entrega === 'tienda' ? <><Store size={11} /> Retiro en tienda</> : 'Método de entrega sin definir'}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedPedido.costo_domicilio_total != null && Number(selectedPedido.costo_domicilio_total) > 0 && (
-                    <p style={{ fontSize: 11, fontWeight: 700, color: '#6a1b9a', margin: '10px 0 0' }}>
-                      Total domicilios de este pedido: {COP(Number(selectedPedido.costo_domicilio_total))}
-                    </p>
-                  )}
                 </div>
               )}
 
@@ -2165,8 +1824,7 @@ const PedidosClientePage = () => {
               )}
 
               {/* Tipo de entrega */}
-              {!(editModal.grupos_envio && editModal.grupos_envio.length > 0) ? (
-                <div style={{ marginBottom: 18 }}>
+              <div style={{ marginBottom: 18 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#616161', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Tipo de entrega</label>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     {[
@@ -2237,11 +1895,6 @@ const PedidosClientePage = () => {
                     </p>
                   )}
                 </div>
-              ) : (
-                <div style={{ background: '#f5f5f5', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#757575', marginBottom: 18 }}>
-                  El tipo de entrega no puede cambiarse porque el pedido ya fue dividido en grupos de envío.
-                </div>
-              )}
 
               {editError && (
                 <div style={{ background: '#ffebee', border: '1px solid #ffcdd2', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#c62828', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>

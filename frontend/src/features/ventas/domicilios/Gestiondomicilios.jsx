@@ -1,5 +1,4 @@
 ﻿import { useState, useEffect, useRef } from "react";
-import { FEATURE_DIVISION_PEDIDOS } from '../../../config/featureFlags';
 import { esEmpleadoRepartidor } from "../../../utils/roles.js";
 import { Navigate } from "react-router-dom";
 import { formatCOP } from "../../../utils/formato";
@@ -1616,14 +1615,6 @@ export default function GestionDomicilios() {
                           <td data-label="Estado">
                             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                               <EstadoBadge estado={ped.estado} estadoId={ped.estadoId} />
-                              {FEATURE_DIVISION_PEDIDOS && ped.id_grupo && (
-                                <span style={{
-                                  fontSize: 10, fontWeight: 700, color: "#6a1b9a",
-                                  background: "#f3e5f5", borderRadius: 4, padding: "2px 5px",
-                                }}>
-                                  {ped.tipo_grupo === "anticipado" ? "Grupo anticipado" : "Grupo programado"}
-                                </span>
-                              )}
                               {/* Avisa si venta cancelada pero entrega aún abierta */}
                               {ped.venta_estado_id === 5 && ped.estadoId !== 5 && ped.estadoId !== 8 && (
                                 <span style={{
