@@ -1,5 +1,6 @@
 ﻿import { esEmpleadoRepartidor } from "../../../utils/roles.js";
 import { useState, useEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { fmtFecha, getRecordDate } from "../../../utils/dateUtils.js";
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
@@ -2528,7 +2529,7 @@ export default function GestionPedidos() {
         </div>
       </div>
 
-      {modal?.type === "ver" && <ModalVerPedido pedido={modal.pedido} empleados={empleados} onClose={() => setModal(null)} onEdit={(ped) => setModal({ type: "editar", pedido: ped })} onUpdatePedido={(actualizado) => { setPedidos(prev => prev.map(p => p.id === actualizado.id ? actualizado : p)); setModal(prev => ({ ...prev, pedido: actualizado })); }} />}
+      {modal?.type === "ver" && <ModalVerPedido pedido={modal.pedido} empleados={empleados} onClose={() => setModal(null)} onEdit={(ped) => { flushSync(() => setModal(null)); setModal({ type: "editar", pedido: ped }); }} onUpdatePedido={(actualizado) => { setPedidos(prev => prev.map(p => p.id === actualizado.id ? actualizado : p)); setModal(prev => ({ ...prev, pedido: actualizado })); }} />}
       {modal?.type === "confirmarEstado" && <ModalConfirmarEstado pedido={modal.pedido} nuevoEstado={modal.nuevoEstado} onClose={() => setModal(null)} onConfirm={handleConfirmarCambioEstado} />}
       {modal?.type === "cancelar" && <ModalCancelarPedido pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleConfirmarCancelacion} />}
       {modal?.type === "asignarDomiciliario" && <ModalAsignarDomiciliario pedido={modal.pedido} empleados={empleados} repartidores={repartidores} onClose={() => setModal(null)} onConfirm={handleAsignarDomiciliario} />}
