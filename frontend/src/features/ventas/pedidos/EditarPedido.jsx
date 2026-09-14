@@ -947,46 +947,57 @@ export default function EditarPedido({ pedido, onClose, onSave, onAprobarComprob
           {form.metodo_pago?.includes("Transferencia") && permisos.metodo_pago && (
             <div className="field-wrap" style={{ marginTop: 12 }}>
               <label className="field-label">Comprobante de pago <span className="required">*</span></label>
-              <div className="comprobante-upload">
-                {form.comprobantePreview ? (
-                  <div className="comprobante-preview-wrap">
-                    <ImageLightbox
-                      src={form.comprobantePreview}
-                      alt="Comprobante"
-                      label="Ver imagen completa"
-                      thumbStyle={{ width: "100%", maxHeight: 200, objectFit: "contain", borderRadius: 8, background: "#000", cursor: "zoom-in" }}
-                    />
-                    <button className="comprobante-remove-btn" onClick={() => setForm(f => ({ ...f, comprobante: null, comprobantePreview: null }))}><X size={14}/></button>
-                  </div>
-                ) : (
-                  <label className={`comprobante-dropzone${errors.comprobante ? " error" : ""}`}>
-                    <input type="file" accept="image/*" onChange={handleFile} hidden />
-                    <Upload size={24} style={{color:"#9e9e9e"}}/>
-                    <span style={{ fontSize: 12, fontWeight: 600 }}>Subir comprobante</span>
-                    <span style={{ fontSize: 10, color: "#9e9e9e" }}>JPG, PNG o WEBP</span>
-                  </label>
-                )}
-              </div>
-              {errors.comprobante && <span className="field-error">{errors.comprobante}</span>}
-
-              {/* Aprobar/Rechazar cuando el comprobante está en revisión */}
-              {pedido.comprobante && pedido.estado_pago === "pendiente_validacion" && onAprobarComprobante && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => onRechazarComprobante(pedido)}
-                    style={{ flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', background: '#c62828', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                  >
-                    <Ban size={13} /> Rechazar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onAprobarComprobante(pedido)}
-                    style={{ flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', background: '#2e7d32', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                  >
-                    <Check size={13} /> Aprobar comprobante
-                  </button>
+              {pedido.estado === "Pendiente" && pedido.requiereFechaPropuesta ? (
+                <div style={{ padding: "12px 14px", background: "#fff8e1", border: "1.5px solid #ffe082", borderRadius: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                  <Calendar size={16} color="#f57f17" />
+                  <span style={{ fontSize: 12, color: "#e65100", fontWeight: 600 }}>
+                    Debes confirmar la fecha de entrega antes de subir el comprobante de pago.
+                  </span>
                 </div>
+              ) : (
+                <>
+                  <div className="comprobante-upload">
+                    {form.comprobantePreview ? (
+                      <div className="comprobante-preview-wrap">
+                        <ImageLightbox
+                          src={form.comprobantePreview}
+                          alt="Comprobante"
+                          label="Ver imagen completa"
+                          thumbStyle={{ width: "100%", maxHeight: 200, objectFit: "contain", borderRadius: 8, background: "#000", cursor: "zoom-in" }}
+                        />
+                        <button className="comprobante-remove-btn" onClick={() => setForm(f => ({ ...f, comprobante: null, comprobantePreview: null }))}><X size={14}/></button>
+                      </div>
+                    ) : (
+                      <label className={`comprobante-dropzone${errors.comprobante ? " error" : ""}`}>
+                        <input type="file" accept="image/*" onChange={handleFile} hidden />
+                        <Upload size={24} style={{color:"#9e9e9e"}}/>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>Subir comprobante</span>
+                        <span style={{ fontSize: 10, color: "#9e9e9e" }}>JPG, PNG o WEBP</span>
+                      </label>
+                    )}
+                  </div>
+                  {errors.comprobante && <span className="field-error">{errors.comprobante}</span>}
+
+                  {/* Aprobar/Rechazar cuando el comprobante está en revisión */}
+                  {pedido.comprobante && pedido.estado_pago === "pendiente_validacion" && onAprobarComprobante && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button
+                        type="button"
+                        onClick={() => onRechazarComprobante(pedido)}
+                        style={{ flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', background: '#c62828', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
+                      >
+                        <Ban size={13} /> Rechazar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onAprobarComprobante(pedido)}
+                        style={{ flex: 1, padding: '9px 0', borderRadius: 9, border: 'none', background: '#2e7d32', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
+                      >
+                        <Check size={13} /> Aprobar comprobante
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

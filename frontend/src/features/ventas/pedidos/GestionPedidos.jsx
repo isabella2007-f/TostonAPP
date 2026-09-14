@@ -276,6 +276,20 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
           {/* ── Tab Resumen ── */}
           {tab === "resumen" && (
             <div className="form-grid-2" style={{ gap: 24 }}>
+              {/* Banner: fecha deseada por el cliente cuando está pendiente de negociación */}
+              {pedido.estado === "Pendiente" && pedido.requiereFechaPropuesta && pedido.fecha_propuesta && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div className="info-box info-box--info" style={{ borderColor: "#90caf9", background: "#e3f2fd" }}>
+                    <span className="info-box__icon"><Calendar size={16} /></span>
+                    <div>
+                      <span className="info-box__label">Fecha de entrega deseada por el cliente</span>
+                      <span className="info-box__text" style={{ display: "block", fontWeight: 700, color: "#1565c0", fontSize: 15, marginTop: 2 }}>
+                        {fmtFecha(pedido.fecha_propuesta)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Cliente */}
               <div>
                 <p className="section-label">Información del Cliente</p>
@@ -346,6 +360,18 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
                     <span className="ver-ped-field__label">Fecha del pedido</span>
                     <span className="ver-ped-field__value" style={{display:"inline-flex",alignItems:"center",gap:5}}><Calendar size={14} /> {fmtFecha(pedido.fecha_pedido)}</span>
                   </div>
+                  {pedido.fecha_propuesta && (
+                    <div className="ver-ped-field">
+                      <span className="ver-ped-field__label">
+                        {['Fecha propuesta', 'Fecha rechazada', 'Escalado a admin'].includes(pedido.estado)
+                          ? 'Fecha propuesta al cliente'
+                          : 'Fecha deseada por el cliente'}
+                      </span>
+                      <span className="ver-ped-field__value" style={{display:"inline-flex",alignItems:"center",gap:5,color:"#1565c0",fontWeight:700}}>
+                        <Calendar size={14} /> {fmtFecha(pedido.fecha_propuesta)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -711,7 +737,7 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
             <FileText size={14} /> Ver / Imprimir factura
           </button>
           {puedeEditarsePedido(pedido.estado) && (
-            <button className="btn-save" style={{display:"inline-flex",alignItems:"center",gap:6}} onClick={() => { onClose(); onEdit(pedido); }}><Pencil size={14} /> Editar Pedido</button>
+            <button className="btn-save" style={{display:"inline-flex",alignItems:"center",gap:6}} onClick={() => onEdit(pedido)}><Pencil size={14} /> Editar Pedido</button>
           )}
         </div>
       </div>
@@ -1565,7 +1591,9 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
   const canVerComprobante   = esTransferencia && ped.comprobante && ped.estado_pago === "pendiente_validacion";
   const _terminalState      = ["Entregado","Cancelado"].includes(ped.estado);
   const _pagoRegistrado     = ["efectivo_recibido","pagado_completo","anticipo_pagado"].includes(ped.estado_pago);
-  const canSubirComprobante = esTransferencia && !_terminalState &&
+  const _fechaSinConfirmar  = ['Fecha propuesta', 'Fecha rechazada', 'Escalado a admin'].includes(ped.estado)
+    || (ped.estado === 'Pendiente' && ped.requiereFechaPropuesta);
+  const canSubirComprobante = esTransferencia && !_terminalState && !_fechaSinConfirmar &&
     Number(ped.total || 0) > 0 &&
     (!ped.comprobante || ped.estado_pago === "comprobante_rechazado");
   const _faltaEfectivoMixto = esPagoMixto(ped.metodo_pago) && ped.estado_pago === "anticipo_pagado";

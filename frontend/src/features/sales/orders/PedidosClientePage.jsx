@@ -1035,13 +1035,21 @@ const PedidosClientePage = () => {
                   admin la apruebe o proponga otra. */}
               {selectedPedido.estado === 'Pendiente' && selectedPedido.requiereFechaPropuesta && (
                 <div style={{ background: '#fff8e1', border: '1.5px solid #ffe082', borderRadius: 12, padding: '12px 14px' }}>
-                  <p style={{ fontSize: 12, fontWeight: 800, color: '#f57f17', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5 }}><Package size={13} /> Pendiente de aprobación</p>
+                  <p style={{ fontSize: 12, fontWeight: 800, color: '#f57f17', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}><Package size={13} /> Pendiente de aprobación</p>
                   <p style={{ fontSize: 11, color: '#e65100', lineHeight: 1.5, margin: 0 }}>
-                    Uno o más productos requieren producción.
-                    {selectedPedido.fecha_propuesta && (
-                      <> Pediste tenerlo para el <strong>{new Date(selectedPedido.fecha_propuesta.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}</strong>.</>
-                    )} {' '}El administrador va a revisar esa fecha contra la capacidad de la planta y la aprueba o te propone otra.
+                    Uno o más productos requieren producción. El administrador va a revisar la fecha y la aprueba o te propone otra.
                   </p>
+                  {selectedPedido.fecha_propuesta && (
+                    <div style={{ marginTop: 10, background: '#fff', border: '1.5px solid #ffb74d', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <Calendar size={20} color="#f57f17" />
+                      <div>
+                        <p style={{ fontSize: 10, fontWeight: 700, color: '#f57f17', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 2px' }}>Tu fecha solicitada</p>
+                        <p style={{ fontSize: 14, fontWeight: 800, color: '#e65100', margin: 0 }}>
+                          {new Date(selectedPedido.fecha_propuesta.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {/* Legado: pedidos que ya tenían orden de producción antes de este cambio. */}
