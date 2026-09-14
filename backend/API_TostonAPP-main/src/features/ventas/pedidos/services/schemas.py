@@ -67,8 +67,6 @@ class PedidoResponse(BaseModel):
     requiere_fecha_propuesta:     bool              = False
     # Respuesta del cliente a "¿todo junto el domingo?" (None = sin responder)
     envio_completo_domingo:       Optional[bool]    = None
-    # Grupos de envío (entrega anticipada + programada al dividir un pedido)
-    grupos_envio:                 list              = []
 
     class Config:
         from_attributes = True

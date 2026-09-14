@@ -68,9 +68,6 @@ class DomicilioResponse(BaseModel):
     # podía mostrarlos.
     venta_estado:         Optional[int]      = None
     comprobante_pago:     Optional[str]      = None
-    # Domicilios de grupos de envío: ID del grupo al que pertenece y su tipo.
-    ID_Grupo:             Optional[int]      = None
-    tipo_grupo:           Optional[str]      = None
 
     class Config:
         from_attributes = True

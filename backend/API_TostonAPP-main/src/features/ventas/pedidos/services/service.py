@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from src.shared.services.models import (
     Venta, Estado, DetalleVenta, Domicilio,
     VentaXProducto, Producto, DescuentoXVenta,
-    GrupoEnvio, GrupoEnvioItem, Barrio,
+    Barrio,
 )
 from src.features.ventas.gestion_ventas.services.service import (
     _formato_venta, _now, cambiar_estado as _gv_cambiar_estado,
@@ -67,8 +67,6 @@ def obtener_pedidos(
             selectinload(Venta.domicilios)
                 .selectinload(Domicilio.barrio),
             selectinload(Venta.ordenes_produccion),
-            selectinload(Venta.grupos_envio)
-                .selectinload(GrupoEnvio.items),
         )
         .order_by(Venta.Fecha_pedido.desc())
         .offset(offset)
@@ -107,8 +105,6 @@ def obtener_pedido(db: Session, id_venta: int) -> dict:
             selectinload(Venta.domicilios)
                 .selectinload(Domicilio.barrio),
             selectinload(Venta.ordenes_produccion),
-            selectinload(Venta.grupos_envio)
-                .selectinload(GrupoEnvio.items),
         )
         .filter(Venta.ID_Venta == id_venta)
         .first()
@@ -502,16 +498,6 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                 ),
             )
         _reabrir_pedido_produccion(db, pedido, productos_nuevos, fecha_nueva)
-
-    grupos = db.query(GrupoEnvio).filter(GrupoEnvio.ID_Venta == id_venta).all()
-    if grupos:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Este pedido ya fue dividido en grupos de envío. "
-                "El tipo de entrega se maneja por grupo desde el panel."
-            ),
-        )
 
     if datos.get("Metodo_Pago"):
         nuevo_metodo = datos["Metodo_Pago"].strip()

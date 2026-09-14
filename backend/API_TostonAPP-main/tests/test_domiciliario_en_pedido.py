@@ -73,56 +73,5 @@ class DomiciliarioEnPedidoTests(PanelBase):
         self.assertIsNone(cuerpo.get("ID_Empleado"))
 
 
-class DomiciliarioConEntregaDivididaTests(PanelBase):
-    """Con la entrega dividida, el repartidor va en el domicilio del grupo.
-
-    El pedido conserva además una fila de referencia sin grupo, y esa se queda
-    sin empleado. Leer solo esa fila hacía que un pedido dividido y en camino
-    apareciera "Sin asignar".
-    """
-
-    def pedido_dividido_en_camino(self):
-        from src.shared.services.models import Domicilio, GrupoEnvio
-
-        pedido = self.crear_pedido(domicilio=self.direccion())
-        id_venta = pedido["ID_Venta"]
-        self.confirmar_si_pendiente(id_venta)
-
-        grupo = GrupoEnvio(ID_Venta=id_venta, Tipo="listo", Tipo_Entrega="domicilio")
-        self.db.add(grupo)
-        self.db.commit()
-
-        referencia = self.domicilio(id_venta)
-        del_grupo = Domicilio(
-            ID_Venta=id_venta,
-            ID_Grupo=grupo.ID_Grupo,
-            ID_Empleado=ID_REPARTIDOR,
-            Estado=DOM_EN_CAMINO,
-            Direccion_entrega=referencia.Direccion_entrega,
-            Municipio_entrega=referencia.Municipio_entrega,
-            Departamento_entrega=referencia.Departamento_entrega,
-            ID_Barrio=referencia.ID_Barrio,
-        )
-        self.db.add(del_grupo)
-        self.db.commit()
-        return id_venta
-
-    def test_el_detalle_dice_quien_lo_lleva(self):
-        id_venta = self.pedido_dividido_en_camino()
-        cuerpo = self.afirmar_ok(self.get(f"/ventas/{id_venta}", self.admin))
-        self.assertTrue(
-            cuerpo.get("nombre_domiciliario"),
-            "el repartidor está en el domicilio del grupo, no en el de "
-            "referencia: buscarlo solo ahí deja el pedido 'Sin asignar'")
-        self.assertEqual(cuerpo.get("ID_Empleado"), ID_REPARTIDOR)
-
-    def test_el_listado_tambien(self):
-        id_venta = self.pedido_dividido_en_camino()
-        cuerpo = self.afirmar_ok(self.get("/ventas/?por_pagina=100", self.admin))
-        fila = next(v for v in cuerpo["ventas"] if v["ID_Venta"] == id_venta)
-        self.assertTrue(fila.get("nombre_domiciliario"))
-        self.assertEqual(fila.get("ID_Empleado"), ID_REPARTIDOR)
-
-
 if __name__ == "__main__":
     unittest.main()

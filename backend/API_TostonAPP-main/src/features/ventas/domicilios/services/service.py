@@ -9,13 +9,13 @@ from zoneinfo import ZoneInfo
 
 from src.shared.services.models import (
     Domicilio, Venta, Usuario, Estado, Producto, ProductoImagen,
-    VentaXProducto, Rol, MensajeChat, OrdenProduccion, GrupoEnvio, GrupoEnvioItem,
+    VentaXProducto, Rol, MensajeChat, OrdenProduccion,
     Barrio,
 )
 from src.shared.services.notificaciones_utils import notificar, notificar_stock_producto
 from src.features.ventas.gestion_ventas.services.service import (
     _actualizar_estado_producto, _descontar_fefo_producto, _descontar_stock_venta,
-    _faltantes_sin_cubrir, _items_listos_venta,
+    _faltantes_sin_cubrir,
     cambiar_estado as _cambiar_estado_venta,
 )
 from src.shared.services.observaciones_utils import observaciones_limpias
@@ -127,8 +127,6 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
         "estado_pago":          venta.Estado_Pago if venta else None,
         "productos":            productos,
         "telefono_cliente":     cliente.Telefono if cliente else "",
-        "ID_Grupo":             dom.ID_Grupo,
-        "tipo_grupo":           dom.grupo.Tipo if dom.ID_Grupo and dom.grupo else None,
     }
 
 
@@ -407,8 +405,6 @@ def obtener_domicilios(
             "comprobante_pago":     venta.Comprobante_Pago if venta else None,
             "productos":            prods,
             "telefono_cliente":     cliente.Telefono if cliente else "",
-            "ID_Grupo":             dom.ID_Grupo,
-            "tipo_grupo":           None,   # no se carga en batch; usar _formato_domicilio si se necesita
         }
 
     return {
@@ -648,15 +644,6 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
         "no_recibido", "pendiente_validacion",
     }
 
-    es_domicilio_grupo = bool(dom.ID_Grupo)
-
-    # Validación de producción.
-    # Grupo anticipado: por construcción sus unidades siempre están en stock o
-    # en una OP ya completada al momento de crearse; no hay nada que validar.
-    # Grupo programado: sus productos pueden tener OPs abiertas; se verifica
-    # directamente contra OrdenProduccion filtrada por los productos del grupo,
-    # sin usar el pool compartido de _items_listos_venta (que incluiría las
-    # unidades del grupo anticipado y produciría un falso positivo).
     if nuevo_estado == EstadoDomicilio.EN_CAMINO and not dom.ID_Empleado:
         raise HTTPException(
             status_code=400,
@@ -664,47 +651,29 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
         )
 
     if nuevo_estado in (EstadoDomicilio.EN_CAMINO, EstadoDomicilio.ENTREGADO) and dom.ID_Venta:
-        if es_domicilio_grupo:
-            grupo_obj = db.query(GrupoEnvio).filter(GrupoEnvio.ID_Grupo == dom.ID_Grupo).first()
-            if grupo_obj and grupo_obj.Tipo == "programado":
-                ids_prod = [i.ID_Producto for i in
-                            db.query(GrupoEnvioItem).filter(GrupoEnvioItem.ID_Grupo == dom.ID_Grupo).all()]
-                if ids_prod and db.query(OrdenProduccion).filter(
-                    OrdenProduccion.ID_Venta == dom.ID_Venta,
-                    OrdenProduccion.ID_Producto.in_(ids_prod),
-                    OrdenProduccion.Estado.notin_([11, 5]),
-                ).count() > 0:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "La producción de este grupo aún no está completada. "
-                            "Completá la orden de producción antes de despacharlo."
-                        ),
-                    )
-        else:
-            ordenes_abiertas = db.query(OrdenProduccion).filter(
-                OrdenProduccion.ID_Venta == dom.ID_Venta,
-                OrdenProduccion.Estado.notin_([11, 5]),
-            ).count()
-            if ordenes_abiertas > 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "La producción de este pedido aún no está completada. "
-                        "Completá la orden de producción antes de despacharlo."
-                    ),
-                )
-            faltantes = _faltantes_sin_cubrir(db, dom.ID_Venta, True)
-            if faltantes:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Falta producto de {', '.join(faltantes)}: el pedido pidió más de lo "
-                        "que había y ese faltante todavía no se fabricó ni se repuso."
-                    ),
-                )
+        ordenes_abiertas = db.query(OrdenProduccion).filter(
+            OrdenProduccion.ID_Venta == dom.ID_Venta,
+            OrdenProduccion.Estado.notin_([11, 5]),
+        ).count()
+        if ordenes_abiertas > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "La producción de este pedido aún no está completada. "
+                    "Completá la orden de producción antes de despacharlo."
+                ),
+            )
+        faltantes = _faltantes_sin_cubrir(db, dom.ID_Venta, True)
+        if faltantes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Falta producto de {', '.join(faltantes)}: el pedido pidió más de lo "
+                    "que había y ese faltante todavía no se fabricó ni se repuso."
+                ),
+            )
 
-    # Validación de pago: aplica a todos los domicilios, incluidos los de grupo.
+    # Validación de pago: aplica a todos los domicilios.
     # El pago nunca se divide — se revisa el estado del pedido completo.
     if nuevo_estado == EstadoDomicilio.ENTREGADO and dom.ID_Venta:
         venta_check = db.query(Venta).filter(Venta.ID_Venta == dom.ID_Venta).first()
@@ -745,23 +714,7 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
             if _venta_fe and not _venta_fe.Fecha_entrega:
                 _venta_fe.Fecha_entrega = entregado_en
 
-    if es_domicilio_grupo and nuevo_estado == EstadoDomicilio.ENTREGADO:
-        # Propagar entrega al grupo y desde el grupo a la venta.
-        grupo = db.query(GrupoEnvio).filter(GrupoEnvio.ID_Grupo == dom.ID_Grupo).first()
-        if grupo:
-            grupo.Estado = "entregado"
-            venta = db.query(Venta).filter(Venta.ID_Venta == dom.ID_Venta).with_for_update().first()
-            if venta:
-                grupos_venta = db.query(GrupoEnvio).filter(GrupoEnvio.ID_Venta == dom.ID_Venta).all()
-                estados_grupos = {g.Estado for g in grupos_venta}
-                if estados_grupos == {"entregado"}:
-                    _descontar_stock_venta(db, dom.ID_Venta)
-                    venta.Estado = 8   # ENTREGADO
-                    if not getattr(venta, "Fecha_entrega", None):
-                        venta.Fecha_entrega = _now()
-                elif "entregado" in estados_grupos:
-                    venta.Estado = 18  # PARCIALMENTE_ENTREGADO
-    elif not es_domicilio_grupo and nuevo_estado in ESTADO_DOM_A_VENTA and dom.ID_Venta:
+    if nuevo_estado in ESTADO_DOM_A_VENTA and dom.ID_Venta:
         # Propagar a la Venta. "Asignado" no la mueve: el pedido sigue Listo.
         venta = db.query(Venta).filter(Venta.ID_Venta == dom.ID_Venta).with_for_update().first()
         if venta:

@@ -7,7 +7,7 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
-from src.shared.services.models import OrdenProduccion, Producto, Insumo, FichaTecnica, FichaTecnicaInsumo, Estado, Venta, LoteProducto, LoteCompra, UnidadMedida, DetalleCompra, Compra, GrupoEnvio, GrupoEnvioItem
+from src.shared.services.models import OrdenProduccion, Producto, Insumo, FichaTecnica, FichaTecnicaInsumo, Estado, Venta, LoteProducto, LoteCompra, UnidadMedida, DetalleCompra, Compra
 
 # Estado de compra Anulada: sus líneas ya no valen como referencia de precio.
 _COMPRA_ANULADA = 12
@@ -952,45 +952,25 @@ def cambiar_estado(
             # pedido ya entró en producción. Mientras siga «Pendiente» —esperando
             # confirmación o que el cliente acepte la fecha— la orden queda
             # bloqueada: primero se mueve el pedido.
-            #
-            # Excepción: pedidos con entrega dividida. Si el pedido pasó a «En camino»
-            # o «Parcialmente entregado» porque el grupo anticipado ya salió, el grupo
-            # programado sigue siendo producible. El avance se permite mientras exista
-            # un GrupoEnvio de tipo 'programado' y estado 'pendiente' que contenga
-            # este producto, aunque venta.Estado ya no sea {4,13}.
             if venta_estado not in _ESTADOS_VENTA_PRODUCIENDO:
-                grupo_programado = (
-                    db.query(GrupoEnvio)
-                    .join(GrupoEnvioItem, GrupoEnvioItem.ID_Grupo == GrupoEnvio.ID_Grupo)
-                    .filter(
-                        GrupoEnvio.ID_Venta == orden.ID_Venta,
-                        GrupoEnvio.Tipo == "programado",
-                        GrupoEnvio.Estado == "pendiente",
-                        GrupoEnvioItem.ID_Producto == orden.ID_Producto,
+                if venta_estado == 1:
+                    detalle = (
+                        f"La orden #{id_orden} pertenece al pedido #{orden.ID_Venta}, "
+                        f"que todavía está «Pendiente». Confirma el pedido en Gestión "
+                        f"de Pedidos para poder iniciar y gestionar su producción."
                     )
-                    .first()
-                )
-                if grupo_programado:
-                    pass  # grupo de producción pendiente — avance permitido
+                elif venta_estado in _ESTADOS_VENTA_FINALES:
+                    detalle = (
+                        f"La orden #{id_orden} pertenece al pedido #{orden.ID_Venta}, "
+                        f"que está «{venta_label}»: su producción ya no se gestiona."
+                    )
                 else:
-                    if venta_estado == 1:
-                        detalle = (
-                            f"La orden #{id_orden} pertenece al pedido #{orden.ID_Venta}, "
-                            f"que todavía está «Pendiente». Confirma el pedido en Gestión "
-                            f"de Pedidos para poder iniciar y gestionar su producción."
-                        )
-                    elif venta_estado in _ESTADOS_VENTA_FINALES:
-                        detalle = (
-                            f"La orden #{id_orden} pertenece al pedido #{orden.ID_Venta}, "
-                            f"que está «{venta_label}»: su producción ya no se gestiona."
-                        )
-                    else:
-                        detalle = (
-                            f"La orden #{id_orden} pertenece al pedido #{orden.ID_Venta} "
-                            f"(actualmente «{venta_label}»). Su producción se habilita "
-                            f"cuando el pedido está confirmado o en producción."
-                        )
-                    raise HTTPException(status_code=400, detail=detalle)
+                    detalle = (
+                        f"La orden #{id_orden} pertenece al pedido #{orden.ID_Venta} "
+                        f"(actualmente «{venta_label}»). Su producción se habilita "
+                        f"cuando el pedido está confirmado o en producción."
+                    )
+                raise HTTPException(status_code=400, detail=detalle)
 
         elif origen_manual and nuevo_estado == ESTADO_CANCELADA:
             # Orden suelta (sin pedido): cancelar es "Anular", no "cambiar estado".
