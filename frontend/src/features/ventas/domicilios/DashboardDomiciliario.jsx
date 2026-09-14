@@ -7,7 +7,7 @@ import "./DomiciliarioUI.css";
 import "./DashboardDomiciliario.css";
 import {
   Package, CheckCircle2, BarChart2, Banknote, Bike, MapPin,
-  ClipboardList, Bell, User, Truck, CalendarDays, RefreshCw,
+  ClipboardList, Truck, CalendarDays, RefreshCw,
   ChevronRight, AlertCircle,
 } from "lucide-react";
 import { formatCOP } from "../../../utils/formato";
@@ -88,13 +88,19 @@ export default function DashboardDomiciliario() {
     { label: "Efectivo recaudado", value: fmtCOP(resumen.efectivo_hoy), money: true, Icon: Banknote,  color: "#b26a00", bg: "#fff5da", borde: "#ffe082" },
   ];
 
+  /* Los mismos dos destinos que tiene el menú, y nada más. Estos accesos
+     seguían ofreciendo seis: cuatro llevaban a pantallas que ya no forman
+     parte del panel —el pedido actual, lo que entregó, las notificaciones y
+     el perfil— y un acceso directo a algo que no está en ninguna parte es
+     peor que no tenerlo.
+
+     Lo que ofrecían sigue a mano, donde se busca: el pedido en curso está
+     arriba en esta misma pantalla y se trabaja desde Mis Entregas, la plata
+     del día son las dos tarjetas de arriba, las notificaciones están en la
+     campanita, y el perfil en el menú del usuario. */
   const ACCESOS = [
-    { label: "Mis Entregas",   Icon: Bike,          link: "/admin/mis-entregas",        desc: "Pedidos asignados" },
-    { label: "Pedido Actual",  Icon: Package,        link: "/admin/pedido-actual",        desc: "El pedido en curso" },
-    { label: "Historial",      Icon: ClipboardList,  link: "/admin/historial-entregas",   desc: "Entregas anteriores" },
-    { label: "Lo que entregué", Icon: Banknote,      link: "/admin/mis-ganancias",        desc: "Hoy, semana, mes" },
-    { label: "Notificaciones", Icon: Bell,           link: "/admin/mis-notificaciones",   desc: "Avisos y alertas" },
-    { label: "Mi Perfil",      Icon: User,           link: "/admin/mi-perfil-repartidor", desc: "Datos personales" },
+    { label: "Mis Entregas", Icon: Bike,          link: "/admin/mis-entregas",       desc: "Pedidos asignados" },
+    { label: "Historial",    Icon: ClipboardList,  link: "/admin/historial-entregas", desc: "Entregas anteriores" },
   ];
 
   const curso = ordenActiva ? varsEstado(ordenActiva.estadoId) : null;
@@ -188,7 +194,9 @@ export default function DashboardDomiciliario() {
                       : <Package size={14} />}
                     {curso.cfg.label}
                   </span>
-                  <Link to="/admin/pedido-actual" className="du-btn du-btn--primario">
+                  {/* A Mis Entregas, que es donde el repartidor lo mueve:
+                      marca en camino, entregado y registra el efectivo. */}
+                  <Link to="/admin/mis-entregas" className="du-btn du-btn--primario">
                     Ver pedido <ChevronRight size={15} />
                   </Link>
                 </div>

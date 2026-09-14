@@ -10,7 +10,7 @@ import {
   Globe, LayoutDashboard, Settings, ShoppingCart, Layers, TrendingUp,
   Home, Pencil, Shield, Users, Upload, FolderOpen, Package, Receipt,
   Building2, Tag, Box, ClipboardList, Utensils, ShoppingBag, Truck,
-  Navigation, History, Banknote, Bell, UserCircle, RotateCcw, MapPin,
+  Navigation, History, UserCircle, RotateCcw, MapPin,
   Search, ChevronLeft, ChevronRight, ChevronDown, LogOut,
 } from "lucide-react";
 
@@ -69,13 +69,11 @@ const adminMenuItems = [
     items: [
       { label: "Pedidos",        Icon: ShoppingBag,    link: "/admin/pedidos",              privilegioKey: "Pedidos" },
       { label: "Domicilios",     Icon: Truck,          link: "/admin/domicilios",           privilegioKey: "Domicilios", soloNoRepartidor: true },
+      // Las mismas tres de repartidorMenuItems: si acá quedaran las siete, un
+      // empleado con el privilegio vería el panel viejo entero.
       { label: "Mi Dashboard",   Icon: LayoutDashboard,link: "/admin/mi-dashboard",         clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
       { label: "Mis Entregas",   Icon: Navigation,     link: "/admin/mis-entregas",         clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
-      { label: "Pedido Actual",  Icon: Package,        link: "/admin/pedido-actual",        clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
       { label: "Historial",      Icon: History,        link: "/admin/historial-entregas",   clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
-      { label: "Lo que entregué", Icon: Banknote,      link: "/admin/mis-ganancias",        clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
-      { label: "Notificaciones", Icon: Bell,           link: "/admin/mis-notificaciones",   clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
-      { label: "Mi Perfil",      Icon: UserCircle,     link: "/admin/mi-perfil-repartidor", clave: "Domicilios_cambiar_estado", hideFromAdmin: true },
       { label: "Devoluciones",   Icon: RotateCcw,      link: "/admin/devoluciones",         privilegioKey: "Devoluciones" },
     ],
   },
