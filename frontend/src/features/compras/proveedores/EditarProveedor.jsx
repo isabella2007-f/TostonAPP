@@ -2,6 +2,7 @@
 import { X, Building2, MapPin, Phone, Mail } from "lucide-react";
 import { esUbicacionValida } from "../../../utils/inputFilters";
 import { fmtFecha } from "../../../utils/dateUtils";
+import { enlaceWhatsApp } from "../../../utils/whatsapp";
 import "./Proveedores.css";
 
 const fmtTel = raw => {
@@ -101,9 +102,13 @@ function VistaProveedor({ proveedor, onClose }) {
           <div>
             <p className="section-label" style={{ margin: "0 0 8px" }}>Contacto</p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {celular
-                ? <a href={`https://wa.me/${celular.replace(/\D/g, "")}`} className="prov-contact-link prov-contact-link--tel" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Phone size={13} /> {celular}</a>
-                : <span className="prov-contact-empty">Sin teléfono</span>
+              {/* Con indicativo: sin el 57, wa.me contesta que el número no
+                  existe. Uno que no se entiende va escrito, sin enlace. */}
+              {!celular
+                ? <span className="prov-contact-empty">Sin teléfono</span>
+                : enlaceWhatsApp(celular)
+                ? <a href={enlaceWhatsApp(celular)} className="prov-contact-link prov-contact-link--tel" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Phone size={13} /> {celular}</a>
+                : <span className="prov-contact-link prov-contact-link--tel" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Phone size={13} /> {celular}</span>
               }
               {correo
                 ? <a href={`mailto:${correo}`} className="prov-contact-link prov-contact-link--mail" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Mail size={13} /> {correo}</a>

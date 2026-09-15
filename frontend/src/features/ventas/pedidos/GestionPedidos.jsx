@@ -20,6 +20,7 @@ import { esPagoEfectivo, esPagoMixto, esPagoTransferencia, montoACobrar, montoTr
 import SearchableSelect from "../../../shared/components/SearchableSelect.jsx";
 import ImageLightbox from "../../../shared/components/ImageLightbox.jsx";
 import { formatCOP } from "../../../utils/formato.js";
+import { enlaceWhatsApp } from "../../../utils/whatsapp";
 import {
   Trash2, Truck, Package,
   RotateCcw, X, AlertCircle,
@@ -311,9 +312,13 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
                   <div className="ver-ped-field">
                     <span className="ver-ped-field__label">Teléfono</span>
                     <span className="ver-ped-field__value">
-                      {pedido.cliente?.telefono
-                        ? <a href={`https://wa.me/${pedido.cliente.telefono.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" style={{ color: "#2e7d32", textDecoration: "none", fontWeight: 600, display:"inline-flex", alignItems:"center", gap:4 }}><Phone size={12} /> {pedido.cliente.telefono}</a>
-                        : "—"}
+                      {/* Con indicativo: sin el 57, wa.me abre y contesta que el
+                          número no existe. Si no se entiende, queda el
+                          teléfono escrito en vez de un enlace muerto. */}
+                      {!pedido.cliente?.telefono ? "—"
+                        : enlaceWhatsApp(pedido.cliente.telefono)
+                        ? <a href={enlaceWhatsApp(pedido.cliente.telefono)} target="_blank" rel="noopener noreferrer" style={{ color: "#2e7d32", textDecoration: "none", fontWeight: 600, display:"inline-flex", alignItems:"center", gap:4 }}><Phone size={12} /> {pedido.cliente.telefono}</a>
+                        : <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}><Phone size={12} /> {pedido.cliente.telefono}</span>}
                     </span>
                   </div>
                 </div>

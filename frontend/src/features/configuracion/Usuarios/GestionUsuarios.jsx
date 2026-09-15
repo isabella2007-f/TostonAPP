@@ -14,6 +14,7 @@ import "./Usuarios.css";
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
 import FilasRelleno from "../../../shared/components/FilasRelleno";
 import { getRecordDate } from "../../../utils/dateUtils";
+import { enlaceWhatsApp } from "../../../utils/whatsapp";
 
 const PER_PAGE = 5;
 
@@ -354,12 +355,20 @@ export default function GestionUsuarios() {
                       </div>
                     </td>
                     <td>
-                      {user.telefono
-                        ? <a href={`https://wa.me/${user.telefono.replace(/\D/g, "")}`} className="phone-cell" style={{ textDecoration: "none", display:"flex", alignItems:"center", gap:5 }} target="_blank" rel="noopener noreferrer">
+                      {/* Con indicativo: sin el 57, wa.me contesta que el número
+                          no existe. Un teléfono que no se entiende se muestra
+                          escrito, sin enlace. */}
+                      {!user.telefono
+                        ? <span className="phone-cell" style={{ color: "#bdbdbd" }}>—</span>
+                        : enlaceWhatsApp(user.telefono)
+                        ? <a href={enlaceWhatsApp(user.telefono)} className="phone-cell" style={{ textDecoration: "none", display:"flex", alignItems:"center", gap:5 }} target="_blank" rel="noopener noreferrer">
                             <Phone size={14} />
                             {user.telefono}
                           </a>
-                        : <span className="phone-cell" style={{ color: "#bdbdbd" }}>—</span>
+                        : <span className="phone-cell" style={{ display:"flex", alignItems:"center", gap:5 }}>
+                            <Phone size={14} />
+                            {user.telefono}
+                          </span>
                       }
                     </td>
                     <td>

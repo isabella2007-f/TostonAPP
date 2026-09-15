@@ -13,6 +13,7 @@ import {
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
 import FilasRelleno from "../../../shared/components/FilasRelleno";
 import { getRecordDate } from "../../../utils/dateUtils";
+import { enlaceWhatsApp } from "../../../utils/whatsapp";
 
 const ITEMS_PER_PAGE = 5;
 
@@ -287,12 +288,20 @@ export default function GestionProveedores() {
                     </td>
 
                     <td>
-                      {p.celular
-                        ? <a href={`https://wa.me/${p.celular.replace(/\D/g, "")}`} className="phone-cell" style={{ textDecoration: "none" }} target="_blank" rel="noopener noreferrer">
+                      {/* Con indicativo: sin el 57, wa.me contesta que el número
+                          no existe. Uno que no se entiende va escrito, sin
+                          enlace. */}
+                      {!p.celular
+                        ? <span className="phone-cell" style={{ color: "#bdbdbd" }}>—</span>
+                        : enlaceWhatsApp(p.celular)
+                        ? <a href={enlaceWhatsApp(p.celular)} className="phone-cell" style={{ textDecoration: "none" }} target="_blank" rel="noopener noreferrer">
                             <Phone size={14} />
                             {p.celular}
                           </a>
-                        : <span className="phone-cell" style={{ color: "#bdbdbd" }}>—</span>
+                        : <span className="phone-cell">
+                            <Phone size={14} />
+                            {p.celular}
+                          </span>
                       }
                     </td>
 

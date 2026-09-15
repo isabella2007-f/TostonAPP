@@ -9,6 +9,7 @@ import { descargarFacturaPedido } from '../../../utils/facturaGenerator.js';
 import SelectorBarrioEntrega from '../../../shared/components/SelectorBarrioEntrega';
 import ImageLightbox from '../../../shared/components/ImageLightbox.jsx';
 import { formatCOP } from "../../../utils/formato";
+import { enlaceWhatsApp } from "../../../utils/whatsapp";
 import {
   Package, Calendar, MapPin, DollarSign, Leaf, Search,
   ChevronRight, Clock, CheckCircle2, Truck, AlertTriangle,
@@ -1234,8 +1235,10 @@ const PedidosClientePage = () => {
                         : '¿Prefieres resolverlo hablando directo con nosotros?'}
                     </p>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {contactoAdmin?.telefono1 && (
-                        <a href={`https://wa.me/57${contactoAdmin.telefono1.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                      {/* El 57 iba pegado a mano: si el teléfono ya venía
+                          guardado con indicativo quedaba 5757… y no abría. */}
+                      {enlaceWhatsApp(contactoAdmin?.telefono1) && (
+                        <a href={enlaceWhatsApp(contactoAdmin.telefono1)} target="_blank" rel="noreferrer"
                           style={{ flex: '1 1 auto', textAlign: 'center', padding: '8px 10px', borderRadius: 8, background: '#25d366', color: '#fff', fontWeight: 700, fontSize: 11, textDecoration: 'none' }}>
                           WhatsApp {contactoAdmin.telefono1}
                         </a>
