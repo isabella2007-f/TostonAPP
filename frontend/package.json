@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build --logLevel info",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/revisar-jsx.mjs",
+    "lint:jsx": "node scripts/revisar-jsx.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

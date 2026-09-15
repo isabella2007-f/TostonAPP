@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef } from "react";
-import { Search, X, AlertTriangle, Package, ClipboardList, Eye, PenLine, Trash2, Truck, Ban, CheckCircle2, ShoppingCart, Settings } from "lucide-react";
+import { Search, X, AlertTriangle, Package, ClipboardList, Eye, PenLine, Trash2, Truck, Ban, CheckCircle2, ShoppingCart, Settings, RefreshCw } from "lucide-react";
 import { usePrivilegio } from "../../../context/PrivilegiosContext";
 import { registrarSalida, procesarVencidos } from "../../../services/salidasService";
 import CrearInsumo from "./CrearInsumo.jsx";
