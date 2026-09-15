@@ -422,12 +422,41 @@ def insumos_reservados(db: Session, ids_insumo, excluir_orden: int = None) -> di
     return reservado
 
 
+def _avisar_al_cliente(db: Session, id_venta, nuevo_estado) -> None:
+    """Push al cliente por el estado al que la cocina dejó su pedido.
+
+    Best-effort: si el aviso falla, la orden igual quedó guardada. Lo que no
+    puede pasar es lo de antes —que el pedido pasara a "En preparación" y a
+    "Listo" sin que el cliente se enterara— porque son justo los dos momentos
+    que está esperando.
+    """
+    if not id_venta or not nuevo_estado:
+        return
+    try:
+        from src.shared.services.models import Venta as _Venta
+        from src.shared.services.fcm_service import notificar_cambio_pedido_push
+
+        venta = db.query(_Venta).filter(_Venta.ID_Venta == id_venta).first()
+        if venta is None or not venta.ID_Usuario:
+            return
+        notificar_cambio_pedido_push(
+            id_usuario_cliente = venta.ID_Usuario,
+            id_venta           = id_venta,
+            nuevo_estado       = nuevo_estado,
+            db                 = db,
+        )
+    except Exception as e:
+        logger.error(
+            "FCM: no se pudo avisar al cliente del pedido #%s: %s", id_venta, e,
+        )
+
+
 def _sync_venta_por_ordenes(
     db: Session,
     id_venta: int,
     id_orden_actual: int,
     nuevo_estado_orden: int,
-) -> None:
+) -> int | None:
     """
     Mantiene el estado del pedido (Venta) coherente con sus órdenes de producción.
 
@@ -447,7 +476,9 @@ def _sync_venta_por_ordenes(
     """
     venta = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
     if not venta or venta.Estado in _ESTADOS_VENTA_FINALES:
-        return
+        return None
+
+    anterior = venta.Estado
 
     otras = db.query(OrdenProduccion).filter(
         OrdenProduccion.ID_Venta == id_venta,
@@ -481,6 +512,13 @@ def _sync_venta_por_ordenes(
         # que sigue Pendiente (se abrió al dejar el anticipo) no puede saltarse
         # la confirmación del admin.
         venta.Estado = ESTADO_EN_PROCESO
+
+    # A quién avisarle y de qué. Se devuelve en vez de mandarlo desde acá
+    # porque el pedido todavía no está guardado: el push sale después del
+    # commit, para no prometerle al cliente algo que puede deshacerse.
+    if venta.Estado == anterior:
+        return None
+    return venta.Estado
 
 
 def _actualizar_estado_insumo(insumo: Insumo) -> None:
@@ -908,6 +946,10 @@ def cambiar_estado(
     - `commit`: False cuando el llamador maneja la transacción (cascada de
       cancelación del pedido) para que todo cierre en un solo commit.
     """
+    # A qué estado dejó el pedido lo que pasa acá abajo, si es que lo movió.
+    # El aviso al cliente sale al final, con el cambio ya guardado.
+    _estado_venta = None
+
     # compat: si pasaron solo un int
     if isinstance(datos, int):
         nuevo_estado = datos
@@ -1047,7 +1089,8 @@ def cambiar_estado(
                     raise HTTPException(status_code=400, detail=detalle)
 
             if orden.ID_Venta:
-                _sync_venta_por_ordenes(db, orden.ID_Venta, orden.ID_Orden_Produccion, ESTADO_EN_PROCESO)
+                _estado_venta = _sync_venta_por_ordenes(
+                    db, orden.ID_Venta, orden.ID_Orden_Produccion, ESTADO_EN_PROCESO)
 
         # Al completar (11=Completada): incrementar stock del producto y crear lote
         elif nuevo_estado == ESTADO_COMPLETADA and orden.Estado == ESTADO_EN_PROCESO:
@@ -1128,7 +1171,8 @@ def cambiar_estado(
             ))
 
             if orden.ID_Venta:
-                _sync_venta_por_ordenes(db, orden.ID_Venta, orden.ID_Orden_Produccion, ESTADO_COMPLETADA)
+                _estado_venta = _sync_venta_por_ordenes(
+                    db, orden.ID_Venta, orden.ID_Orden_Produccion, ESTADO_COMPLETADA)
 
         # Al cancelar (5): restaurar insumos si la orden estaba en proceso
         elif nuevo_estado == ESTADO_CANCELADA and orden.Estado == ESTADO_EN_PROCESO:
@@ -1138,12 +1182,18 @@ def cambiar_estado(
             # inventario lo que se había descontado al arrancar; hacerlo ahora
             # crearía harina de la nada.
             if orden.ID_Venta:
-                _sync_venta_por_ordenes(db, orden.ID_Venta, orden.ID_Orden_Produccion, ESTADO_CANCELADA)
+                _estado_venta = _sync_venta_por_ordenes(
+                    db, orden.ID_Venta, orden.ID_Orden_Produccion, ESTADO_CANCELADA)
 
         orden.Estado = nuevo_estado
         db.flush()
         if commit:
             db.commit()
+            # El pedido cambió de estado por lo que pasó en la cocina —entró a
+            # producción, o quedó listo—. Hasta ahora esto no le avisaba nada
+            # al cliente: el pedido se movía solo y él se enteraba abriendo la
+            # app, aunque son los dos momentos que más espera.
+            _avisar_al_cliente(db, orden.ID_Venta, _estado_venta)
         db.refresh(orden)
         return _formato_orden(orden, db)
 

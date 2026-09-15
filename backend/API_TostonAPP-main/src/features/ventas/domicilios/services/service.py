@@ -457,6 +457,20 @@ def _avisar_asignacion(db: Session, dom: Domicilio) -> None:
             f"El pedido #{dom.ID_Venta} fue asignado a {nombre}",
             dom.ID_Venta, "/ventas/domicilios",
         )
+
+        # Y al cliente, que es quien va a abrirle la puerta. Era la única
+        # novedad de su pedido que no recibía.
+        from src.shared.services.fcm_service import (
+            notificar_repartidor_asignado_push,
+        )
+        venta = db.query(Venta).filter(Venta.ID_Venta == dom.ID_Venta).first()
+        if venta is not None:
+            notificar_repartidor_asignado_push(
+                id_usuario_cliente = venta.ID_Usuario,
+                id_venta           = dom.ID_Venta,
+                repartidor         = nombre,
+                db                 = db,
+            )
         db.commit()
     except Exception as e:
         logger.error(f"FCM: no se pudo avisar la asignación del domicilio {dom.ID_Domicilio}: {e}")

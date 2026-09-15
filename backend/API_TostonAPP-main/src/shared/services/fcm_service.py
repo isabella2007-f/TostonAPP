@@ -217,6 +217,44 @@ _LABELS_ESTADO_CLIENTE = {
 }
 
 
+def notificar_repartidor_asignado_push(
+    id_usuario_cliente: int,
+    id_venta: int,
+    repartidor: str,
+    db=None,
+) -> None:
+    """Push al cliente cuando su pedido ya tiene quién se lo lleve.
+
+    Saber el nombre de quien va a tocarle el timbre es de las cosas que más
+    tranquilizan en un domicilio, y era la única novedad del pedido que el
+    cliente no recibía: el push de la asignación iba solo al repartidor.
+    """
+    try:
+        if not id_usuario_cliente:
+            return
+        token = _token_usuario(id_usuario_cliente, db)
+        if not token:
+            logger.info(
+                "FCM: asignación del pedido #%s sin aviso al cliente %s — no "
+                "tiene dispositivo registrado", id_venta, id_usuario_cliente,
+            )
+            return
+        nombre = (repartidor or "").strip()
+        _enviar_multicast(
+            [token],
+            f"\U0001f6f5 Tu pedido #{id_venta:05d} ya tiene repartidor",
+            f"{nombre} te lo lleva" if nombre else "Ya salió para tu dirección",
+            {"tipo": "repartidor_asignado", "id_venta": id_venta},
+        )
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.error(
+            "FCM: error avisando al cliente la asignación del pedido #%s: %s",
+            id_venta, e,
+        )
+
+
 def notificar_cambio_pedido_push(
     id_usuario_cliente: int,
     id_venta: int,
@@ -282,6 +320,10 @@ def notificar_cambio_pedido_push(
                 "tipo": "cambio_pedido",
                 "id_venta": str(id_venta),
                 "estado": estado_label,
+                # El número del estado, no solo su nombre. La app lo usa para
+                # saber que ya avisó este cambio y no repetirlo cuando su
+                # barrido de 30 segundos vea lo mismo un rato después.
+                "estado_num": str(int(nuevo_estado)),
             },
         )
         messaging.send(msg, app=app)
