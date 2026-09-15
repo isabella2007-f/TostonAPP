@@ -650,15 +650,22 @@
 }
 .dom-ui .du-wa:hover { background: #d8f5e4; border-color: #7fdca4; }
 
-/* El mismo verde del botón de arriba, con la forma de los botones de la
-   tarjeta: es una acción más al lado de "Cobrar" y "Actualizar". */
-.dom-ui .du-btn--wa {
-  background: #eafaf0;
-  border: 1px solid #b8ebc9;
-  color: #128c4a;
+/* El logo, en el verde de la marca. Redondo y sin texto: se reconoce solo,
+   y así no le roba sitio a "Cobrar" y "Actualizar". */
+.dom-ui .du-wa-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #25d366;
+  color: #fff;
   text-decoration: none;
+  transition: background .15s, transform .15s;
 }
-.dom-ui .du-btn--wa:hover { background: #d8f5e4; border-color: #7fdca4; }
+.dom-ui .du-wa-btn:hover { background: #1db756; transform: scale(1.06); }
 
 /* El teléfono y el botón de escribir, uno debajo del otro: el número se
    sigue pudiendo leer y copiar —para llamar— y el botón es para escribir. */

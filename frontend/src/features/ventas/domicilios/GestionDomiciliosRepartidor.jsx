@@ -7,9 +7,10 @@ import "./DomiciliarioUI.css";
 import "./MisEntregas.css";
 import { formatCOP } from "../../../utils/formato";
 import { enlaceWhatsApp, saludoDomiciliario } from "../../../utils/whatsapp";
+import IconoWhatsApp from "../../../shared/components/IconoWhatsApp.jsx";
 import {
   Search, RefreshCw, Truck, Package, CheckCircle2, XCircle, Clock,
-  MapPin, MessageSquare, X, Check, Phone, Banknote, Bike, Wallet, MessageCircle,
+  MapPin, MessageSquare, X, Check, Phone, Banknote, Bike, Wallet,
   AlertCircle, ChevronRight,
 } from "lucide-react";
 
@@ -324,8 +325,15 @@ function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar }) {
                   <Phone size={13} /> {domicilio.cliente.telefono}
                 </span>
                 {waCliente && (
-                  <a className="du-wa" href={waCliente} target="_blank" rel="noopener noreferrer">
-                    <MessageCircle size={13} /> Escribir por WhatsApp
+                  <a
+                    className="du-wa-btn"
+                    href={waCliente}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Escribirle al cliente por WhatsApp"
+                    aria-label="Escribirle al cliente por WhatsApp"
+                  >
+                    <IconoWhatsApp size={17} />
                   </a>
                 )}
               </div>
@@ -701,16 +709,20 @@ export default function GestionDomiciliosRepartidor() {
                       <EstadoPagoBadge estadoPago={dom.estado_pago} />
                     </div>
                     <div className="me-card__acciones">
+                      {/* Solo el logo: dice qué es de un vistazo y en
+                          cualquier idioma, sin robarle sitio a "Cobrar" y
+                          "Actualizar". */}
                       {wa && (
                         <a
-                          className="du-btn du-btn--wa du-btn--sm"
+                          className="du-wa-btn"
                           href={wa}
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Escribirle al cliente por WhatsApp"
+                          aria-label="Escribirle al cliente por WhatsApp"
                           onClick={e => e.stopPropagation()}
                         >
-                          <MessageCircle size={14} /> Escribir
+                          <IconoWhatsApp size={17} />
                         </a>
                       )}
                       {/* Cobrar sin cerrar la entrega: a veces el cliente paga
