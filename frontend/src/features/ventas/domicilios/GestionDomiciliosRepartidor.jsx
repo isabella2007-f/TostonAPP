@@ -6,9 +6,10 @@ import { ESTADO_DOMICILIO, ESTADO_DOM_CONFIG, cobroEfectivoPendiente, esDomicili
 import "./DomiciliarioUI.css";
 import "./MisEntregas.css";
 import { formatCOP } from "../../../utils/formato";
+import { enlaceWhatsApp, saludoDomiciliario } from "../../../utils/whatsapp";
 import {
   Search, RefreshCw, Truck, Package, CheckCircle2, XCircle, Clock,
-  MapPin, MessageSquare, X, Check, Phone, Banknote, Bike, Wallet,
+  MapPin, MessageSquare, X, Check, Phone, Banknote, Bike, Wallet, MessageCircle,
   AlertCircle, ChevronRight,
 } from "lucide-react";
 
@@ -281,6 +282,20 @@ function CambiarEstadoModal({ domicilio, onClose, onSave }) {
 }
 
 function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar }) {
+  /* El enlace lleva el indicativo 57. Sin él WhatsApp abre igual pero
+     contesta que el número no existe, así que parecía que el cliente había
+     dado mal el teléfono. Si el número no se entiende, `enlaceWhatsApp`
+     devuelve null y el botón no se dibuja: rellenarlo a ojo abre el chat de
+     un desconocido. */
+  const waCliente = enlaceWhatsApp(
+    domicilio.cliente?.telefono,
+    saludoDomiciliario({
+      nombre: domicilio.cliente?.nombre,
+      numeroPedido: domicilio.numero,
+      enCamino: domicilio.estadoId === ESTADO_DOMICILIO.EN_CAMINO,
+    }),
+  );
+
   return (
     <div className="modal-overlay">
       <div className="du-modal du-modal--ancho" onClick={e => e.stopPropagation()}>
@@ -304,13 +319,16 @@ function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar }) {
             <div className="du-dato__label">Cliente</div>
             <div className="du-dato__valor du-dato__valor--fuerte">{domicilio.cliente?.nombre || "—"}</div>
             {domicilio.cliente?.telefono && (
-              <a
-                className="du-wa"
-                href={`https://wa.me/${domicilio.cliente.telefono.replace(/\D/g, "")}`}
-                target="_blank" rel="noopener noreferrer"
-              >
-                <Phone size={13} /> {domicilio.cliente.telefono}
-              </a>
+              <div className="du-contacto">
+                <span className="du-contacto__tel">
+                  <Phone size={13} /> {domicilio.cliente.telefono}
+                </span>
+                {waCliente && (
+                  <a className="du-wa" href={waCliente} target="_blank" rel="noopener noreferrer">
+                    <MessageCircle size={13} /> Escribir por WhatsApp
+                  </a>
+                )}
+              </div>
             )}
           </div>
 

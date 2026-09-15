@@ -650,6 +650,23 @@
 }
 .dom-ui .du-wa:hover { background: #d8f5e4; border-color: #7fdca4; }
 
+/* El teléfono y el botón de escribir, uno debajo del otro: el número se
+   sigue pudiendo leer y copiar —para llamar— y el botón es para escribir. */
+.dom-ui .du-contacto {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.dom-ui .du-contacto__tel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--du-texto-medio, #616161);
+}
+
 .dom-ui .du-campo-label {
   display: block;
   margin-bottom: 8px;
