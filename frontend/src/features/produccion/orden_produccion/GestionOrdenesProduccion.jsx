@@ -1229,6 +1229,7 @@ export default function GestionOrdenesProduccion() {
   const [ordenes,      setOrdenes]      = useState([]);
   const [productos,    setProductos]    = useState([]);
   const [loading,      setLoading]      = useState(true);
+  const [tab,          setTab]          = useState("activas");
   const [search,       setSearch]       = useState(initialSearch);
   const [filterEstado, setFilterEstado] = useState("todos");
   const [filterDesde,  setFilterDesde]  = useState("");
@@ -1239,6 +1240,9 @@ export default function GestionOrdenesProduccion() {
   const [toast,        setToast]        = useState(null);
   const [actionSaving, setActionSaving] = useState(false);
   const filterRef = useRef();
+
+  const ESTADOS_ACTIVAS   = ["Pendiente", "En proceso"];
+  const ESTADOS_HISTORIAL = ["Completada", "Cancelada"];
 
   const showToast = (msg, type = "success") => {
     setToast({ message: msg, type });
@@ -1286,10 +1290,11 @@ export default function GestionOrdenesProduccion() {
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
+  const estadosPorTab = tab === "activas" ? ESTADOS_ACTIVAS : ESTADOS_HISTORIAL;
+
   const filtered = ordenes.filter(o => {
+    if (!estadosPorTab.includes(o.estado)) return false;
     const q = search.toLowerCase();
-    // También por el pedido: es como se llega acá desde "Producción activa",
-    // y es lo que alguien escribe cuando busca "las órdenes del pedido 43".
     const matchQ = [
       String(o.id ?? ""),
       String(o.idVenta ?? ""),
@@ -1315,7 +1320,8 @@ export default function GestionOrdenesProduccion() {
 
   const paged      = filtered.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
 
-  useEffect(() => setPage(1), [search, filterEstado, filterDesde, filterHasta]);
+  useEffect(() => setPage(1), [search, filterEstado, filterDesde, filterHasta, tab]);
+  useEffect(() => { setFilterEstado("todos"); setPage(1); }, [tab]);
 
   const handleSaveOrder = async (info) => {
     // 3.2 — al guardar "editar orden" sin cambios no se hizo ninguna petición.
@@ -1376,6 +1382,34 @@ export default function GestionOrdenesProduccion() {
       </div>
 
       <div className="page-inner">
+        {/* ── Pestañas activas / historial ── */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 18, borderBottom: "2px solid #e0e0e0" }}>
+          {[
+            { key: "activas",   label: "Activas", count: ordenes.filter(o => ESTADOS_ACTIVAS.includes(o.estado)).length },
+            { key: "historial", label: "Completadas y canceladas", count: ordenes.filter(o => ESTADOS_HISTORIAL.includes(o.estado)).length },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              style={{
+                padding: "10px 20px", border: "none", background: "none",
+                fontFamily: "inherit", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                color: tab === t.key ? "#2e7d32" : "#9e9e9e",
+                borderBottom: tab === t.key ? "2px solid #2e7d32" : "2px solid transparent",
+                marginBottom: -2, transition: "color 0.15s",
+                display: "flex", alignItems: "center", gap: 8,
+              }}
+            >
+              {t.label}
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 20,
+                background: tab === t.key ? "#e8f5e9" : "#f5f5f5",
+                color: tab === t.key ? "#2e7d32" : "#9e9e9e",
+              }}>{t.count}</span>
+            </button>
+          ))}
+        </div>
+
         <div className="toolbar">
           <div className="search-wrap">
             <Search size={15} className="search-icon" />
@@ -1397,7 +1431,7 @@ export default function GestionOrdenesProduccion() {
             {showFilter && (
               <div className="filter-dropdown" style={{ minWidth: 220, zIndex: 200 }}>
                 <p className="filter-section-title">Estado</p>
-                {["todos", ...ESTADOS_ORDEN].map(f => (
+                {["todos", ...estadosPorTab].map(f => (
                   <button
                     key={f}
                     className={`filter-option${filterEstado === f ? " active" : ""}`}
@@ -1431,9 +1465,11 @@ export default function GestionOrdenesProduccion() {
             </button>
           )}
 
-          <button className="btn-agregar" onClick={() => setModal({ type: "form" })} data-tooltip="Crear nueva orden de producción">
-            Agregar Orden <span style={{ fontSize: 18 }}>+</span>
-          </button>
+          {tab === "activas" && (
+            <button className="btn-agregar" onClick={() => setModal({ type: "form" })} data-tooltip="Crear nueva orden de producción">
+              Agregar Orden <span style={{ fontSize: 18 }}>+</span>
+            </button>
+          )}
         </div>
 
         <div className="card">
@@ -1460,7 +1496,11 @@ export default function GestionOrdenesProduccion() {
                       <div className="empty-state">
                         <div className="empty-state__icon"><Building2 size={32} strokeWidth={1} style={{ color: "#bdbdbd" }} /></div>
                         <p className="empty-state__text">
-                          {search || filterEstado !== "todos" ? "Sin órdenes que coincidan." : "No hay órdenes registradas."}
+                          {search || filterEstado !== "todos"
+                            ? "Sin órdenes que coincidan."
+                            : tab === "activas"
+                            ? "No hay órdenes activas."
+                            : "No hay órdenes completadas ni canceladas."}
                         </p>
                       </div>
                     </td>

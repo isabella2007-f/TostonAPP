@@ -1186,15 +1186,14 @@ export default function GestionProductos() {
                     <th>Precio</th>
                     <th>Stock</th>
                     <th>Próx. Venc.</th>
-                    <th>Activo</th>
-                    <th>Tienda</th>
+                    <th>Estado</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginated.length === 0 ? (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={8}>
                         <div className="empty-state">
                           <div className="empty-state__icon"><Package size={32} strokeWidth={1} style={{ color: "#bdbdbd" }} /></div>
                           <p className="empty-state__text">Sin resultados</p>
@@ -1228,21 +1227,15 @@ export default function GestionProductos() {
                           </td>
                           <td><VencCellProd fecha={p.proxVencimiento} dias={p.diasParaVencer} /></td>
                           <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <Toggle
-                                value={p.activo}
-                                onChange={() => handleToggleActivo(p)}
-                                title={p.activo ? "Activo" : "Inactivo"}
-                              />
-                            </div>
-                          </td>
-                          <td>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                              <Toggle
-                                value={p.publicado}
-                                onChange={() => handleTogglePublicado(p)}
-                                title={p.publicado ? "Visible en tienda" : "No publicado"}
-                              />
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <Toggle value={p.activo} onChange={() => handleToggleActivo(p)} title={p.activo ? "Activo" : "Inactivo"} />
+                                <span style={{ fontSize: 11, color: p.activo ? "#2e7d32" : "#9e9e9e", fontWeight: 600 }}>Activo</span>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <Toggle value={p.publicado} onChange={() => handleTogglePublicado(p)} title={p.publicado ? "Visible en tienda" : "No publicado"} />
+                                <span style={{ fontSize: 11, color: p.publicado ? "#1565c0" : "#9e9e9e", fontWeight: 600 }}>Tienda</span>
+                              </div>
                             </div>
                           </td>
                           <td>
@@ -1284,7 +1277,7 @@ export default function GestionProductos() {
                       );
                     })
                   )}
-                  <FilasRelleno current={paginated.length} perPage={ITEMS_PER_PAGE} colSpan={9} />
+                  <FilasRelleno current={paginated.length} perPage={ITEMS_PER_PAGE} colSpan={8} />
                 </tbody>
               </table>
             </div>
