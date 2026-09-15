@@ -103,6 +103,10 @@ def _enviar_multicast(tokens: list, titulo: str, cuerpo: str, data: dict | None 
 
     app = _firebase_app()
     if app is None:
+        logger.warning(
+            "FCM: push no enviado a %s dispositivos — Firebase sin configurar "
+            "(falta FIREBASE_CREDENTIALS_JSON)", len(tokens),
+        )
         return
 
     msg = messaging.MulticastMessage(
@@ -170,6 +174,10 @@ def notificar_asignacion_domicilio_push(
     try:
         token = _token_usuario(id_empleado, db)
         if not token:
+            logger.info(
+                "FCM: asignación del pedido #%s sin push — el repartidor %s no "
+                "tiene dispositivo registrado", id_venta, id_empleado,
+            )
             return
         destino = f"\U0001f4cd {direccion}" if direccion else "Revisá tus entregas"
         _enviar_multicast(
@@ -184,11 +192,28 @@ def notificar_asignacion_domicilio_push(
         logger.error(f"FCM: error enviando push de asignación al empleado {id_empleado}: {e}")
 
 
+# Qué se le dice al cliente en cada estado. Los números son los de
+# `pedidos/services/estados.py`.
+#
+# Tenía cuatro: confirmado, cancelado, entregado y en camino. Los demás
+# estados llamaban igual a esta función y se iban en silencio, porque sin
+# etiqueta el push no se arma. Justo los que le piden algo al cliente —que
+# apruebe una fecha, que suba el comprobante— eran los que no salían, y son
+# los únicos por los que el pedido se queda quieto esperándolo a él.
 _LABELS_ESTADO_CLIENTE = {
+    1:  ("Recibimos tu pedido: lo estamos revisando \u23f3", "Pendiente de aprobación"),
     4:  ("Tu pedido fue confirmado ✅",         "Confirmado ✅"),
     5:  ("Tu pedido fue cancelado ❌",          "Cancelado ❌"),
     8:  ("Tu pedido fue entregado \U0001f4e6",      "Entregado \U0001f4e6"),
     9:  ("Tu domicilio está en camino \U0001f6f5", "En camino \U0001f6f5"),
+    11: ("Tu pedido ya está listo \U0001f6cd\ufe0f",      "Listo \U0001f6cd\ufe0f"),
+    13: ("Ya lo estamos preparando \U0001f469\u200d\U0001f373", "En preparación \U0001f469\u200d\U0001f373"),
+    16: ("Te proponemos otra fecha de entrega \U0001f4c5", "Fecha propuesta \U0001f4c5"),
+    17: ("Vamos a proponerte otra fecha \U0001f4c5",  "Esperando nueva fecha \U0001f4c5"),
+    18: ("Te entregamos una parte de tu pedido \U0001f4e6", "Entregado en parte"),
+    19: ("Lo estamos revisando: te vamos a llamar \U0001f4de", "Lo estamos revisando"),
+    20: ("Falta tu pago para seguir \U0001f4b3",      "Esperando tu pago \U0001f4b3"),
+    21: ("Tu pedido te espera en la tienda 🏪", "Retenido en tienda 🏪"),
 }
 
 
@@ -204,16 +229,31 @@ def notificar_cambio_pedido_push(
     try:
         from firebase_admin import messaging
 
+        # Los tres motivos por los que un push no sale. Antes los tres eran un
+        # `return` mudo: el push no llegaba, no fallaba nada, y no quedaba
+        # rastro en ninguna parte de por qué.
         app = _firebase_app()
         if app is None:
+            logger.warning(
+                "FCM: push de pedido #%s no enviado — Firebase sin configurar "
+                "(falta FIREBASE_CREDENTIALS_JSON)", id_venta,
+            )
             return
 
         token = _token_usuario(id_usuario_cliente, db)
         if not token:
+            logger.info(
+                "FCM: push de pedido #%s no enviado — el cliente %s no tiene "
+                "dispositivo registrado", id_venta, id_usuario_cliente,
+            )
             return
 
         label_info = _LABELS_ESTADO_CLIENTE.get(nuevo_estado)
         if not label_info:
+            logger.warning(
+                "FCM: push de pedido #%s no enviado — estado %s sin etiqueta "
+                "en _LABELS_ESTADO_CLIENTE", id_venta, nuevo_estado,
+            )
             return
 
         notif_body, estado_label = label_info
