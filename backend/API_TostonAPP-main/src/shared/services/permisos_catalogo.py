@@ -91,8 +91,15 @@ PERMISOS: list[tuple[str, str, str, str]] = [
     # ── Pedidos ──
     ("ver_pedidos",               "Ver listado y detalle de pedidos",                    "Pedidos",            "ver"),
     ("crear_pedidos",             "Crear nuevos pedidos",                                "Pedidos",            "crear"),
-    ("editar_pedidos",            "Editar pedidos",                                      "Pedidos",            "editar"),
+    ("editar_pedidos",            "Editar el contenido de un pedido (productos, montos, domicilio)", "Pedidos", "editar"),
     ("cancelar_pedidos",          "Cancelar pedidos (cambia estado, no elimina)",        "Pedidos",            "cancelar"),
+    # Gobierna todas las acciones que cambian el estado del pedido o
+    # aprueban/rechazan algo dentro del flujo (proponer/aprobar/rechazar
+    # fecha, aprobar/rechazar comprobante, registrar cobro, registrar pago
+    # final, resolver escalado/retenido en tienda, marcar listo/avisar
+    # despacho) — incluye poder ver los comprobantes en ese contexto.
+    # Distinto de `editar_pedidos`, que es solo el contenido (PUT /pedidos/{id}).
+    ("cambiar_estado_pedidos",    "Cambiar el estado de un pedido y sus acciones de aprobación/rechazo (incluye ver comprobantes)", "Pedidos", "cambiar_estado"),
 
     # ── Devoluciones ──
     ("ver_devoluciones",          "Ver listado y detalle de devoluciones",              "Devoluciones",       "ver"),

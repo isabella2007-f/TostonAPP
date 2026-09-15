@@ -16,7 +16,7 @@ from .service import (
     obtener_domicilios, obtener_domicilio, crear_domicilio,
     editar_domicilio, asignar_repartidor, cambiar_estado,
     obtener_resumen_dia, obtener_mensajes, enviar_mensaje,
-    obtener_repartidores, registrar_pago_efectivo,
+    obtener_repartidores, registrar_pago_efectivo, confirmar_retorno_tienda,
     listar_efectivo_pendiente, liquidar_efectivo,
 )
 
@@ -196,6 +196,17 @@ def registrar_cobro_efectivo(
     """
     _exigir_domicilio_propio(db, actual, id_domicilio)
     return registrar_pago_efectivo(db, id_domicilio, datos, actual["registro"].ID_Usuario)
+
+
+@router.patch("/{id_domicilio}/confirmar-retorno", response_model=DomicilioResponse)
+def confirmar_retorno_endpoint(
+    id_domicilio: int,
+    db:           Session = Depends(get_db),
+    actual:       dict    = Depends(requiere_permiso("cambiar_estado_domicilios")),
+):
+    """El domiciliario confirma que el pedido ya está físicamente de vuelta en la tienda (3.7)."""
+    _exigir_domicilio_propio(db, actual, id_domicilio)
+    return confirmar_retorno_tienda(db, id_domicilio)
 
 
 @router.patch("/{id_domicilio}/estado", response_model=DomicilioResponse)

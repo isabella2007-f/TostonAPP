@@ -61,6 +61,7 @@ const CLAVE_A_PERMISO = {
   "Pedidos_crear":                   "crear_pedidos",
   "Pedidos_editar":                  "editar_pedidos",
   "Pedidos_cancelar":                "cancelar_pedidos",
+  "Pedidos_cambiar_estado":          "cambiar_estado_pedidos",
   "Devoluciones_ver":                "ver_devoluciones",
   "Devoluciones_crear":              "crear_devoluciones",
   "Devoluciones_editar":             "editar_devoluciones",

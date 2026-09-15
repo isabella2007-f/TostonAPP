@@ -128,3 +128,10 @@ export const getEfectivoPendiente = async () =>
 
 export const liquidarEfectivo = async (id) =>
   apiFetch(`/domicilios/${id}/liquidar-efectivo`, { method: "PATCH" });
+
+// 3.7: el domiciliario confirma que el pedido ya está físicamente de vuelta
+// en la tienda tras una entrega fallida (registrarPagoEfectivo con
+// recibido=false ya movió el pedido a "En ruta de retorno").
+export const confirmarRetornoTienda = async (id) => {
+  return apiFetch(`/domicilios/${id}/confirmar-retorno`, { method: "PATCH" });
+};

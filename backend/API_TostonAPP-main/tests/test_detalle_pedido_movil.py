@@ -218,11 +218,17 @@ class DetalleDelPedidoTests(PanelBase):
             f"/ventas/{idv}/proponer-fecha", self.admin,
             {"fecha_entrega": f"2027-09-{dia}T10:00:00"}))
 
+    def rechazar(self, idv, dia="25", motivo="No puedo recibirlo ese día"):
+        return self.afirmar_ok(self.patch(
+            f"/ventas/{idv}/rechazar-fecha", self.cliente,
+            {"fecha_propuesta": f"2027-09-{dia}T10:00:00", "motivo": motivo}))
+
     def test_rechazar_la_fecha_no_mata_el_pedido(self):
-        """Rechazar deja el pedido en Fecha rechazada (17), esperando otra.
+        """Rechazar deja el pedido en Fecha propuesta final (21), con la
+        contraoferta del cliente, esperando al admin (prompt-pedidos-2, 3.4).
 
         Antes se cancelaba —y el de recoger en tienda se perdía—, así que la
-        app lo mandaba al historial. Ahora sigue vivo y el admin propone otra.
+        app lo mandaba al historial. Ahora sigue vivo.
         """
         creado = self.pedido_completo()
         idv = creado["ID_Venta"]
@@ -232,41 +238,37 @@ class DetalleDelPedidoTests(PanelBase):
         self.assertIsNone(antes["fecha_rechazada"], "nadie rechazó nada todavía")
         self.assertEqual(antes["intentos_rechazo"], 0)
 
-        self.afirmar_ok(self.patch(f"/ventas/{idv}/rechazar-fecha", self.cliente))
+        self.rechazar(idv)
         despues = self.afirmar_ok(self.get(f"/ventas/{idv}", self.admin))
 
-        self.assertEqual(despues["Estado"], 17, "Fecha rechazada")
+        self.assertEqual(despues["Estado"], 21, "Fecha propuesta final")
         self.assertIsNotNone(despues["fecha_rechazada"])
         self.assertEqual(despues["intentos_rechazo"], 1)
-        self.assertIsNone(despues["Fecha_entrega_esperada"])
+        # La fecha que queda es la contraoferta del cliente, no la del admin.
+        self.assertIsNotNone(despues["Fecha_entrega_esperada"])
         self.assertTrue(despues["requiere_fecha_propuesta"])
 
-    def test_al_tercer_rechazo_el_pedido_se_escala(self):
-        """Tres rechazos y lo resuelve un administrador a mano.
-
-        La app necesita los dos números para explicarlo: en cuál va y cuál es
-        el tope.
+    def test_el_rechazo_final_del_admin_escala_el_pedido(self):
+        """Una sola ronda: el cliente contraoferta, el admin no puede
+        cumplirla → Escalado a admin (3.4.1). Ya no hay ciclo de reintentos.
         """
         creado = self.pedido_completo()
         idv = creado["ID_Venta"]
+        self.proponer(idv)
+        self.rechazar(idv)
 
-        for intento, dia in enumerate(("20", "21", "22"), start=1):
-            self.proponer(idv, dia)
-            self.afirmar_ok(
-                self.patch(f"/ventas/{idv}/rechazar-fecha", self.cliente))
-            v = self.afirmar_ok(self.get(f"/ventas/{idv}", self.admin))
-            self.assertEqual(v["intentos_rechazo"], intento)
-            esperado = 19 if intento >= 3 else 17
-            self.assertEqual(v["Estado"], esperado, f"intento {intento}")
+        self.afirmar_ok(self.patch(f"/ventas/{idv}/rechazar-fecha-final", self.admin))
+        v = self.afirmar_ok(self.get(f"/ventas/{idv}", self.admin))
+        self.assertEqual(v["Estado"], 19, "Escalado a admin")
 
-    def test_aceptar_la_fecha_borra_la_cuenta_de_rechazos(self):
-        """Si acordaron, los rechazos anteriores dejan de importar."""
+    def test_aceptar_la_fecha_final_borra_la_cuenta_de_rechazos(self):
+        """Si el admin acepta la contraoferta del cliente, el rechazo anterior
+        deja de importar."""
         creado = self.pedido_completo()
         idv = creado["ID_Venta"]
         self.proponer(idv, "20")
-        self.afirmar_ok(self.patch(f"/ventas/{idv}/rechazar-fecha", self.cliente))
-        self.proponer(idv, "21")
-        self.afirmar_ok(self.patch(f"/ventas/{idv}/aceptar-fecha", self.cliente))
+        self.rechazar(idv, "21")
+        self.afirmar_ok(self.patch(f"/ventas/{idv}/aprobar-fecha", self.admin))
 
         v = self.afirmar_ok(self.get(f"/ventas/{idv}", self.admin))
         self.assertEqual(v["intentos_rechazo"], 0)

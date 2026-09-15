@@ -74,6 +74,9 @@ class VentaEstado(BaseModel):
 # ── Proponer fecha de entrega ──
 class FechaEntregaInput(BaseModel):
     fecha_entrega: datetime
+    # Justificación opcional de la contraoferta (3.4, hallazgo #4): por qué
+    # esa fecha, para que el cliente tenga contexto al decidir.
+    motivo: Optional[str] = None
 
 
 # ── Respuesta de producto en venta ──
@@ -160,6 +163,11 @@ class VentaResponse(BaseModel):
     # Sin esto el pedido reaparecía idéntico a uno recién hecho.
     fecha_rechazada:               Optional[datetime] = None
     intentos_rechazo:              int              = 0
+    # Segundo comprobante: el saldo restante tras el anticipo (3.10)
+    saldo_comprobante_url:                    Optional[str] = None
+    intentos_rechazo_comprobante_anticipo:    int           = 0
+    intentos_rechazo_comprobante_saldo:       int           = 0
+    fecha_retenido_en_tienda:                 Optional[datetime] = None
     class Config:
         from_attributes = True
 
@@ -177,8 +185,15 @@ class EnvioCompletoDomingoInput(BaseModel):
     envio_completo_domingo: bool
 
 
-# ── Rechazo de fecha con motivo opcional ──
+# ── El cliente rechaza la fecha propuesta con su propia contraoferta final:
+# fecha propia y motivo, los dos obligatorios (prompt-pedidos-2, 3.4) ──
 class RechazarFechaInput(BaseModel):
+    fecha_propuesta: datetime
+    motivo: str
+
+
+# ── Admin rechaza en definitivo la propuesta final del cliente; motivo opcional ──
+class RechazarFechaFinalInput(BaseModel):
     motivo: Optional[str] = None
 
 
@@ -189,11 +204,6 @@ class AcuerdoManualInput(BaseModel):
 
 # ── Rechazar comprobante de transferencia ──
 class RechazoComprobante(BaseModel):
-    motivo: str
-
-
-# ── Rechazar pago final (saldo) ──
-class RechazarPagoFinalInput(BaseModel):
     motivo: str
 
 

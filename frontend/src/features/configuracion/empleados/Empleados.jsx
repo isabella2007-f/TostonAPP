@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Check, X, Search, User, Eye, PenLine, Trash2, Phone } from "lucide-react";
+import { Check, X, Search, User, Eye, PenLine, Trash2, Phone, RefreshCw } from "lucide-react";
 import { ITEMS_PER_PAGE } from "./empleadosUtils.js";
 import { RolBadge } from "./CrearEmpleado.jsx";
 import CrearEmpleado from "./CrearEmpleado.jsx";
@@ -207,6 +207,10 @@ export default function GestionEmpleados() {
               placeholder="Buscar por nombre, correo, ciudad, documento o rol…"
               value={search} onChange={e => handleSearch(e.target.value)} />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar empleados">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position:"relative" }}>
             <button className={"filter-icon-btn" + (hasFilter ? " has-filter" : "")} onClick={() => setShowFilter(v => !v)}>▼</button>

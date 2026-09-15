@@ -435,13 +435,31 @@ class Venta(Base):
     # escala nada por sí solo; a partir de LIMITE_INTENTOS_RECHAZO el frontend
     # resalta con más énfasis el canal de excepción (hablar con el admin).
     intentos_rechazo         = Column(Integer,      default=0,           nullable=True)
-    # Comprobantes de pago rechazados (anticipo + saldo final acumulados).
-    # Al llegar a LIMITE_INTENTOS_RECHAZO el pedido se cancela automáticamente.
-    intentos_rechazo_comprobante = Column(Integer,  default=0,           nullable=True)
-    # Contraofertas de fecha que el admin ya hizo (máximo 1).
-    contraoferta_admin_count = Column(Integer,      default=0,           nullable=True)
-    # 1 cuando el admin ya usó su contraoferta: al cliente solo le queda aceptar o cancelar.
-    propuesta_final_cliente  = Column(Integer,      default=0,           nullable=True)
+    # Rechazos del PRIMER comprobante (el que da paso a producción/despacho:
+    # el anticipo de un pedido con producción, o el total de uno sin ella). Al
+    # llegar a 3 el pedido se cancela solo. Contador separado del de abajo
+    # porque son dos validaciones independientes en momentos distintos del
+    # ciclo de vida del pedido.
+    Intentos_Rechazo_Comprobante_Anticipo = Column(Integer, default=0, nullable=True)
+    # Rechazos del SEGUNDO comprobante (el saldo restante tras el anticipo,
+    # antes de despachar/entregar). Mismo límite de 3, contador propio.
+    Intentos_Rechazo_Comprobante_Saldo    = Column(Integer, default=0, nullable=True)
+    # Comprobante del saldo restante, subido por el cliente mientras se
+    # valida (separado de Pago_Final_Comprobante_Url, que solo se llena
+    # cuando el pago final YA quedó registrado/aprobado).
+    Saldo_Comprobante_Url                 = Column(String(500), nullable=True)
+    # Cuándo se marcó "Retenido en tienda" por una entrega/cobro en efectivo
+    # fallido (excepción de pago, ver EstadoPedido.RETENIDO_EN_TIENDA). Sirve
+    # para evaluar perezosamente la ventana de reintento (24h) y el plazo de
+    # cancelación obligatoria (48h) la próxima vez que alguien toque el pedido.
+    Fecha_Retenido_En_Tienda              = Column(DateTime, nullable=True)
+    # Marca si ya se descontó/reservó del stock la porción disponible de este
+    # pedido (prompt-pedidos-2, 3.6): hoy eso ocurre al llegar a CONFIRMADO,
+    # pero también puede dispararse antes, de forma perezosa, al cerrarse la
+    # ventana de 10 minutos sin que el pedido haya avanzado todavía. Sin esta
+    # marca, `_descontar_stock_venta` no tiene cómo distinguir "ya reservado
+    # antes" de "reservar ahora" y terminaría descontando dos veces.
+    Stock_Reservado                       = Column(Integer, default=0, nullable=True)
 
     usuario            = relationship("Usuario", back_populates="ventas")
     productos          = relationship("VentaXProducto", back_populates="venta")
@@ -637,6 +655,8 @@ class ConfiguracionLanding(Base):
     cta_description          = Column(Text,          nullable=True)
     contact_phone1           = Column(String(50),   nullable=True)
     contact_phone2           = Column(String(50),   nullable=True)
+    # Correo de contacto para la escalación a admin (prompt-pedidos-2, 3.4.1/3.15).
+    contact_email            = Column(String(200),  nullable=True)
     contact_address_line     = Column(String(200),  nullable=True)
     contact_city             = Column(String(200),  nullable=True)
     contact_instagram_url    = Column(String(500),  nullable=True)

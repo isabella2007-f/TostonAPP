@@ -80,7 +80,7 @@ const GRUPOS_MODULOS = [
     grupo: "Ventas",
     Icon: Banknote,
     modulos: [
-      { key: "Pedidos",       label: "Pedidos",        Icon: ShoppingCart,  acciones: ["ver", "crear", "editar", "cancelar"] },
+      { key: "Pedidos",       label: "Pedidos",        Icon: ShoppingCart,  acciones: ["ver", "crear", "editar", "cancelar", "cambiar_estado"] },
       { key: "Devoluciones",  label: "Devoluciones",   Icon: CornerUpLeft,  acciones: ["ver", "crear", "editar", "aprobar", "desaprobar"] },
       { key: "Domicilios",    label: "Domicilios",     Icon: Bike,          acciones: ["ver", "ver_detalles", "crear", "editar", "cambiar_estado"] },
     ],

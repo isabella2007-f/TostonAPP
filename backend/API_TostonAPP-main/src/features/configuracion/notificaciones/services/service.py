@@ -249,9 +249,13 @@ _VENTA_NOTIF = {
          "Tu pedido fue cancelado. Contáctanos si tienes dudas."),
     8:  ("pedido_entregado",     "Pedido entregado",
          "Tu pedido fue entregado exitosamente. ¡Gracias por tu compra!"),
+    9:  ("pedido_en_camino",     "Pedido en camino",
+         "Tu domicilio está en camino."),
     13: ("pedido_en_produccion", "Pedido en producción",
          "Tu pedido está siendo preparado en cocina."),
     16: ("fecha_propuesta",      "Fecha de entrega propuesta", None),
+    20: ("esperando_pago",       "Pago pendiente",
+         "Tu pedido está aprobado. Sube tu comprobante o anticipo para continuar."),
 }
 
 _DEVOLUCION_NOTIF = {
@@ -268,7 +272,7 @@ def obtener_notificaciones_cliente(db: Session, id_usuario: int) -> dict:
 
     ventas = (
         db.query(Venta)
-        .filter(Venta.ID_Usuario == id_usuario, Venta.Estado.in_([4, 5, 8, 13, 16]))
+        .filter(Venta.ID_Usuario == id_usuario, Venta.Estado.in_([4, 5, 8, 9, 13, 16, 20]))
         .order_by(Venta.Fecha_Venta.desc())
         .limit(15)
         .all()

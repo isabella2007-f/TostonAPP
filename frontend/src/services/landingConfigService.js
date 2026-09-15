@@ -10,6 +10,9 @@ export const LANDING_DEFAULTS = {
   ctaDescription:     "Estamos transformando la forma en que el mundo ve al plátano.",
   contactPhone1:         "321 754 3305",
   contactPhone2:         "313 789 9946",
+  // Correo de contacto para la escalación a admin (3.4.1): mailto: en el
+  // aviso de "Escalado a admin" de PedidosClientePage.jsx.
+  contactEmail:          "",
   contactAddressLine:    "Carrera 38A No. 80-12",
   contactCity:           "Barranquilla, Colombia",
   contactInstagramUrl:   "https://www.instagram.com/tostonesbroms?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==",

@@ -1422,6 +1422,10 @@ export default function GestionOrdenesProduccion() {
             />
           </div>
 
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar órdenes">
+            <RefreshCw size={15} />
+          </button>
+
           <div ref={filterRef} style={{ position: "relative", zIndex: 200 }}>
             <button
               className={`filter-icon-btn${filterEstado !== "todos" || filterDesde || filterHasta ? " has-filter" : ""}`}

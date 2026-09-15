@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
-import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, solicitarEscalado, pagarPedido } from '../../../services/pedidosService';
+import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, solicitarEscalado, pagarPedido, pagarSaldoPedido } from '../../../services/pedidosService';
 import { getLandingConfig } from '../../../services/landingConfigService';
 import { subirImagenCloudinary } from '../../../utils/cloudinary.js';
 import { crearDevolucion } from '../../../services/devolucionesService';
@@ -7,6 +7,7 @@ import { fmtFecha } from '../../../utils/dateUtils.js';
 import { getCurrentUser } from '../../client/profile/services/profileService.js';
 import { descargarFacturaPedido } from '../../../utils/facturaGenerator.js';
 import SelectorBarrioEntrega from '../../../shared/components/SelectorBarrioEntrega';
+import SearchableSelect from '../../../shared/components/SearchableSelect';
 import ImageLightbox from '../../../shared/components/ImageLightbox.jsx';
 import { formatCOP } from "../../../utils/formato";
 import { enlaceWhatsApp } from "../../../utils/whatsapp";
@@ -247,7 +248,40 @@ const ESTADO_CONFIG = {
     border: 'border-emerald-200',
     badge: 'bg-emerald-100 text-emerald-700'
   },
+  'Fecha propuesta final': {
+    color: 'indigo',
+    icon: Calendar,
+    label: 'Fecha propuesta final',
+    bg: 'bg-indigo-50',
+    text: 'text-indigo-700',
+    border: 'border-indigo-200',
+    badge: 'bg-indigo-100 text-indigo-700'
+  },
+  'Retenido en tienda': {
+    color: 'orange',
+    icon: AlertTriangle,
+    label: 'Retenido en tienda',
+    bg: 'bg-orange-50',
+    text: 'text-orange-700',
+    border: 'border-orange-200',
+    badge: 'bg-orange-100 text-orange-700'
+  },
+  'En ruta de retorno': {
+    color: 'orange',
+    icon: Truck,
+    label: 'En ruta de retorno',
+    bg: 'bg-orange-50',
+    text: 'text-orange-700',
+    border: 'border-orange-200',
+    badge: 'bg-orange-100 text-orange-700'
+  },
 };
+
+const FILTRO_ESTADO_OPTIONS = [
+  'Pendiente', 'Esperando pago', 'En producción', 'Fecha propuesta', 'Fecha propuesta final',
+  'Fecha rechazada', 'Escalado a admin', 'En camino', 'Entregado', 'Cancelado',
+  'Retenido en tienda', 'En ruta de retorno',
+].map(estado => ({ value: estado, label: estado }));
 
 const normalizeComprobanteSrc = (c) => {
   if (!c) return null;
@@ -427,11 +461,12 @@ const PedidosClientePage = () => {
   const [cancelError,    setCancelError]    = useState('');
   const [accionFecha,    setAccionFecha]    = useState(null); // "aceptar" | "rechazar"
   const [accionFechaErr, setAccionFechaErr] = useState('');
-  /// Por qué el cliente no puede recibir en la fecha propuesta.
-  ///
-  /// Es opcional, pero es lo que le permite al administrador proponer algo que
-  /// sirva en vez de tirar otra fecha a ver si pega.
+  /// Contraoferta final del cliente al rechazar la fecha propuesta: su propia
+  /// fecha y el motivo, los dos obligatorios (prompt-pedidos-2, 3.4). Ya no es
+  /// un rechazo libre que reabre la negociación sin límite — es la ÚLTIMA
+  /// propuesta del cliente; el admin la acepta o la rechaza en definitivo.
   const [motivoRechazo, setMotivoRechazo] = useState('');
+  const [fechaRechazo,  setFechaRechazo]  = useState('');
   const [devModal,             setDevModal]             = useState(null);
   const [devToast,             setDevToast]             = useState(null);
   const [modalDetailLoading,   setModalDetailLoading]   = useState(false);
@@ -459,6 +494,14 @@ const PedidosClientePage = () => {
   const [pagoMonto,       setPagoMonto]       = useState('');
   const [pagoGuardando,   setPagoGuardando]   = useState(false);
   const [pagoError,       setPagoError]       = useState('');
+
+  // Segundo comprobante: el saldo restante tras el anticipo, solo cuando ese
+  // resto es por transferencia (3.10). Estado propio: es un paso aparte, que
+  // ocurre después de que el primer comprobante (arriba) ya fue aprobado.
+  const [saldoArchivo,   setSaldoArchivo]   = useState(null);
+  const [saldoPreview,   setSaldoPreview]   = useState(null);
+  const [saldoGuardando, setSaldoGuardando] = useState(false);
+  const [saldoError,     setSaldoError]     = useState('');
 
   // Canal de excepción: el cliente pide hablar directo con el admin en vez
   // de seguir rechazando la fecha contraofrecida.
@@ -488,6 +531,7 @@ const PedidosClientePage = () => {
     getLandingConfig().then(cfg => setContactoAdmin({
       telefono1: cfg?.contactPhone1 || '',
       telefono2: cfg?.contactPhone2 || '',
+      email:     cfg?.contactEmail  || '',
     })).catch(() => {});
   }, []);
 
@@ -531,7 +575,7 @@ const PedidosClientePage = () => {
     }
   };
 
-  const ESTADOS_CANCELABLES = ['Pendiente', 'Fecha propuesta', 'Fecha rechazada', 'Escalado a admin'];
+  const ESTADOS_CANCELABLES = ['Pendiente', 'Fecha propuesta', 'Fecha propuesta final', 'Fecha rechazada', 'Escalado a admin'];
 
   const abrirEditModal = (pedido) => {
     const metodo = pedido.metodo_pago || pedido.Metodo_Pago || '';
@@ -667,16 +711,19 @@ const PedidosClientePage = () => {
   };
 
   const handleRechazarFecha = async (pedido) => {
+    if (!fechaRechazo) { setAccionFechaErr('Proponé la fecha en la que sí puedes recibir el pedido'); return; }
+    if (!motivoRechazo.trim()) { setAccionFechaErr('Contanos el motivo de tu contraoferta'); return; }
     setAccionFecha("rechazar");
     setAccionFechaErr('');
     try {
-      const actualizado = await rechazarFechaProduccion(pedido.id, motivoRechazo.trim() || null);
+      const actualizado = await rechazarFechaProduccion(pedido.id, fechaRechazo, motivoRechazo.trim());
       setMotivoRechazo('');
+      setFechaRechazo('');
       setSelectedPedido(actualizado);
       fetchPedidos();
-      // keep modal open so user sees the "Pendiente de Aprobación" state again
+      // keep modal open so user sees the "Fecha propuesta final" state
     } catch (e) {
-      setAccionFechaErr(e.message || 'No se pudo rechazar la fecha');
+      setAccionFechaErr(e.message || 'No se pudo enviar tu propuesta');
     } finally {
       setAccionFecha(null);
     }
@@ -724,6 +771,25 @@ const PedidosClientePage = () => {
     }
   };
 
+  // Sube el comprobante del SALDO restante (segundo comprobante, 3.10).
+  const handlePagarSaldo = async (pedido) => {
+    if (!saldoArchivo) { setSaldoError('Adjunta el comprobante de la transferencia.'); return; }
+    setSaldoGuardando(true);
+    setSaldoError('');
+    try {
+      const comprobante_url = await subirImagenCloudinary(saldoArchivo);
+      const actualizado = await pagarSaldoPedido(pedido.id, { comprobante_url });
+      setSelectedPedido(actualizado);
+      setSaldoArchivo(null);
+      setSaldoPreview(null);
+      fetchPedidos();
+    } catch (e) {
+      setSaldoError(e.message || 'No se pudo enviar el pago. Intenta de nuevo.');
+    } finally {
+      setSaldoGuardando(false);
+    }
+  };
+
   const closeModal = () => {
     setSelectedPedido(null);
     setConfirmCancel(false);
@@ -740,6 +806,9 @@ const PedidosClientePage = () => {
     setPagoPreview(null);
     setPagoMonto('');
     setPagoError('');
+    setSaldoArchivo(null);
+    setSaldoPreview(null);
+    setSaldoError('');
     // Carga el detalle completo en segundo plano.
     setModalDetailLoading(true);
     getMiVenta(pedido.id)
@@ -798,51 +867,37 @@ const PedidosClientePage = () => {
         {/* Toolbar Moderna */}
         <div className="flex flex-col md:flex-row gap-4 mb-8">
           <div className="relative flex-1 group">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-green-600 transition-colors" size={20} />
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-green-600 transition-colors" size={22} />
             <input
               type="text"
               placeholder="Buscar por número de pedido..."
-              className="w-full bg-white border-2 border-gray-100 rounded-2xl py-4 pl-12 pr-10 text-sm font-bold focus:border-green-500 outline-none shadow-sm hover:shadow-md transition-all"
+              className="w-full bg-white border-2 border-gray-100 rounded-2xl py-5 pl-14 pr-12 text-base font-bold focus:border-green-500 outline-none shadow-sm hover:shadow-md transition-all"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
             />
             {searchTerm && (
               <button
                 onClick={() => setSearchTerm('')}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                 title="Limpiar búsqueda"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             )}
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0 no-scrollbar items-center">
-            <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border-2 border-gray-100 shadow-sm">
-              <button
-                className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                  filterEstado === 'todos'
-                    ? 'bg-green-700 text-white shadow-lg shadow-green-200'
-                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
-                }`}
-                onClick={() => setFilterEstado('todos')}
-              >
-                Todos
-              </button>
-              {['Pendiente', 'Esperando pago', 'En producción', 'Fecha propuesta', 'Fecha rechazada', 'Escalado a admin', 'En camino', 'Entregado', 'Cancelado'].map(estado => (
-                <button
-                  key={estado}
-                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                    filterEstado === estado
-                      ? 'bg-green-700 text-white shadow-lg shadow-green-200'
-                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
-                  }`}
-                  onClick={() => setFilterEstado(estado)}
-                >
-                  {estado}
-                </button>
-              ))}
-            </div>
+          <div className="flex gap-2 items-center">
+            <SearchableSelect
+              options={FILTRO_ESTADO_OPTIONS}
+              value={filterEstado === 'todos' ? '' : filterEstado}
+              onChange={e => setFilterEstado(e.target.value || 'todos')}
+              getValue={o => o.value}
+              getLabel={o => o.label}
+              placeholder="Todos los estados"
+              searchPlaceholder="Buscar estado…"
+              className="bg-white border-2 border-gray-100 rounded-2xl px-4 text-[11px] font-black uppercase tracking-widest text-gray-600 shadow-sm hover:shadow-md transition-all"
+              style={{ minWidth: 200 }}
+            />
 
             <button
               onClick={fetchPedidos}
@@ -1169,6 +1224,97 @@ const PedidosClientePage = () => {
                 );
               })()}
 
+              {/* Segundo comprobante: el saldo restante tras el anticipo, solo
+                  si ese resto es por transferencia (3.10). Aparece después de
+                  que el primer comprobante ya fue aprobado (el pedido salió de
+                  'Esperando pago') y antes de que el pedido se entregue. */}
+              {selectedPedido.requiere_anticipo
+                && !['Entregado', 'Cancelado', 'Esperando pago'].includes(selectedPedido.estado)
+                && (selectedPedido.metodo_pago || '').toLowerCase().includes('transfer')
+                && !selectedPedido.pago_final_registrado
+                && (() => {
+                const yaSubido  = selectedPedido.estado_pago === 'saldo_pendiente_validacion';
+                const rechazado = selectedPedido.estado_pago === 'saldo_comprobante_rechazado';
+                const saldo     = Math.max(0, Number(selectedPedido.total || 0) - Number(selectedPedido.anticipo_monto || 0));
+                return (
+                  <div style={{ background: 'linear-gradient(135deg,#fff3e0 0%,#fff8e1 100%)', border: '2px solid #ffb74d', borderRadius: 16, padding: '16px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <Banknote size={20} color="#e65100" />
+                      <p style={{ fontSize: 13, fontWeight: 800, color: '#e65100', margin: 0 }}>Falta el saldo restante</p>
+                    </div>
+
+                    {rechazado && (
+                      <div style={{ background: '#fff', border: '1.5px solid #ef9a9a', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+                        <p style={{ fontSize: 12, fontWeight: 800, color: '#c62828', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <AlertTriangle size={13} /> El comprobante anterior fue rechazado
+                        </p>
+                        {selectedPedido.motivo_rechazo_comprobante && (
+                          <p style={{ fontSize: 11, color: '#b71c1c', margin: 0 }}>{selectedPedido.motivo_rechazo_comprobante}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {yaSubido ? (
+                      <div style={{ background: '#e8f5e9', border: '1.5px solid #a5d6a7', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <CheckCircle2 size={16} color="#2e7d32" />
+                        <p style={{ fontSize: 12, fontWeight: 700, color: '#2e7d32', margin: 0 }}>
+                          Comprobante enviado. El administrador lo está revisando.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <p style={{ fontSize: 11, color: '#e65100', lineHeight: 1.5, marginBottom: 8 }}>
+                          Ya recibimos tu anticipo. Falta el saldo restante (<strong>{COP(saldo)}</strong>) por
+                          transferencia antes de que tu pedido salga.
+                        </p>
+
+                        <div style={{ background: '#e3f2fd', border: '1px solid #90caf9', borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+                          {[
+                            ['Banco', CUENTA_TRANSFERENCIA.banco], ['Titular', CUENTA_TRANSFERENCIA.titular],
+                            ['Tipo', CUENTA_TRANSFERENCIA.tipo], ['Número', CUENTA_TRANSFERENCIA.numero],
+                          ].map(([l, v]) => (
+                            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                              <span style={{ fontSize: 11, color: '#1565c0', fontWeight: 600 }}>{l}</span>
+                              <span style={{ fontSize: 12, color: '#0d47a1', fontWeight: 800 }}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {saldoPreview ? (
+                          <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', marginBottom: 8 }}>
+                            <ImageLightbox src={saldoPreview} alt="Comprobante del saldo" label="Ver comprobante"
+                              thumbStyle={{ width: '100%', maxHeight: 150, objectFit: 'contain', display: 'block', borderRadius: 10 }} />
+                            <button type="button" onClick={() => { setSaldoArchivo(null); setSaldoPreview(null); }}
+                              style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer' }}>
+                              <X size={11} />
+                            </button>
+                          </div>
+                        ) : (
+                          <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 76, borderRadius: 10, border: '2px dashed #ffb74d', background: '#fff', cursor: 'pointer', gap: 4, marginBottom: 8 }}>
+                            <input type="file" accept="image/*" hidden onChange={e => {
+                              const f = e.target.files[0];
+                              if (!f) return;
+                              const r = new FileReader();
+                              r.onload = ev => { setSaldoArchivo(f); setSaldoPreview(ev.target.result); };
+                              r.readAsDataURL(f);
+                            }} />
+                            <Upload size={18} style={{ color: '#e65100' }} />
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#e65100' }}>Subir comprobante</span>
+                          </label>
+                        )}
+
+                        {saldoError && <p style={{ fontSize: 11, color: '#c62828', fontWeight: 700, marginBottom: 8 }}>{saldoError}</p>}
+
+                        <button disabled={saldoGuardando} onClick={() => handlePagarSaldo(selectedPedido)}
+                          style={{ width: '100%', padding: '11px 0', borderRadius: 10, border: 'none', background: '#e65100', color: '#fff', fontWeight: 800, fontSize: 13, cursor: saldoGuardando ? 'not-allowed' : 'pointer' }}>
+                          {saldoGuardando ? 'Enviando…' : 'Enviar comprobante'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Aviso de fecha propuesta */}
               {selectedPedido.estado === 'Fecha propuesta' && (
                 <div style={{ background: 'linear-gradient(135deg,#e8eaf6 0%,#ede7f6 100%)', border: '2px solid #9fa8da', borderRadius: 16, padding: '16px 18px' }}>
@@ -1184,18 +1330,33 @@ const PedidosClientePage = () => {
                       </p>
                     </div>
                   )}
-                  <p style={{ fontSize: 11, color: '#3949ab', marginBottom: 12, lineHeight: 1.5 }}>
-                    ¿Puedes recibir tu pedido en esta fecha? Si rechazas, te propondremos una nueva fecha.
+                  <p style={{ fontSize: 11, color: '#3949ab', marginBottom: 10, lineHeight: 1.5 }}>
+                    ¿Puedes recibir tu pedido en esta fecha? Si no, proponé la fecha en la que sí puedes
+                    recibirlo: es tu propuesta final, el equipo la acepta o te contacta si no puede cumplirla.
                   </p>
-                  {/* Si rechaza, por qué. Sin esto el administrador propone la
-                      siguiente fecha a ciegas: no es lo mismo "ese día viajo"
-                      que "la necesito antes". */}
+                  {/* Fecha propia + motivo, los dos obligatorios (3.4): sin la
+                      fecha el admin no tiene qué evaluar, y sin el motivo
+                      propone a ciegas — no es lo mismo "ese día viajo" que
+                      "la necesito antes". */}
+                  <input
+                    type="date"
+                    value={fechaRechazo ? fechaRechazo.slice(0, 10) : ''}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={e => setFechaRechazo(e.target.value ? `${e.target.value}T10:00:00` : '')}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', marginBottom: 8,
+                      padding: '9px 11px', borderRadius: 10,
+                      border: '1.5px solid #c5cae9', background: '#fff',
+                      fontFamily: 'inherit', fontSize: 12, color: '#1a237e',
+                      outline: 'none',
+                    }}
+                  />
                   <textarea
                     value={motivoRechazo}
                     onChange={e => setMotivoRechazo(e.target.value)}
                     rows={2}
                     maxLength={255}
-                    placeholder="Si no te sirve, cuéntanos por qué (opcional)"
+                    placeholder="Contanos por qué (obligatorio)"
                     style={{
                       width: '100%', boxSizing: 'border-box', marginBottom: 10,
                       padding: '9px 11px', borderRadius: 10,
@@ -1212,7 +1373,7 @@ const PedidosClientePage = () => {
                     </button>
                     <button disabled={!!accionFecha} onClick={() => handleRechazarFecha(selectedPedido)}
                       style={{ flex: 1, padding: '11px 0', borderRadius: 10, border: 'none', background: '#c62828', color: '#fff', fontWeight: 800, fontSize: 13, cursor: accionFecha ? 'not-allowed' : 'pointer', opacity: accionFecha === 'aceptar' ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                      {accionFecha === 'rechazar' ? 'Rechazando…' : <><X size={14} /> Rechazar fecha</>}
+                      {accionFecha === 'rechazar' ? 'Enviando…' : <><X size={14} /> Proponer mi fecha</>}
                     </button>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -1252,6 +1413,29 @@ const PedidosClientePage = () => {
                 </div>
               )}
 
+              {/* Aviso: fecha propuesta final (3.4) — el cliente ya envió su
+                  contraoferta, congelada hasta que el admin decida. */}
+              {selectedPedido.estado === 'Fecha propuesta final' && (
+                <div style={{ background: 'linear-gradient(135deg,#e8eaf6 0%,#ede7f6 100%)', border: '2px solid #9fa8da', borderRadius: 16, padding: '16px 18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <Calendar size={20} color="#283593" />
+                    <p style={{ fontSize: 13, fontWeight: 800, color: '#283593', margin: 0 }}>Enviaste tu propuesta de fecha</p>
+                  </div>
+                  {selectedPedido.fecha_propuesta && (
+                    <div style={{ background: '#fff', border: '1.5px solid #9fa8da', borderRadius: 12, padding: '10px 14px', marginBottom: 10, textAlign: 'center' }}>
+                      <p style={{ fontSize: 10, fontWeight: 700, color: '#7986cb', letterSpacing: 1, textTransform: 'uppercase', margin: '0 0 4px' }}>Tu fecha propuesta</p>
+                      <p style={{ fontSize: 17, fontWeight: 900, color: '#283593', margin: 0, lineHeight: 1.25, textTransform: 'capitalize' }}>
+                        {new Date(selectedPedido.fecha_propuesta.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                      </p>
+                    </div>
+                  )}
+                  <p style={{ fontSize: 11, color: '#3949ab', lineHeight: 1.5, margin: 0 }}>
+                    Es tu propuesta final: el equipo la va a aceptar, o te va a contactar si no puede cumplirla.
+                    Mientras tanto tu pedido ya no admite más cambios.
+                  </p>
+                </div>
+              )}
+
               {/* Aviso: fecha rechazada */}
               {selectedPedido.estado === 'Fecha rechazada' && (
                 <div style={{ background: 'linear-gradient(135deg,#fff3e0 0%,#fbe9e7 100%)', border: '2px solid #ffb74d', borderRadius: 16, padding: '16px 18px' }}>
@@ -1266,19 +1450,83 @@ const PedidosClientePage = () => {
                 </div>
               )}
 
-              {/* Aviso: escalado a admin */}
-              {selectedPedido.estado === 'Escalado a admin' && (
-                <div style={{ background: 'linear-gradient(135deg,#fce4ec 0%,#f3e5f5 100%)', border: '2px solid #f48fb1', borderRadius: 16, padding: '16px 18px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <AlertTriangle size={20} color="#880e4f" />
-                    <p style={{ fontSize: 13, fontWeight: 800, color: '#880e4f', margin: 0 }}>Pedido en revisión por el administrador</p>
+              {/* Aviso: retenido en tienda (3.7) — no se pudo cobrar el
+                  efectivo, el producto no se entregó y sigue apartado. */}
+              {selectedPedido.estado === 'Retenido en tienda' && (() => {
+                const horas = selectedPedido.fecha_retenido_en_tienda
+                  ? (Date.now() - new Date(selectedPedido.fecha_retenido_en_tienda).getTime()) / 3_600_000
+                  : null;
+                const fueraDePlazo = horas !== null && horas >= 48;
+                const horasRestantes = horas !== null ? Math.max(0, Math.ceil(48 - horas)) : null;
+                return (
+                  <div style={{ background: 'linear-gradient(135deg,#fff3e0 0%,#fbe9e7 100%)', border: '2px solid #ffb74d', borderRadius: 16, padding: '16px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <AlertTriangle size={20} color="#e65100" />
+                      <p style={{ fontSize: 13, fontWeight: 800, color: '#bf360c', margin: 0 }}>Tu pedido quedó retenido en tienda</p>
+                    </div>
+                    <p style={{ fontSize: 11, color: '#e65100', lineHeight: 1.5, margin: 0 }}>
+                      No se pudo registrar tu pago. Tu producto sigue apartado: pasa por la tienda a pagarlo
+                      {horasRestantes !== null && !fueraDePlazo && ` (tienes ${horasRestantes}h antes de que se cancele automáticamente)`}
+                      {fueraDePlazo && ' — se cumplió el plazo y el pedido puede cancelarse en cualquier momento'}.
+                    </p>
                   </div>
-                  <p style={{ fontSize: 11, color: '#ad1457', lineHeight: 1.5, margin: 0 }}>
-                    Pediste hablar directo sobre la fecha de entrega. Un administrador te contactará
-                    para acordarla por teléfono; en cuanto quede lista, tu pedido sigue su curso normal.
+                );
+              })()}
+
+              {/* Aviso: en ruta de retorno (3.7) — el domiciliario no pudo
+                  entregar/cobrar y el pedido vuelve a la tienda. */}
+              {selectedPedido.estado === 'En ruta de retorno' && (
+                <div style={{ background: 'linear-gradient(135deg,#fff3e0 0%,#fbe9e7 100%)', border: '2px solid #ffb74d', borderRadius: 16, padding: '16px 18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <Truck size={20} color="#e65100" />
+                    <p style={{ fontSize: 13, fontWeight: 800, color: '#bf360c', margin: 0 }}>Tu pedido va de regreso a la tienda</p>
+                  </div>
+                  <p style={{ fontSize: 11, color: '#e65100', lineHeight: 1.5, margin: 0 }}>
+                    No se pudo completar la entrega. En cuanto el producto llegue a la tienda podrás pasar a
+                    recogerlo y pagarlo.
                   </p>
                 </div>
               )}
+
+              {/* Aviso: escalado a admin (3.4.1) */}
+              {selectedPedido.estado === 'Escalado a admin' && (() => {
+                const mensaje =
+                  `Hola, quiero hablar sobre mi pedido #${selectedPedido.numero}. ` +
+                  `Nombre: __, Cédula: __, Motivo: __`;
+                return (
+                  <div style={{ background: 'linear-gradient(135deg,#fce4ec 0%,#f3e5f5 100%)', border: '2px solid #f48fb1', borderRadius: 16, padding: '16px 18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <AlertTriangle size={20} color="#880e4f" />
+                      <p style={{ fontSize: 13, fontWeight: 800, color: '#880e4f', margin: 0 }}>Pedido en revisión por el administrador</p>
+                    </div>
+                    <p style={{ fontSize: 11, color: '#ad1457', lineHeight: 1.5, marginBottom: 10 }}>
+                      Escríbenos indicando tu número de pedido (<strong>#{selectedPedido.numero}</strong>), tu
+                      nombre completo, tu cédula y el motivo de tu solicitud — con eso podemos resolverlo
+                      más rápido.
+                    </p>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {contactoAdmin?.telefono1 && (
+                        <a href={`https://wa.me/57${contactoAdmin.telefono1.replace(/\D/g, '')}?text=${encodeURIComponent(mensaje)}`} target="_blank" rel="noreferrer"
+                          style={{ flex: '1 1 auto', textAlign: 'center', padding: '9px 10px', borderRadius: 8, background: '#25d366', color: '#fff', fontWeight: 700, fontSize: 11, textDecoration: 'none' }}>
+                          WhatsApp {contactoAdmin.telefono1}
+                        </a>
+                      )}
+                      {contactoAdmin?.telefono1 && (
+                        <a href={`tel:${contactoAdmin.telefono1.replace(/\D/g, '')}`}
+                          style={{ flex: '1 1 auto', textAlign: 'center', padding: '9px 10px', borderRadius: 8, border: '1.5px solid #ad1457', background: '#fff', color: '#880e4f', fontWeight: 700, fontSize: 11, textDecoration: 'none' }}>
+                          Llamar
+                        </a>
+                      )}
+                      {contactoAdmin?.email && (
+                        <a href={`mailto:${contactoAdmin.email}?subject=${encodeURIComponent(`Pedido #${selectedPedido.numero}`)}&body=${encodeURIComponent(mensaje)}`}
+                          style={{ flex: '1 1 auto', textAlign: 'center', padding: '9px 10px', borderRadius: 8, border: '1.5px solid #ad1457', background: '#fff', color: '#880e4f', fontWeight: 700, fontSize: 11, textDecoration: 'none' }}>
+                          Escribir un correo
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Spinner mientras se carga el detalle */}
               {modalDetailLoading && (
@@ -1631,7 +1879,7 @@ const PedidosClientePage = () => {
                   >
                     <FileText size={14} /> Descargar factura
                   </button>
-                  {ESTADOS_CANCELABLES.includes(selectedPedido.estado) && !selectedPedido.requiere_anticipo && (
+                  {ESTADOS_CANCELABLES.includes(selectedPedido.estado) && !selectedPedido.anticipo_registrado && (
                     <button
                       className="btn-cancel"
                       style={{ background: '#fff5f5', color: '#dc2626', border: '1.5px solid #fca5a5', display: 'flex', alignItems: 'center', gap: 6 }}
@@ -1669,7 +1917,7 @@ const PedidosClientePage = () => {
       )}
       {/* ── Modal editar pedido ── */}
       {editModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div className="modal-overlay">
           <div style={{ background: '#fff', borderRadius: 18, width: '100%', maxWidth: 440, boxShadow: '0 8px 40px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
             {/* Header */}
             <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

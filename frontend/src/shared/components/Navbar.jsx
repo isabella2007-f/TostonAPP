@@ -111,7 +111,7 @@ export default function Navbar({ isLanding = false, onToggleSidebar }) {
     setMenuOpen(false);
   };
 
-  const mostrarCampana = !!user && !isLanding;
+  const mostrarCampana = !!user;
 
   return (
     <>
@@ -162,7 +162,7 @@ export default function Navbar({ isLanding = false, onToggleSidebar }) {
                     >Nosotros</button>
                   </>
                 )}
-                {!isLanding && user?.tipo === 'cliente' && (
+                {user?.tipo === 'cliente' && (
                   <>
                     <button onClick={() => navigate('/cliente/inicio')}  className="nav-link">Página Principal</button>
                     <button onClick={() => navigate('/cliente/pedidos')} className="nav-link">Mis Pedidos</button>
@@ -204,7 +204,7 @@ export default function Navbar({ isLanding = false, onToggleSidebar }) {
             )}
 
             {/* Saldo a favor (solo clientes) */}
-            {!isLanding && user?.tipo === 'cliente' && credito > 0 && (
+            {user?.tipo === 'cliente' && credito > 0 && (
               <button
                 className="credito-chip"
                 onClick={() => navigate('/cliente/perfil')}
@@ -215,7 +215,7 @@ export default function Navbar({ isLanding = false, onToggleSidebar }) {
             )}
 
             {/* Avatar usuario logueado */}
-            {!isLanding && user && (
+            {user && (
               <div
                 className="user-area"
                 onClick={() => navigate(user.tipo === "cliente" ? "/cliente/perfil" : "/admin/perfil")}

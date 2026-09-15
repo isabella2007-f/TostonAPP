@@ -74,31 +74,30 @@ class MixtoConAnticipoTests(unittest.TestCase):
 
 
 class PideAnticipoTests(unittest.TestCase):
-    """Qué pedido pide anticipo: total >= $100.000 sin importar si hay producción.
+    """Qué pedido pide anticipo: puramente por monto (prompt-pedidos-2, 3.1).
 
-    Regla nueva (PUNTO 1): el riesgo que cubre el anticipo es el monto
-    comprometido, no si hay que fabricar. Un pedido grande de stock también
-    inmoviliza recursos.
+    Antes hacía falta ADEMÁS que el pedido necesitara producción. Ahora un
+    pedido que supera el umbral pide anticipo salga o no del stock del día.
     """
 
-    def test_pedido_grande_pide_anticipo_sin_importar_si_hay_produccion(self):
+    def test_el_pedido_que_supera_el_umbral_pide_anticipo(self):
         self.assertTrue(_pide_anticipo(Decimal("100001")))
 
-    def test_pedido_grande_de_solo_stock_tambien_pide_anticipo(self):
-        # Ya no importa si hay que fabricar: el monto es el que manda.
+    def test_lo_que_sale_del_stock_tambien_pide_si_pesa(self):
+        """Ya no importa si hay que fabricar: solo el monto decide."""
         self.assertTrue(_pide_anticipo(Decimal("500000")))
 
-    def test_pedido_chico_no_pide_anticipo(self):
+    def test_el_pedido_chico_no_pide_anticipo_aunque_haya_que_hornearlo(self):
         self.assertFalse(_pide_anticipo(Decimal("30000")))
 
-    def test_el_umbral_se_cuenta_a_si_mismo(self):
-        """Exactamente $100.000 ya pide: la regla es '>='."""
-        self.assertTrue(_pide_anticipo(UMBRAL_ANTICIPO))
-        self.assertFalse(_pide_anticipo(UMBRAL_ANTICIPO - Decimal("1")))
+    def test_el_umbral_no_se_cuenta_a_sí_mismo(self):
+        """Justo $100.000 todavía no pide: la regla es "más de"."""
+        self.assertFalse(_pide_anticipo(UMBRAL_ANTICIPO))
+        self.assertTrue(_pide_anticipo(UMBRAL_ANTICIPO + Decimal("1")))
 
     def test_acepta_el_total_venga_como_venga(self):
         """El total llega como Decimal, float o str según quién pregunte."""
-        for total in (Decimal("150000"), 150000.0, 150000, "150000"):
+        for total in (Decimal("200000"), 200000.0, 200000, "200000"):
             with self.subTest(total=total):
                 self.assertTrue(_pide_anticipo(total))
 

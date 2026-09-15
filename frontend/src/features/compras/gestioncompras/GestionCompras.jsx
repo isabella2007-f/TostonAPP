@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Search, X, Check, CheckCircle2, Ban, Building2, CreditCard, FileText, Banknote, Eye, PenLine, ShoppingCart, Clock } from "lucide-react";
+import { Search, X, Check, CheckCircle2, Ban, Building2, CreditCard, FileText, Banknote, Eye, PenLine, ShoppingCart, Clock, RefreshCw } from "lucide-react";
 import { getCompras, crearCompra as apiCrearCompra, editarCompra, completarCompra, anularCompra } from "../../../services/comprasService.js";
 import { getProveedores } from "../../../services/proveedoresService.js";
 import CrearCompra from "./CrearCompra.jsx";
@@ -292,6 +292,10 @@ export default function GestionCompras() {
               onChange={e => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarCompras()} data-tooltip="Actualizar compras">
+            <RefreshCw size={15} />
+          </button>
 
           {/* Filtros */}
           <div ref={filterRef} style={{ position: "relative" }}>

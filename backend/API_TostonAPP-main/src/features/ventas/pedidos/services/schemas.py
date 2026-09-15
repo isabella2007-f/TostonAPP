@@ -60,6 +60,11 @@ class PedidoResponse(BaseModel):
     estado_pago:                       Optional[str]     = None
     motivo_rechazo_comprobante:        Optional[str]     = None
     fecha_rechazada:                   Optional[datetime] = None
+    # Segundo comprobante: el saldo restante tras el anticipo (3.10)
+    saldo_comprobante_url:                    Optional[str] = None
+    intentos_rechazo_comprobante_anticipo:    int           = 0
+    intentos_rechazo_comprobante_saldo:       int           = 0
+    fecha_retenido_en_tienda:                 Optional[datetime] = None
     ID_Empleado:                  Optional[int]     = None
     observaciones_domicilio:      Optional[str]     = None
     Numero_Pedido:                Optional[str]     = None
@@ -77,6 +82,15 @@ class RegistroCobro(BaseModel):
     recibido: bool
     monto:    Optional[float] = None
     motivo:   Optional[str]  = None
+
+
+# ── 3.7: cambiar a domicilio un pedido "Retenido en tienda" ──
+class CambioADomicilio(BaseModel):
+    ID_Barrio:             int
+    Direccion_entrega:     str
+    Municipio_entrega:     Optional[str] = None
+    Departamento_entrega:  Optional[str] = None
+    Observaciones:         Optional[str] = None
 
 
 # ── Actualización parcial de un pedido pendiente ──

@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef } from "react";
-import { AlertTriangle, Check, X, Search, Eye, PenLine, Trash2, Shield } from "lucide-react";
+import { AlertTriangle, Check, X, Search, Eye, PenLine, Trash2, Shield, RefreshCw } from "lucide-react";
 import { usePrivilegio } from "../../../context/PrivilegiosContext";
 import { getRoles, eliminarRol, toggleEstadoRol } from "../../../services/rolesService.js";
 import CrearRol from "./CrearRol.jsx";
@@ -205,6 +205,10 @@ export default function GestionRoles() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar roles">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button

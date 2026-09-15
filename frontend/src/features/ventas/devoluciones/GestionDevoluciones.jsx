@@ -4,7 +4,7 @@ import { getDevoluciones, crearDevolucion, resolverDevolucion, getCreditoCliente
 import { registrarSalida } from "../../../services/salidasService.js";
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
 import FilasRelleno from "../../../shared/components/FilasRelleno";
-import { X, Check, AlertTriangle, BarChart2, Clock, CreditCard, Ban, Search, CornerUpLeft, Package, Eye, CheckCircle2, Image, Video, FileText, Paperclip, ClipboardList } from "lucide-react";
+import { X, Check, AlertTriangle, BarChart2, Clock, CreditCard, Ban, Search, CornerUpLeft, Package, Eye, CheckCircle2, Image, Video, FileText, Paperclip, ClipboardList, RefreshCw } from "lucide-react";
 import "./Devoluciones.css";
 import { formatCOP } from "../../../utils/formato";
 
@@ -522,6 +522,10 @@ export default function GestionDevoluciones() {
               value={search} onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={recargar} data-tooltip="Actualizar devoluciones">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button

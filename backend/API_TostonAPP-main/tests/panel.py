@@ -107,6 +107,9 @@ PEDIDO_FECHA_PROPUESTA = 16
 PEDIDO_FECHA_RECHAZADA = 17
 PEDIDO_ESPERANDO_PAGO = 20   # esperando que entre la plata
 PEDIDO_ESCALADO        = 19
+PEDIDO_FECHA_PROPUESTA_FINAL = 21  # contraoferta final del cliente (prompt-pedidos-2, 3.4)
+PEDIDO_RETENIDO_EN_TIENDA    = 22  # cobro en efectivo fallido (prompt-pedidos-2, 3.7)
+PEDIDO_EN_RUTA_RETORNO       = 23  # domicilio no entregado, vuelve a la tienda (3.7)
 
 DOM_PENDIENTE = 3
 DOM_CANCELADO = 5
@@ -139,6 +142,7 @@ PERMISOS_CLIENTE = []
 # completado: no hay permisos "*_ventas" separados.
 PERMISOS = [
     "ver_pedidos", "crear_pedidos", "editar_pedidos", "cancelar_pedidos",
+    "cambiar_estado_pedidos",
     "ver_domicilios", "ver_detalle_domicilios", "crear_domicilios",
     "editar_domicilios", "cambiar_estado_domicilios",
     "ver_devoluciones", "editar_devoluciones", "aprobar_devoluciones",

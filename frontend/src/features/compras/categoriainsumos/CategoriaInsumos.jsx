@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef } from "react";
-import { Search, X, Eye, PenLine, Trash2, AlertTriangle, Tag, Package, Ban } from "lucide-react";
+import { Search, X, Eye, PenLine, Trash2, AlertTriangle, Tag, Package, Ban, RefreshCw } from "lucide-react";
 import { fmtFecha } from "../../../utils/dateUtils.js";
 import { Toast, ModalOverlay } from "./ui.jsx";
 import CrearCategoriaInsumo from "./CrearCategoriaInsumo.jsx";
@@ -314,6 +314,10 @@ export default function CategoriaInsumos() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar categorías">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getTodosLosDomicilios, cambiarEstadoDomicilio, registrarPagoEfectivo } from "../../../services/domiciliosService.js";
+import { getTodosLosDomicilios, cambiarEstadoDomicilio, registrarPagoEfectivo, confirmarRetornoTienda } from "../../../services/domiciliosService.js";
 import { getUser } from "../../../services/authService.js";
 import { fmtFechaHora as fmtFecha } from "../../../utils/dateUtils.js";
 import { ESTADO_DOMICILIO, ESTADO_DOM_CONFIG, cobroEfectivoPendiente, esDomicilioActivo, esPagoMixto, montoACobrar, transicionesDom } from "./estadosDomicilio";
@@ -282,7 +282,7 @@ function CambiarEstadoModal({ domicilio, onClose, onSave }) {
   );
 }
 
-function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar }) {
+function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar, onConfirmarRetorno }) {
   /* El enlace lleva el indicativo 57. Sin él WhatsApp abre igual pero
      contesta que el número no existe, así que parecía que el cliente había
      dado mal el teléfono. Si el número no se entiende, `enlaceWhatsApp`
@@ -423,6 +423,14 @@ function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar }) {
               <Banknote size={16} /> Registrar cobro en efectivo
             </button>
           )}
+          {domicilio.venta_estado_id === 23 && (
+            <button
+              className="du-btn du-btn--primario du-btn--bloque"
+              onClick={() => { onClose(); onConfirmarRetorno(domicilio); }}
+            >
+              <CheckCircle2 size={16} /> Confirmar que ya volvió a la tienda
+            </button>
+          )}
           {proximosEstados(domicilio.estadoId).length > 0 && (
             <button
               className="du-btn du-btn--primario du-btn--bloque"
@@ -517,18 +525,31 @@ export default function GestionDomiciliosRepartidor() {
         monto: recibido ? montoACobrar(dom) : null,
         motivo: recibido ? null : motivo,
       });
-      if (entregarDespues) {
+      // Sin cobro no hay entrega (3.7): el pedido ya quedó "En ruta de
+      // retorno" del lado del backend — no tiene sentido seguir intentando
+      // marcarlo Entregado.
+      if (entregarDespues && recibido) {
         await cambiarEstadoDomicilio(dom.id, ESTADO_DOMICILIO.ENTREGADO, observaciones);
       }
       setCobrando(null);
       showToast(
-        !recibido               ? "Se registró que no se pudo cobrar"
+        !recibido               ? "Entrega fallida: el pedido vuelve a la tienda"
         : entregarDespues       ? `Cobro de ${fmt(montoACobrar(dom))} registrado y entrega cerrada`
         :                         `Cobro de ${fmt(montoACobrar(dom))} registrado`
       );
       await cargar();
     } catch (e) {
       showToast(e.message || "No se pudo registrar el cobro", "error");
+    }
+  };
+
+  const handleConfirmarRetorno = async (dom) => {
+    try {
+      await confirmarRetornoTienda(dom.id);
+      showToast("Retorno confirmado: el pedido queda retenido en tienda");
+      await cargar();
+    } catch (e) {
+      showToast(e.message || "No se pudo confirmar el retorno", "error");
     }
   };
 
@@ -759,6 +780,7 @@ export default function GestionDomiciliosRepartidor() {
           onClose={() => setModal(null)}
           onCambiarEstado={(dom) => setModal({ type: "cambiarEstado", dom })}
           onCobrar={(dom) => setCobrando({ dom, entregarDespues: false })}
+          onConfirmarRetorno={handleConfirmarRetorno}
         />
       )}
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getPedidos, getMiCredito } from '../../../services/pedidosService.js';
 import { fmtFecha } from '../../../utils/dateUtils.js';
 import { getProductos } from '../../../services/productosService.js';
+import { addToCartWithQty } from '../../sales/orders/services/cartService';
 import { getCurrentUser } from '../profile/services/profileService.js';
 import { Package, Clock, CheckCircle, UserCircle, Leaf, Gift, ShoppingCart } from 'lucide-react';
 import '../../../styles/Client.css';
@@ -165,6 +166,7 @@ const InicioPage = () => {
                       className="btn-primary"
                       disabled={agotado}
                       data-tooltip={agotado ? 'Producto sin stock' : 'Agregar al carrito'}
+                      onClick={() => !agotado && addToCartWithQty(producto, 1)}
                       style={{ width: '100%', marginTop: 12, justifyContent: 'center', opacity: agotado ? 0.5 : 1, cursor: agotado ? 'not-allowed' : 'pointer' }}
                     >
                       <ShoppingCart size={14} /> {agotado ? 'Sin stock' : 'Agregar al carrito'}

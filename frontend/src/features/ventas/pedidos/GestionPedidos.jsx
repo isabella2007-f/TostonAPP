@@ -6,7 +6,7 @@ import { fmtFecha, getRecordDate } from "../../../utils/dateUtils.js";
 import DateRangeFilter from "../../../shared/components/DateRangeFilter";
 import SelectorBarrioEntrega from "../../../shared/components/SelectorBarrioEntrega";
 import { descargarFacturaPedido } from "../../../utils/facturaGenerator.js";
-import { getPedidos, getPedido, getHistorialPedidos, confirmarPedido, cancelarPedido, crearPedido, editarPedido, cambiarEstadoVenta, proponerFechaProduccion, aprobarFechaDirecta, registrarPagoFinal, aprobarComprobante, rechazarComprobante, registrarCobroPedido, resolverEscaladoAcuerdo, resolverEscaladoCancelar, aprobarPagoFinal, rechazarPagoFinal } from "../../../services/pedidosService.js";
+import { getPedidos, getPedido, getHistorialPedidos, confirmarPedido, cancelarPedido, crearPedido, editarPedido, cambiarEstadoVenta, proponerFechaProduccion, aprobarFechaDirecta, rechazarFechaFinal, registrarPagoFinal, aprobarComprobante, rechazarComprobante, registrarCobroPedido, resolverEscaladoAcuerdo, resolverEscaladoCancelar, aprobarComprobanteSaldo, rechazarComprobanteSaldo, marcarRetenidoEnTienda, reintentarPagoRetenido, cambiarADomicilioRetenido, cancelarRetenidoEnTienda, avisarPuedeRecoger, avisarEnviarAEntregar } from "../../../services/pedidosService.js";
 import { subirImagenCloudinary } from "../../../utils/cloudinary.js";
 import { asignarRepartidor } from "../../../services/domiciliosService.js";
 import { registrarSalida } from "../../../services/salidasService.js";
@@ -28,7 +28,7 @@ import {
   Eye, Pencil, Check, Calendar, Store, Bike,
   Banknote, CreditCard, Clock, Ban, Phone, Mail,
   PenLine, ClipboardList, FileText, Paperclip, XCircle,
-  Info, Building2, AlertTriangle, Scale
+  Info, Building2, AlertTriangle, Scale, RefreshCw, Bell
 } from 'lucide-react';
 import "./Pedidos.css";
 
@@ -758,12 +758,13 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
 function ModalProponerFecha({ pedido, saving, onClose, onConfirm }) {
   const hoy = new Date().toISOString().split("T")[0];
   const [fecha, setFecha] = useState("");
+  const [motivo, setMotivo] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = () => {
     if (!fecha) { setError("Selecciona una fecha de entrega"); return; }
     if (fecha < hoy) { setError("La fecha no puede ser anterior a hoy"); return; }
-    onConfirm(pedido.id, fecha);
+    onConfirm(pedido.id, fecha, motivo.trim() || null);
   };
 
   return (
@@ -803,6 +804,19 @@ function ModalProponerFecha({ pedido, saving, onClose, onConfirm }) {
                 <AlertCircle size={10} /> {error}
               </p>
             )}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+              Motivo (opcional)
+            </label>
+            <textarea
+              value={motivo}
+              onChange={e => setMotivo(e.target.value)}
+              placeholder="Ej: esta semana la producción está al tope…"
+              rows={2}
+              className="w-full bg-gray-50 border-2 border-transparent focus:border-blue-400 focus:bg-white rounded-2xl p-4 text-sm font-medium text-gray-700 outline-none transition-all resize-none"
+            />
           </div>
 
           <div className="space-y-2 pt-2">
@@ -1368,6 +1382,139 @@ function ModalRegistrarCobro({ pedido, saving, onClose, onConfirm }) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   MODAL — RETENIDO EN TIENDA (3.7): las 3 acciones de resolución
+   ═══════════════════════════════════════════════════════════ */
+const _VENTANA_REINTENTO_H = 24;
+const _VENTANA_LIMITE_H    = 48;
+
+function horasDesde(fechaISO) {
+  if (!fechaISO) return null;
+  return (Date.now() - new Date(fechaISO).getTime()) / 3_600_000;
+}
+
+function ModalRetenidoEnTienda({ pedido, saving, onClose, onReintentar, onCambiarADomicilio, onCancelar }) {
+  const [vista, setVista] = useState("menu"); // menu | reintentar | domicilio
+  const [recibido, setRecibido] = useState(null);
+  const [idBarrio, setIdBarrio] = useState(null);
+  const [direccion, setDireccion] = useState("");
+  const [error, setError] = useState(null);
+
+  const horas = horasDesde(pedido.fecha_retenido_en_tienda);
+  const dentroDeReintento = horas === null || horas < _VENTANA_REINTENTO_H;
+  const fueraDePlazo      = horas !== null && horas >= _VENTANA_LIMITE_H;
+  const horasRestantesReintento = horas === null ? null : Math.max(0, Math.ceil(_VENTANA_REINTENTO_H - horas));
+  const horasRestantesLimite    = horas === null ? null : Math.max(0, Math.ceil(_VENTANA_LIMITE_H - horas));
+
+  const handleReintentar = () => {
+    if (recibido === null) { setError("Indica si el pago fue recibido"); return; }
+    setError(null);
+    onReintentar(pedido.id, { recibido });
+  };
+
+  const handleDomicilio = () => {
+    if (!idBarrio) { setError("Selecciona el barrio de entrega"); return; }
+    if (!direccion.trim()) { setError("Escribe la dirección de entrega"); return; }
+    setError(null);
+    onCambiarADomicilio(pedido.id, { ID_Barrio: idBarrio, Direccion_entrega: direccion.trim() });
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-box relative bg-white shadow-2xl overflow-hidden flex flex-col border-none" style={{ borderRadius: "28px", maxWidth: "460px" }}>
+        <div className="modal-header shrink-0" style={{ background: "linear-gradient(135deg, #c62828 0%, #e53935 100%)", padding: "20px 24px" }}>
+          <div>
+            <h2 className="text-lg font-black text-white leading-none">Pedido Retenido en Tienda</h2>
+            <p className="text-white/60 text-[9px] font-bold uppercase tracking-widest mt-1">Pedido #{pedido.numero}</p>
+          </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="modal-body p-6 space-y-4">
+          {horas !== null && (
+            <p style={{ fontSize: 12, fontWeight: 700, color: fueraDePlazo ? "#c62828" : "#757575", background: "#f5f5f5", borderRadius: 8, padding: "8px 10px" }}>
+              {fueraDePlazo
+                ? "Se cumplieron las 48 horas del plazo: solo queda cancelar."
+                : dentroDeReintento
+                  ? `Quedan ${horasRestantesReintento}h para reintentar el cobro (${horasRestantesLimite}h hasta el límite de cancelación).`
+                  : `Se cumplieron las 24h para reintentar: sugerí cancelar (quedan ${horasRestantesLimite}h del plazo total).`
+              }
+            </p>
+          )}
+
+          {vista === "menu" && (
+            <div className="space-y-2">
+              <button
+                disabled={saving || fueraDePlazo || !dentroDeReintento}
+                onClick={() => setVista("reintentar")}
+                className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
+                style={{ background: (fueraDePlazo || !dentroDeReintento) ? "#c5c5c5" : "linear-gradient(135deg, #2e7d32, #388e3c)", cursor: (fueraDePlazo || !dentroDeReintento) ? "not-allowed" : "pointer" }}
+              >Reintentar cobro / retiro</button>
+              <button
+                disabled={saving || fueraDePlazo}
+                onClick={() => setVista("domicilio")}
+                className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
+                style={{ background: fueraDePlazo ? "#c5c5c5" : "linear-gradient(135deg, #1565c0, #1976d2)", cursor: fueraDePlazo ? "not-allowed" : "pointer" }}
+              >Cambiar a domicilio</button>
+              <button
+                disabled={saving}
+                onClick={() => onCancelar(pedido.id)}
+                className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
+                style={{ background: "linear-gradient(135deg, #c62828, #e53935)", cursor: saving ? "not-allowed" : "pointer" }}
+              >Cancelar pedido{fueraDePlazo ? " (obligatorio)" : ""}</button>
+            </div>
+          )}
+
+          {vista === "reintentar" && (
+            <div className="space-y-3">
+              <p style={{ fontSize: 13, color: "#424242" }}>¿El cliente volvió y se registró el pago?</p>
+              <div style={{ display: "flex", gap: 10 }}>
+                {[{ val: true, label: "Sí, recibido", color: "#2e7d32" }, { val: false, label: "No recibido", color: "#c62828" }].map(({ val, label, color }) => (
+                  <button
+                    key={String(val)}
+                    onClick={() => { setRecibido(val); setError(null); }}
+                    style={{
+                      flex: 1, padding: "14px 10px", borderRadius: 12, border: `2px solid ${recibido === val ? color : "#e0e0e0"}`,
+                      background: recibido === val ? color + "15" : "#fafafa",
+                      color: recibido === val ? color : "#757575", fontWeight: 800, fontSize: 13, cursor: "pointer",
+                    }}
+                  >{label}</button>
+                ))}
+              </div>
+              <button
+                disabled={saving || recibido === null}
+                onClick={handleReintentar}
+                className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
+                style={{ background: "linear-gradient(135deg, #2e7d32, #388e3c)", cursor: saving ? "not-allowed" : "pointer" }}
+              >{saving ? "Guardando…" : "Confirmar"}</button>
+              <button onClick={() => setVista("menu")} className="w-full py-2 text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-widest">Volver</button>
+            </div>
+          )}
+
+          {vista === "domicilio" && (
+            <div className="space-y-3">
+              <SelectorBarrioEntrega onChange={(id) => setIdBarrio(id)} />
+              <input
+                type="text" placeholder="Dirección de entrega" value={direccion}
+                onChange={(e) => setDireccion(e.target.value)}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #e0e0e0", fontSize: 13 }}
+              />
+              <button
+                disabled={saving}
+                onClick={handleDomicilio}
+                className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
+                style={{ background: "linear-gradient(135deg, #1565c0, #1976d2)", cursor: saving ? "not-allowed" : "pointer" }}
+              >{saving ? "Guardando…" : "Confirmar cambio a domicilio"}</button>
+              <button onClick={() => setVista("menu")} className="w-full py-2 text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-widest">Volver</button>
+            </div>
+          )}
+
+          {error && <p style={{ fontSize: 12, color: "#c62828", background: "#ffebee", padding: "8px 12px", borderRadius: 8 }}>{error}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    MODAL — SUBIR COMPROBANTE (para pedidos ya confirmados)
    ═══════════════════════════════════════════════════════════ */
 function ModalSubirComprobante({ pedido, saving, onClose, onConfirm }) {
@@ -1445,6 +1592,57 @@ function ModalSubirComprobante({ pedido, saving, onClose, onConfirm }) {
 /* ═══════════════════════════════════════════════════════════
    MODAL — RECHAZAR COMPROBANTE (con motivo)
    ═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   MODAL — RECHAZAR EN DEFINITIVO LA PROPUESTA FINAL DE FECHA (3.4)
+   ═══════════════════════════════════════════════════════════ */
+function ModalRechazarFechaFinal({ pedido, saving, onClose, onConfirm }) {
+  const [motivo, setMotivo] = useState("");
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-box relative bg-white shadow-2xl overflow-hidden flex flex-col border-none" style={{ borderRadius: "28px", maxWidth: "440px" }}>
+        <div className="modal-header shrink-0" style={{ background: "linear-gradient(135deg, #b71c1c 0%, #e53935 100%)", padding: "20px 24px" }}>
+          <div>
+            <h2 className="text-lg font-black text-white leading-none">Rechazar propuesta en definitivo</h2>
+            <p className="text-white/60 text-[9px] font-bold uppercase tracking-widest mt-1">Pedido #{pedido.numero}</p>
+          </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="modal-body p-6 space-y-4">
+          <p className="text-xs text-gray-500 font-medium leading-relaxed">
+            No hay otra ronda de contraofertas: el pedido pasa a <strong>Escalado a admin</strong>, y el
+            cliente podrá cancelarlo o comunicarse directamente contigo.
+          </p>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+              Motivo (opcional)
+            </label>
+            <textarea
+              className="w-full bg-gray-50 border-2 border-transparent focus:border-red-400 focus:bg-white rounded-2xl p-4 text-sm font-medium text-gray-700 outline-none transition-all resize-none h-24"
+              placeholder="Ej: Esa fecha tampoco nos alcanza por el volumen de pedidos..."
+              value={motivo}
+              onChange={e => setMotivo(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2 pt-2">
+            <button
+              disabled={saving}
+              onClick={() => onConfirm(pedido.id, motivo.trim() || null)}
+              className="w-full py-4 text-xs font-black uppercase tracking-widest rounded-2xl text-white shadow-lg"
+              style={{ background: "linear-gradient(135deg, #b71c1c, #e53935)" }}
+            >
+              {saving ? "Rechazando…" : "Confirmar rechazo definitivo"}
+            </button>
+            <button onClick={onClose} className="w-full py-3 text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-widest transition-colors">
+              Volver
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalRechazarComprobante({ pedido, saving, onClose, onConfirm }) {
   const [motivo, setMotivo] = useState("");
   const [error,  setError]  = useState("");
@@ -1501,7 +1699,19 @@ function ModalRechazarComprobante({ pedido, saving, onClose, onConfirm }) {
 /* ═══════════════════════════════════════════════════════════
    MODAL — VER COMPROBANTE (con zoom + Aprobar / Rechazar)
    ═══════════════════════════════════════════════════════════ */
-function ModalVerComprobante({ pedido, saving, onClose, onAprobar, onRechazar }) {
+function ModalVerComprobante({ pedido, esSaldo = false, saving, onClose, onAprobar, onRechazar }) {
+  // Contexto que el admin necesita para decidir, sin tener que abrir el
+  // detalle del pedido aparte (3.5): tipo de pedido, total, monto exacto de
+  // la transferencia que está revisando, cliente y fecha.
+  const tipoPedido = pedido.requiereProduccion ? "Con producción" : "Sin producción";
+  const montoRevisado = esSaldo
+    ? Math.max(0, Number(pedido.total || 0) - Number(pedido.anticipo_monto || 0))
+    : (pedido.requiere_anticipo
+        ? Number(pedido.anticipo_monto || pedido.anticipo_requerido || 0)
+        : Number(pedido.total || 0));
+  const comprobanteUrl = esSaldo ? pedido.saldo_comprobante_url : pedido.comprobante;
+  const intentos = esSaldo ? pedido.intentos_rechazo_comprobante_saldo : pedido.intentos_rechazo_comprobante_anticipo;
+
   return (
     <div className="modal-overlay">
       <div
@@ -1513,16 +1723,26 @@ function ModalVerComprobante({ pedido, saving, onClose, onAprobar, onRechazar })
         <div style={{ background: 'linear-gradient(135deg,#1565c0,#1976d2)', padding: '18px 22px', borderRadius: '24px 24px 0 0', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <p style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.6)', letterSpacing: 1, textTransform: 'uppercase', margin: 0 }}>Pedido #{pedido.numero}</p>
-            <h2 style={{ margin: '2px 0 0', fontSize: 17, fontWeight: 800, color: '#fff' }}>Comprobante de pago</h2>
+            <h2 style={{ margin: '2px 0 0', fontSize: 17, fontWeight: 800, color: '#fff' }}>{esSaldo ? "Comprobante del saldo" : "Comprobante de pago"}</h2>
           </div>
           <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
         </div>
 
         {/* Body */}
         <div style={{ overflowY: 'auto', flex: 1, padding: '18px 22px' }}>
-          {pedido.comprobante ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 14px', marginBottom: 16, padding: '12px 14px', background: '#f5f8fc', borderRadius: 12 }}>
+            <div><p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: '#90a4ae', textTransform: 'uppercase' }}>Cliente</p><p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 700, color: '#263238' }}>{pedido.cliente?.nombre || "—"}</p></div>
+            <div><p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: '#90a4ae', textTransform: 'uppercase' }}>Tipo de pedido</p><p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 700, color: '#263238' }}>{tipoPedido}</p></div>
+            <div><p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: '#90a4ae', textTransform: 'uppercase' }}>Total del pedido</p><p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 700, color: '#263238' }}>{fmt(pedido.total)}</p></div>
+            <div><p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: '#90a4ae', textTransform: 'uppercase' }}>{esSaldo ? "Saldo a transferir" : "Monto a transferir"}</p><p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 800, color: '#1565c0' }}>{fmt(montoRevisado)}</p></div>
+            <div><p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: '#90a4ae', textTransform: 'uppercase' }}>Fecha del pedido</p><p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 700, color: '#263238' }}>{pedido.fecha_pedido ? fmtFecha(pedido.fecha_pedido) : "—"}</p></div>
+            {intentos > 0 && (
+              <div><p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: '#90a4ae', textTransform: 'uppercase' }}>Rechazos previos</p><p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 800, color: '#c62828' }}>{intentos} de 3</p></div>
+            )}
+          </div>
+          {comprobanteUrl ? (
             <ImageLightbox
-              src={pedido.comprobante}
+              src={comprobanteUrl}
               alt="Comprobante de pago"
               label="Ver imagen completa"
               thumbStyle={{ width: '100%', maxHeight: 380, objectFit: 'contain', borderRadius: 12, background: '#f0f4f8', cursor: 'zoom-in' }}
@@ -1563,7 +1783,7 @@ function ModalVerComprobante({ pedido, saving, onClose, onAprobar, onRechazar })
 /* ═══════════════════════════════════════════════════════════
    MENÚ DE ACCIONES POR FILA
    ═══════════════════════════════════════════════════════════ */
-function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onAprobarFecha, onProponerFecha, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro, onAprobarPagoFinal, onRechazarPagoFinal, onRetenerEnTienda }) {
+function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onAprobarFecha, onProponerFecha, onRechazarFechaFinal, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro, onResolverRetenido, onProduccionBloqueada, onSaldoBloqueado, onAvisarRecoger, onEnviarAEntregar }) {
   const necesitaProduccion  = ped.requiereFechaPropuesta;
   const canEdit             = puedeEditarsePedido(ped.estado);
   const canAdvance          = ped.estado === "Pendiente" && !necesitaProduccion
@@ -1571,8 +1791,12 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
         || ["pagado_completo", "anticipo_pagado"].includes(ped.estado_pago));
   // Camino A: aprobar de una la fecha que el cliente ya pidió. Camino B (más
   // abajo, canProponerFecha): contraofrecer otra.
-  const canAprobarFecha     = ped.estado === "Pendiente" && necesitaProduccion && !!ped.fecha_propuesta;
+  // "Fecha propuesta final" (3.4): la contraoferta del cliente se aprueba con
+  // el mismo botón/acción de Camino A — aprobarFechaDirecta ya acepta las dos
+  // procedencias en el backend.
+  const canAprobarFecha     = ["Pendiente", "Fecha propuesta final"].includes(ped.estado) && necesitaProduccion && !!ped.fecha_propuesta;
   const canProponerFecha    = ["Pendiente", "Fecha rechazada"].includes(ped.estado) && necesitaProduccion;
+  const canRechazarFechaFinal = ped.estado === "Fecha propuesta final";
   const canResolverEscalado = ped.estado === "Escalado a admin";
   // canMarcarListo: no debe quedar desbloqueado solo porque no hay OPs pendientes.
   // sobre_stock indica que el pedido se creó con más unidades de las que había en
@@ -1583,11 +1807,22 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
   // un producto que requiere producción con stock disponible no genera OP.
   const opsPendientes       = ped.orden_produccion;
   const opsCreadas          = ped.total_ordenes_produccion > 0;
-  const canMarcarListo      = ped.estado === "Confirmado"
-    && !opsPendientes
-    && (!ped.sobre_stock || opsCreadas);
-  const canEntregarTienda   = ped.estado === "Listo" && !ped.domicilio;
-  const canAsignarDomicilio = ped.estado === "Listo" && ped.domicilio;
+  // 3.8: el botón queda SIEMPRE visible en "Confirmado" — nunca se oculta
+  // por el gate de producción, solo se deshabilita y explica por qué
+  // (toast con el detalle) en vez de desaparecer sin decir nada.
+  const bloqueadoPorProduccion = opsPendientes || (ped.sobre_stock && !opsCreadas);
+  const showMarcarListo     = ped.estado === "Confirmado";
+  const canMarcarListo      = showMarcarListo && !bloqueadoPorProduccion;
+  // 3.10: no se puede despachar (ni avisar recoger, ni enviar a entregar) si
+  // el saldo restante es por transferencia y su comprobante no está
+  // aprobado. El backend ya lo bloquea (gate en cambiar_estado→EN_CAMINO);
+  // acá se refleja en la UI para no ocultar el botón sin explicar por qué.
+  // No aplica si el resto es efectivo: ese cobro pasa por el flujo físico de 3.11.
+  const saldoTransferenciaPendiente = !!ped.requiere_anticipo && !ped.pago_final_registrado
+    && !esPagoEfectivo(ped.metodo_pago);
+  const showEntregarTienda  = ped.estado === "Listo" && !ped.domicilio;
+  const showAsignarDomicilio = ped.estado === "Listo" && ped.domicilio;
+  const canEntregarTienda   = showEntregarTienda && !saldoTransferenciaPendiente;
   const canEntregar         = ped.estado === "En camino";
   const canCancel           = !["Entregado", "Cancelado"].includes(ped.estado);
   // Un pedido mixto tiene comprobante QUE REVISAR y plata QUE COBRAR: con las
@@ -1596,6 +1831,9 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
   const esTransferencia     = esPagoTransferencia(ped.metodo_pago);
   const esEfectivo          = esPagoEfectivo(ped.metodo_pago);
   const canVerComprobante   = esTransferencia && ped.comprobante && ped.estado_pago === "pendiente_validacion";
+  // Segundo comprobante: el saldo restante tras el anticipo (3.10). Mismo
+  // botón/ícono, mismo modal (ModalVerComprobante con esSaldo=true).
+  const canVerComprobanteSaldo = ped.saldo_comprobante_url && ped.estado_pago === "saldo_pendiente_validacion";
   const _terminalState      = ["Entregado","Cancelado"].includes(ped.estado);
   const _pagoRegistrado     = ["efectivo_recibido","pagado_completo","anticipo_pagado"].includes(ped.estado_pago);
   const _fechaSinConfirmar  = ['Fecha propuesta', 'Fecha rechazada', 'Escalado a admin'].includes(ped.estado)
@@ -1605,10 +1843,7 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
     (!ped.comprobante || ped.estado_pago === "comprobante_rechazado");
   const _faltaEfectivoMixto = esPagoMixto(ped.metodo_pago) && ped.estado_pago === "anticipo_pagado";
   const canRegistrarCobro   = esEfectivo && !_terminalState && (!_pagoRegistrado || _faltaEfectivoMixto);
-  const canAprobarPagoFinal = ped.estado_pago === "pago_final_pendiente_validacion";
-  const canRechazarPagoFinal = ped.estado_pago === "pago_final_pendiente_validacion";
-  const canRetenerEnTienda  = ped.estado === "Listo" && !ped.domicilio;
-  const esRetenido          = ped.estado === "Retenido en tienda";
+  const canResolverRetenido = ped.estado === "Retenido en tienda";
 
   return (
     <div className="actions-cell">
@@ -1617,19 +1852,46 @@ function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo
       {canAdvance       && <button className="act-btn act-btn--success" data-tooltip="Confirmar pedido"       disabled={saving} onClick={() => onConfirmar(ped)}><Check size={15} /></button>}
       {canAprobarFecha     && <button className="act-btn act-btn--success" data-tooltip="Aprobar fecha del cliente" disabled={saving} onClick={() => onAprobarFecha(ped)}><Check size={15} /></button>}
       {canProponerFecha    && <button className="act-btn act-btn--info"    data-tooltip="Proponer otra fecha"    disabled={saving} onClick={() => onProponerFecha(ped)}><Calendar size={15} /></button>}
+      {canRechazarFechaFinal && <button className="act-btn act-btn--delete" data-tooltip="Rechazar propuesta en definitivo" disabled={saving} onClick={() => onRechazarFechaFinal(ped)}><X size={15} /></button>}
       {canResolverEscalado && <button className="act-btn act-btn--warning" data-tooltip="Resolver escalado"     disabled={saving} onClick={() => onResolverEscalado(ped)}><AlertTriangle size={15} /></button>}
-      {canMarcarListo      && <button className="act-btn act-btn--success" data-tooltip="Marcar como listo"     disabled={saving} onClick={() => onMarcarListo(ped)}><Package size={15} /></button>}
-      {canEntregarTienda && !esRetenido && <button className="act-btn act-btn--success" data-tooltip="Entregar en tienda" disabled={saving} onClick={() => onEntregar(ped)}><Store size={15} /></button>}
-      {canRetenerEnTienda  && <button className="act-btn act-btn--warning" data-tooltip="Retener en tienda (cobro pendiente)" disabled={saving} onClick={() => onRetenerEnTienda(ped)}><AlertCircle size={15} /></button>}
-      {esRetenido          && <button className="act-btn act-btn--info"    data-tooltip="Reintentar entrega en tienda" disabled={saving} onClick={() => onMarcarListo(ped)}><RotateCcw size={15} /></button>}
-      {esRetenido          && <button className="act-btn act-btn--info"    data-tooltip="Convertir a domicilio" disabled={saving} onClick={() => onAsignarDomicilio(ped)}><Bike size={15} /></button>}
-      {canAsignarDomicilio && !esRetenido && <button className="act-btn act-btn--info" data-tooltip="Asignar domiciliario" disabled={saving} onClick={() => onAsignarDomicilio(ped)}><Bike size={15} /></button>}
+      {showMarcarListo     && (
+        <button
+          className="act-btn act-btn--success"
+          data-tooltip={bloqueadoPorProduccion ? "Producción sin terminar" : "Marcar como listo"}
+          disabled={saving}
+          style={bloqueadoPorProduccion ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
+          onClick={() => canMarcarListo ? onMarcarListo(ped) : onProduccionBloqueada(ped)}
+        ><Package size={15} /></button>
+      )}
+      {showEntregarTienda  && (
+        <button
+          className="act-btn act-btn--info"
+          data-tooltip={saldoTransferenciaPendiente ? "Falta aprobar el comprobante del saldo" : "Avisar que puede recoger"}
+          disabled={saving}
+          style={saldoTransferenciaPendiente ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
+          onClick={() => saldoTransferenciaPendiente ? onSaldoBloqueado(ped) : onAvisarRecoger(ped)}
+        ><Bell size={15} /></button>
+      )}
+      {canEntregarTienda   && <button className="act-btn act-btn--success" data-tooltip="Entregar en tienda"     disabled={saving} onClick={() => onEntregar(ped)}><Store size={15} /></button>}
+      {!canEntregarTienda && showEntregarTienda && saldoTransferenciaPendiente && (
+        <button className="act-btn act-btn--success" data-tooltip="Falta aprobar el comprobante del saldo" disabled={saving} style={{ opacity: 0.45, cursor: "not-allowed" }} onClick={() => onSaldoBloqueado(ped)}><Store size={15} /></button>
+      )}
+      {showAsignarDomicilio && <button className="act-btn act-btn--info"    data-tooltip="Asignar domiciliario"   disabled={saving} onClick={() => onAsignarDomicilio(ped)}><Bike size={15} /></button>}
+      {showAsignarDomicilio && ped.idEmpleado && (
+        <button
+          className="act-btn act-btn--success"
+          data-tooltip={saldoTransferenciaPendiente ? "Falta aprobar el comprobante del saldo" : "Enviar a entregar"}
+          disabled={saving}
+          style={saldoTransferenciaPendiente ? { opacity: 0.45, cursor: "not-allowed" } : undefined}
+          onClick={() => saldoTransferenciaPendiente ? onSaldoBloqueado(ped) : onEnviarAEntregar(ped)}
+        ><Truck size={15} /></button>
+      )}
       {canEntregar         && <button className="act-btn act-btn--success" data-tooltip="Registrar entrega"      disabled={saving} onClick={() => onEntregar(ped)}><Truck size={15} /></button>}
       {canSubirComprobante && <button className="act-btn act-btn--info"    data-tooltip="Subir comprobante"    disabled={saving} onClick={() => onSubirComprobante(ped)}><Paperclip size={15} /></button>}
       {canRegistrarCobro   && <button className="act-btn act-btn--success" data-tooltip="Registrar cobro efectivo" disabled={saving} onClick={() => onRegistrarCobro(ped)}><Banknote size={15} /></button>}
       {canVerComprobante && <button className="act-btn act-btn--info" data-tooltip="Ver comprobante" disabled={saving} onClick={() => onVerComprobante(ped)}><Eye size={15} /></button>}
-      {canAprobarPagoFinal && <button className="act-btn act-btn--success" data-tooltip="Aprobar saldo final" disabled={saving} onClick={() => onAprobarPagoFinal(ped)}><CheckCircle2 size={15} /></button>}
-      {canRechazarPagoFinal && <button className="act-btn act-btn--delete" data-tooltip="Rechazar saldo final" disabled={saving} onClick={() => onRechazarPagoFinal(ped)}><XCircle size={15} /></button>}
+      {canVerComprobanteSaldo && <button className="act-btn act-btn--info" data-tooltip="Ver comprobante del saldo" disabled={saving} onClick={() => onVerComprobante(ped, true)}><Eye size={15} /></button>}
+      {canResolverRetenido && <button className="act-btn act-btn--warning" data-tooltip="Resolver retenido en tienda" disabled={saving} onClick={() => onResolverRetenido(ped)}><AlertTriangle size={15} /></button>}
       {canCancel           && <button className="act-btn act-btn--delete"  data-tooltip="Cancelar pedido"        disabled={saving} onClick={() => onCancelar(ped)}><X size={15} /></button>}
     </div>
   );
@@ -1930,6 +2192,20 @@ export default function GestionPedidos() {
     }
   };
 
+  const handleConfirmarRechazoFechaFinal = async (id, motivo) => {
+    setActionSaving(true);
+    try {
+      const pedidoActualizado = await rechazarFechaFinal(id, motivo);
+      setPedidos(prev => prev.map(p => p.id === id ? pedidoActualizado : p));
+      showToast(`Propuesta rechazada — el pedido #${pedidoActualizado.numero} quedó escalado a admin.`);
+      setModal(null);
+    } catch (err) {
+      showToast(err.message || "No se pudo rechazar la propuesta", "error");
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
   const handleResolverEscalado = (ped) => {
     setModal({ type: "resolverEscalado", pedido: ped });
   };
@@ -1962,15 +2238,20 @@ export default function GestionPedidos() {
     }
   };
 
-  const handleVerComprobante = (ped) => {
-    setModal({ type: "verComprobante", pedido: ped });
+  const handleVerComprobante = (ped, esSaldo = false) => {
+    setModal({ type: "verComprobante", pedido: ped, esSaldo });
   };
 
-  const handleAprobarComprobante = async (ped) => {
+  const handleAprobarComprobante = async (ped, esSaldo = false) => {
     setActionSaving(true);
     try {
-      await aprobarComprobante(ped.id);
-      setPedidos(prev => prev.map(p => p.id === ped.id ? { ...p, estado_pago: "pagado_completo" } : p));
+      if (esSaldo) {
+        await aprobarComprobanteSaldo(ped.id);
+        setPedidos(prev => prev.map(p => p.id === ped.id ? { ...p, estado_pago: "pagado_completo" } : p));
+      } else {
+        await aprobarComprobante(ped.id);
+        setPedidos(prev => prev.map(p => p.id === ped.id ? { ...p, estado_pago: "pagado_completo" } : p));
+      }
       showToast(`Comprobante de ${ped.numero} aprobado`);
       setModal(null);
     } catch (err) {
@@ -1985,14 +2266,114 @@ export default function GestionPedidos() {
   };
 
   const handleConfirmarCobro = async (idPedido, { recibido }) => {
+    const ped = pedidos.find(p => p.id === idPedido);
     setActionSaving(true);
     try {
       await registrarCobroPedido(idPedido, { recibido });
+      // 3.7: si no se pudo cobrar en tienda (recoger en tienda, sin
+      // domicilio), el pedido pasa a "Retenido en tienda" en vez de quedarse
+      // en Listo sin ningún flujo que lo resuelva.
+      if (!recibido && ped && !ped.domicilio) {
+        await marcarRetenidoEnTienda(idPedido);
+      }
       await cargarDatos();
       setModal(null);
-      showToast(recibido ? "Cobro en efectivo registrado" : "Pago marcado como no recibido", "success");
+      showToast(
+        recibido ? "Cobro en efectivo registrado"
+          : !ped?.domicilio ? "Pedido retenido en tienda: el cliente tiene 24h para volver a pagarlo"
+          : "Pago marcado como no recibido",
+        "success",
+      );
     } catch (e) {
       showToast(e.message || "Error al registrar el cobro", "error");
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleResolverRetenido = (ped) => {
+    setModal({ type: "retenidoEnTienda", pedido: ped });
+  };
+
+  // 3.8: el botón de "Marcar listo" ya no se oculta cuando falta producción —
+  // se deja deshabilitado y se explica el motivo con un toast específico.
+  const handleProduccionBloqueada = (ped) => {
+    const faltantes = (ped.productosItems || []).filter(i => (i.cantidad_preorden || 0) > 0);
+    const detalle = faltantes.length
+      ? `Falta producir: ${faltantes.map(i => `${i.nombre} (${i.cantidad_preorden})`).join(", ")}.`
+      : "Todavía hay una orden de producción sin terminar para este pedido.";
+    showToast(`No se puede marcar como listo. ${detalle}`, "warn");
+  };
+
+  // 3.10: mismo patrón para el despacho bloqueado por el saldo restante.
+  const handleSaldoBloqueado = () => {
+    showToast("No se puede despachar: falta aprobar el comprobante del saldo restante.", "warn");
+  };
+
+  // 3.11: avisarle al cliente que puede pasar a recoger, sin cambiar de estado.
+  const handleAvisarRecoger = async (ped) => {
+    setActionSaving(true);
+    try {
+      await avisarPuedeRecoger(ped.id);
+      showToast(`Se avisó a ${ped.cliente?.nombre || "el cliente"} que puede recoger su pedido`, "success");
+    } catch (e) {
+      showToast(e.message || "Error al avisar al cliente", "error");
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  // 3.11: avisarle al domiciliario asignado que salga a entregar, sin cambiar
+  // de estado — el domiciliario marca "En camino" desde su propio panel.
+  const handleEnviarAEntregar = async (ped) => {
+    setActionSaving(true);
+    try {
+      await avisarEnviarAEntregar(ped.id);
+      showToast("Se avisó al domiciliario que salga a entregar", "success");
+    } catch (e) {
+      showToast(e.message || "Error al avisar al domiciliario", "error");
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleReintentarRetenido = async (idPedido, { recibido }) => {
+    setActionSaving(true);
+    try {
+      await reintentarPagoRetenido(idPedido, { recibido });
+      await cargarDatos();
+      setModal(null);
+      showToast(recibido ? "Cobro registrado: pedido entregado" : "Pago marcado como no recibido de nuevo", "success");
+    } catch (e) {
+      showToast(e.message || "Error al reintentar el cobro", "error");
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleCambiarADomicilioRetenido = async (idPedido, datos) => {
+    setActionSaving(true);
+    try {
+      await cambiarADomicilioRetenido(idPedido, datos);
+      await cargarDatos();
+      setModal(null);
+      showToast("Pedido cambiado a domicilio", "success");
+    } catch (e) {
+      showToast(e.message || "Error al cambiar a domicilio", "error");
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const handleCancelarRetenido = async (idPedido) => {
+    setActionSaving(true);
+    try {
+      await cancelarRetenidoEnTienda(idPedido);
+      await cargarDatos();
+      setModal(null);
+      showToast("Pedido cancelado", "success");
+    } catch (e) {
+      showToast(e.message || "Error al cancelar el pedido", "error");
     } finally {
       setActionSaving(false);
     }
@@ -2015,13 +2396,17 @@ export default function GestionPedidos() {
     }
   };
 
-  const handleConfirmarRechazoComprobante = async (id, motivo) => {
+  const handleConfirmarRechazoComprobante = async (id, motivo, esSaldo = false) => {
     const ped = pedidos.find(p => p.id === id);
     if (!ped) return;
     setActionSaving(true);
     try {
-      await rechazarComprobante(id, motivo);
-      setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado_pago: "comprobante_rechazado" } : p));
+      if (esSaldo) {
+        await rechazarComprobanteSaldo(id, motivo);
+      } else {
+        await rechazarComprobante(id, motivo);
+      }
+      await cargarDatos();
       showToast(`Comprobante de ${ped.numero} rechazado`);
       setModal(null);
     } catch (err) {
@@ -2031,53 +2416,12 @@ export default function GestionPedidos() {
     }
   };
 
-  const handleAprobarPagoFinal = async (ped) => {
-    setActionSaving(true);
-    try {
-      const actualizado = await aprobarPagoFinal(ped.id);
-      await cargarDatos();
-      showToast(`Saldo final de ${ped.numero} aprobado`);
-      setModal(null);
-    } catch (err) {
-      setModal({ type: "errorEstado", mensaje: err.message || "No se pudo aprobar el pago final." });
-    } finally {
-      setActionSaving(false);
-    }
-  };
-
-  const handleRechazarPagoFinal = async (id, motivo) => {
-    setActionSaving(true);
-    try {
-      await rechazarPagoFinal(id, motivo);
-      await cargarDatos();
-      showToast(`Saldo final rechazado`);
-      setModal(null);
-    } catch (err) {
-      setModal({ type: "errorEstado", mensaje: err.message || "No se pudo rechazar el pago final." });
-    } finally {
-      setActionSaving(false);
-    }
-  };
-
-  const handleRetenerEnTienda = async (ped) => {
-    setActionSaving(true);
-    try {
-      await cambiarEstadoVenta(ped.id, 21);
-      await cargarDatos();
-      showToast(`Pedido ${ped.numero} retenido en tienda`);
-    } catch (err) {
-      showToast(err.message || "No se pudo retener el pedido", "error");
-    } finally {
-      setActionSaving(false);
-    }
-  };
-
-  const handleConfirmarFechaPropuesta = async (id, fecha) => {
+  const handleConfirmarFechaPropuesta = async (id, fecha, motivo = null) => {
     const ped = pedidos.find(p => p.id === id);
     if (!ped) return;
     setActionSaving(true);
     try {
-      await proponerFechaProduccion(id, fecha);
+      await proponerFechaProduccion(id, fecha, motivo);
       setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado: "Fecha propuesta", fecha_propuesta: fecha } : p));
       showToast(`Fecha propuesta enviada al cliente para ${ped.numero}`);
       setModal(null);
@@ -2310,6 +2654,10 @@ export default function GestionPedidos() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar pedidos">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button className={`filter-icon-btn${hasFilter ? " has-filter" : ""}`} onClick={() => setShowFilter(v => !v)} data-tooltip="Filtrar pedidos">▼</button>
@@ -2555,13 +2903,16 @@ export default function GestionPedidos() {
                             onCancelar={handleCancelarPedido}
                             onAprobarFecha={handleAprobarFecha}
                             onProponerFecha={handleProponerFecha}
+                            onRechazarFechaFinal={ped => setModal({ type: "rechazarFechaFinal", pedido: ped })}
                             onResolverEscalado={handleResolverEscalado}
                             onVerComprobante={handleVerComprobante}
                             onSubirComprobante={handleSubirComprobante}
                             onRegistrarCobro={handleRegistrarCobro}
-                            onAprobarPagoFinal={handleAprobarPagoFinal}
-                            onRechazarPagoFinal={ped => setModal({ type: "rechazarPagoFinal", pedido: ped })}
-                            onRetenerEnTienda={handleRetenerEnTienda}
+                            onResolverRetenido={handleResolverRetenido}
+                            onProduccionBloqueada={handleProduccionBloqueada}
+                            onSaldoBloqueado={handleSaldoBloqueado}
+                            onAvisarRecoger={handleAvisarRecoger}
+                            onEnviarAEntregar={handleEnviarAEntregar}
                           />
                         )}
                       </td>
@@ -2596,29 +2947,24 @@ export default function GestionPedidos() {
       {modal?.type === "editar" && <EditarPedido pedido={modal.pedido} onClose={() => setModal(null)} onSave={handleEditarPedido} onAprobarComprobante={handleAprobarComprobante} onRechazarComprobante={(ped) => setModal({ type: "rechazarComprobante", pedido: ped })} />}
       {modal?.type === "proponerFecha"    && <ModalProponerFecha    pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleConfirmarFechaPropuesta} />}
       {modal?.type === "resolverEscalado" && <ModalResolverEscalado pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirmarAcuerdo={handleConfirmarAcuerdoEscalado} onConfirmarCancelacion={handleConfirmarCancelacionEscalado} />}
+      {modal?.type === "rechazarFechaFinal" && <ModalRechazarFechaFinal pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleConfirmarRechazoFechaFinal} />}
       {modal?.type === "registrarSaldo" && <ModalRegistrarSaldo pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleRegistrarSaldo} />}
       {modal?.type === "registrarCobro"      && <ModalRegistrarCobro      pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleConfirmarCobro} />}
+      {modal?.type === "retenidoEnTienda"    && <ModalRetenidoEnTienda    pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onReintentar={handleReintentarRetenido} onCambiarADomicilio={handleCambiarADomicilioRetenido} onCancelar={handleCancelarRetenido} />}
       {modal?.type === "subirComprobante"    && <ModalSubirComprobante    pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleConfirmarSubirComprobante} />}
-      {modal?.type === "rechazarComprobante" && <ModalRechazarComprobante pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={handleConfirmarRechazoComprobante} />}
+      {modal?.type === "rechazarComprobante" && <ModalRechazarComprobante pedido={modal.pedido} saving={actionSaving} onClose={() => setModal(null)} onConfirm={(id, motivo) => handleConfirmarRechazoComprobante(id, motivo, modal.esSaldo)} />}
       {modal?.type === "verComprobante" && (
         <ModalVerComprobante
           pedido={modal.pedido}
+          esSaldo={modal.esSaldo}
           saving={actionSaving}
           onClose={() => setModal(null)}
-          onAprobar={() => handleAprobarComprobante(modal.pedido)}
-          onRechazar={() => setModal({ type: "rechazarComprobante", pedido: modal.pedido })}
+          onAprobar={() => handleAprobarComprobante(modal.pedido, modal.esSaldo)}
+          onRechazar={() => setModal({ type: "rechazarComprobante", pedido: modal.pedido, esSaldo: modal.esSaldo })}
         />
       )}
       {modal?.type === "errorEstado" && <ModalErrorEstadoPedido mensaje={modal.mensaje} onClose={() => setModal(null)} />}
       {modal?.type === "avisoProduccion" && <ModalAvisoProduccion items={modal.items} pedidoNumero={modal.pedidoNumero} onClose={() => setModal(null)} />}
-      {modal?.type === "rechazarPagoFinal" && (
-        <ModalRechazarComprobante
-          pedido={modal.pedido}
-          saving={actionSaving}
-          onClose={() => setModal(null)}
-          onConfirm={(id, motivo) => handleRechazarPagoFinal(id, motivo)}
-        />
-      )}
 
       <Toast toast={toast} />
     </div>

@@ -9,14 +9,14 @@ from src.features.auth.services.dependencies import (
 from .schemas import (
     VentaCreate, VentaEstado, VentaResponse, VentaListResponse,
     FechaEntregaInput, PagoFinalCreate, EnvioCompletoDomingoInput,
-    RechazarFechaInput, AcuerdoManualInput, RechazarPagoFinalInput,
+    RechazarFechaInput, RechazarFechaFinalInput, AcuerdoManualInput,
 )
 from .service import (
     obtener_ventas, obtener_venta, obtener_mi_venta, crear_venta, cambiar_estado,
     obtener_mis_ventas, obtener_mi_credito, obtener_credito_cliente,
-    proponer_fecha, aceptar_fecha, rechazar_fecha, aprobar_fecha_directa, solicitar_escalado,
-    registrar_pago_final, aprobar_pago_final, rechazar_pago_final,
-    guardar_envio_completo_domingo,
+    proponer_fecha, aceptar_fecha, rechazar_fecha, rechazar_fecha_final,
+    aprobar_fecha_directa, solicitar_escalado,
+    registrar_pago_final, guardar_envio_completo_domingo,
     resolver_escalado_acuerdo_manual, resolver_escalado_cancelar,
 )
 
@@ -122,7 +122,7 @@ def actualizar_estado(
     id_venta: int,
     datos:    VentaEstado,
     db:       Session = Depends(get_db),
-    _:        dict    = Depends(requiere_permiso("editar_pedidos"))
+    _:        dict    = Depends(requiere_permiso("cambiar_estado_pedidos"))
 ):
     """Cambia el estado de la venta."""
     return cambiar_estado(db, id_venta, datos.Estado)
@@ -133,13 +133,13 @@ def proponer_fecha_endpoint(
     id_venta: int,
     datos:    FechaEntregaInput,
     db:       Session = Depends(get_db),
-    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
+    actual:   dict    = Depends(requiere_permiso("cambiar_estado_pedidos")),
 ):
     """Admin propone una fecha de entrega para un pedido. Válido en Pendiente, Fecha propuesta,
     Fecha rechazada o Escalado a admin. La fecha no puede ser en el pasado.
     """
     id_admin = getattr(actual.get("registro"), "ID_Usuario", None) if isinstance(actual, dict) else None
-    return proponer_fecha(db, id_venta, datos.fecha_entrega, id_admin=id_admin)
+    return proponer_fecha(db, id_venta, datos.fecha_entrega, id_admin=id_admin, motivo=datos.motivo)
 
 
 @router.patch("/{id_venta}/aceptar-fecha", response_model=VentaResponse)
@@ -156,7 +156,7 @@ def aceptar_fecha_endpoint(
 def aprobar_fecha_endpoint(
     id_venta: int,
     db:       Session = Depends(get_db),
-    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
+    actual:   dict    = Depends(requiere_permiso("cambiar_estado_pedidos")),
 ):
     """Admin aprueba en 1 clic la fecha que el cliente pidió al hacer el pedido
     (Camino A), sin pasar por 'Fecha propuesta'."""
@@ -179,31 +179,13 @@ def registrar_pago_final_endpoint(
     id_venta: int,
     datos:    PagoFinalCreate,
     db:       Session = Depends(get_db),
-    _:        dict    = Depends(requiere_permiso("editar_pedidos")),
+    _:        dict    = Depends(requiere_permiso("cambiar_estado_pedidos")),
 ):
-    """Registra el pago del saldo restante. Queda pendiente de validación por admin."""
+    """Admin/empleado registra el pago del saldo restante (mostrador o al
+    momento de la entrega) — queda cobrado de inmediato. El segundo
+    comprobante que sube el propio cliente desde su panel es un camino
+    aparte (`/pedidos/{id}/pagar-saldo`, 3.10), con su propia validación."""
     return registrar_pago_final(db, id_venta, datos)
-
-
-@router.patch("/{id_venta}/aprobar-pago-final", response_model=VentaResponse)
-def aprobar_pago_final_endpoint(
-    id_venta: int,
-    db:       Session = Depends(get_db),
-    _:        dict    = Depends(requiere_permiso("editar_pedidos")),
-):
-    """Admin aprueba el comprobante del saldo final."""
-    return aprobar_pago_final(db, id_venta)
-
-
-@router.patch("/{id_venta}/rechazar-pago-final", response_model=VentaResponse)
-def rechazar_pago_final_endpoint(
-    id_venta: int,
-    datos:    RechazarPagoFinalInput,
-    db:       Session = Depends(get_db),
-    _:        dict    = Depends(requiere_permiso("editar_pedidos")),
-):
-    """Admin rechaza el comprobante del saldo final. Tres rechazos cancelan el pedido."""
-    return rechazar_pago_final(db, id_venta, datos.motivo)
 
 
 @router.patch("/{id_venta}/envio-completo-domingo", response_model=VentaResponse)
@@ -220,14 +202,27 @@ def envio_completo_domingo_endpoint(
 @router.patch("/{id_venta}/rechazar-fecha", response_model=VentaResponse)
 def rechazar_fecha_endpoint(
     id_venta: int,
-    datos:    RechazarFechaInput = RechazarFechaInput(),
+    datos:    RechazarFechaInput,
     db:       Session = Depends(get_db),
     actual:   dict    = Depends(obtener_usuario_actual),
 ):
-    """El cliente rechaza la fecha contraofrecida, con causa opcional →
-    pedido vuelve a 'Pendiente de Aprobación' para que el admin apruebe otra
-    fecha o proponga una nueva."""
-    return rechazar_fecha(db, id_venta, actual, motivo=datos.motivo)
+    """El cliente rechaza la fecha contraofrecida con su propia propuesta
+    final (fecha + motivo, los dos obligatorios) → pedido pasa a 'Fecha
+    propuesta final', congelado hasta que el admin la acepte o la rechace en
+    definitivo (3.4)."""
+    return rechazar_fecha(db, id_venta, actual, datos.fecha_propuesta, datos.motivo)
+
+
+@router.patch("/{id_venta}/rechazar-fecha-final", response_model=VentaResponse)
+def rechazar_fecha_final_endpoint(
+    id_venta: int,
+    datos:    RechazarFechaFinalInput = RechazarFechaFinalInput(),
+    db:       Session = Depends(get_db),
+    actual:   dict    = Depends(requiere_permiso("cambiar_estado_pedidos")),
+):
+    """Admin rechaza en definitivo la propuesta final del cliente → pasa a
+    'Escalado a admin' (3.4.1: cancelar o comunicarse con el admin)."""
+    return rechazar_fecha_final(db, id_venta, actual, motivo=datos.motivo)
 
 
 @router.patch("/{id_venta}/resolver-escalado-acuerdo", response_model=VentaResponse)
@@ -235,7 +230,7 @@ def resolver_escalado_acuerdo_endpoint(
     id_venta: int,
     datos:    AcuerdoManualInput,
     db:       Session = Depends(get_db),
-    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
+    actual:   dict    = Depends(requiere_permiso("cambiar_estado_pedidos")),
 ):
     """Admin acuerda una fecha manualmente con el cliente escalado → pasa al flujo de producción."""
     return resolver_escalado_acuerdo_manual(db, id_venta, datos.fecha_acordada, actual)
@@ -245,7 +240,7 @@ def resolver_escalado_acuerdo_endpoint(
 def resolver_escalado_cancelar_endpoint(
     id_venta: int,
     db:       Session = Depends(get_db),
-    actual:   dict    = Depends(requiere_permiso("editar_pedidos")),
+    actual:   dict    = Depends(requiere_permiso("cambiar_estado_pedidos")),
 ):
     """Admin cancela el pedido escalado y devuelve el crédito usado."""
     return resolver_escalado_cancelar(db, id_venta, actual)

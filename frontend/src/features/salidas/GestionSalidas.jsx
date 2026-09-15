@@ -66,7 +66,7 @@ function InfoRow({ label, value, color }) {
 function ModalVerDetalle({ salida, onClose }) {
   const tc = TIPO_MAP[salida.tipo] || { color: "#757575", bg: "#f5f5f5", border: "#e0e0e0", Icon: ClipboardList, label: salida.tipo };
   return (
-    <div className="modal-overlay" style={{ zIndex: 30000 }}>
+    <div className="modal-overlay">
       <div className="modal-box" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
         <div className="modal-header" style={{ background: `linear-gradient(135deg, ${tc.color} 0%, ${tc.color}cc 100%)` }}>
           <div>

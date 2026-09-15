@@ -13,6 +13,7 @@ class LandingConfigResponse(BaseModel):
     ctaDescription:         Optional[str] = None
     contactPhone1:          Optional[str] = None
     contactPhone2:          Optional[str] = None
+    contactEmail:           Optional[str] = None
     contactAddressLine:     Optional[str] = None
     contactCity:            Optional[str] = None
     contactInstagramUrl:    Optional[str] = None
@@ -38,6 +39,7 @@ class LandingConfigUpdate(BaseModel):
     ctaDescription:         Optional[str] = None
     contactPhone1:          Optional[str] = None
     contactPhone2:          Optional[str] = None
+    contactEmail:           Optional[str] = None
     contactAddressLine:     Optional[str] = None
     contactCity:            Optional[str] = None
     contactInstagramUrl:    Optional[str] = None

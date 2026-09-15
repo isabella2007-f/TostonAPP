@@ -338,12 +338,15 @@ export default function PedidoActual() {
       return;
     }
     setCobrandoOpen(false);
-    if (cerrarEntrega) {
+    // Sin cobro no hay entrega (3.7): el pedido pasó a "En ruta de retorno"
+    // del lado del backend, así que no tiene sentido seguir e intentar
+    // marcarlo Entregado — eso ahora lo rechaza el propio backend.
+    if (cerrarEntrega && recibido) {
       await ejecutarCambio(ESTADO_DOMICILIO.ENTREGADO, "Entregado",
                            novedad.trim() || null);
       return;
     }
-    showToast(recibido ? "Cobro registrado" : "Se registró que no se pudo cobrar");
+    showToast(recibido ? "Cobro registrado" : "Entrega fallida: el pedido vuelve a la tienda");
     await cargar();
   };
 

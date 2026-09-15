@@ -56,6 +56,7 @@ from src.features.ventas.pedidos.services.service import (
     aprobar_comprobante,
     rechazar_comprobante,
     registrar_cobro_pedido,
+    obtener_pedido,
 )
 from src.shared.services.models import (
     Barrio,
@@ -564,8 +565,11 @@ class TransicionesInvalidasTest(unittest.TestCase):
                 tiene_dom = (
                     e_actual == EstadoPedido.LISTO and e_nuevo == EstadoPedido.EN_CAMINO
                 )
-                no_dom = (
-                    e_actual == EstadoPedido.LISTO and e_nuevo == EstadoPedido.ENTREGADO
+                # Desde LISTO, tanto "entregado directo" como "retenido en
+                # tienda" (3.7, cobro fallido) solo aplican a recoger en
+                # tienda, no a domicilio.
+                no_dom = e_actual == EstadoPedido.LISTO and e_nuevo in (
+                    EstadoPedido.ENTREGADO, EstadoPedido.RETENIDO_EN_TIENDA,
                 )
                 domicilio = tiene_dom or (not no_dom)
                 with self.subTest(desde=e_actual, hacia=e_nuevo):
@@ -1107,6 +1111,121 @@ class ConsistenciaDatosTest(BaseTest):
         dom = self.primer_dom()
         cambiar_estado_domicilio(self.db, dom.ID_Domicilio, 5)
         self.assertEqual(self.stock_prod(ID_P1), stock_inicial)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7. CIERRE DE LA VENTANA DE 10 MIN — reserva perezosa de stock (3.6)
+#    La porción en stock de un pedido para recoger en tienda se reserva al
+#    cerrarse la ventana de 10 min (evaluación perezosa, sin scheduler), no
+#    solo al llegar a CONFIRMADO — así otro pedido no puede consumirla
+#    mientras el primero sigue en negociación de fecha/pago.
+# ══════════════════════════════════════════════════════════════════════════════
+class VentanaCierreStockTest(BaseTest):
+    """Un pedido nace realmente PENDIENTE ("Pendiente de Aprobación") solo
+    cuando pide producción (Necesita_Produccion): hace falta un faltante real
+    contra el stock. Se deja el stock de P1 en 4 y se piden 6 → 4 en stock
+    reservable (lo que 3.6 mueve al cierre de ventana) y 2 en preorden (para
+    la OP), con un total de $60.000 que no cruza el umbral de anticipo."""
+
+    def _pedido_en_negociacion(self, cantidad=6, stock=4):
+        self.marcar_por_encargo(ID_P1)
+        self.set_stock(ID_P1, stock)
+        return self.pedido(
+            productos=[ProductoVentaInput(ID_Producto=ID_P1, Cantidad=cantidad)],
+            Fecha_entrega_esperada=self.fecha_futura(),
+        )
+
+    def _vencer_ventana(self, id_venta):
+        """Simula que ya pasaron los 10 minutos desde que se creó el pedido."""
+        v = self.db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+        v.Fecha_Venta = datetime.utcnow() - timedelta(minutes=11)
+        self.db.commit()
+
+    def test_no_reserva_stock_dentro_de_la_ventana(self):
+        """Recién creado (dentro de los 10 min), el stock sigue completo."""
+        self.crear(self._pedido_en_negociacion())
+        v = self.venta()
+        self.assertEqual(v.Estado, EstadoPedido.PENDIENTE)
+        self.assertFalse(bool(v.Stock_Reservado))
+        self.assertEqual(self.stock_prod(ID_P1), 4)
+
+    def test_reserva_stock_al_tocar_el_pedido_tras_vencer_la_ventana(self):
+        """Al cerrarse la ventana, la próxima vez que alguien mire el pedido
+        (ver detalle) se reserva la porción en stock, sin que nadie lo haya
+        confirmado todavía."""
+        self.crear(self._pedido_en_negociacion())
+        v = self.venta()
+        self._vencer_ventana(v.ID_Venta)
+
+        obtener_pedido(self.db, v.ID_Venta)  # "tocar" el pedido
+
+        self.db.refresh(v)
+        self.assertTrue(bool(v.Stock_Reservado))
+        self.assertEqual(v.Estado, EstadoPedido.PENDIENTE)  # no cambia de estado
+        self.assertEqual(self.stock_prod(ID_P1), 0)  # 4 - 4 en stock reservadas
+
+    def test_reserva_perezosa_no_aplica_a_domicilio(self):
+        """Un pedido a domicilio no reserva nada antes de ENTREGADO, ni
+        siquiera al cerrarse la ventana: ese camino no cambia con 3.6."""
+        pedido = self._pedido_en_negociacion()
+        pedido.domicilio = self.dom_input()
+        self.crear(pedido)
+        v = self.venta()
+        self._vencer_ventana(v.ID_Venta)
+
+        obtener_pedido(self.db, v.ID_Venta)
+
+        self.db.refresh(v)
+        self.assertFalse(bool(v.Stock_Reservado))
+        self.assertEqual(self.stock_prod(ID_P1), 4)
+
+    def test_no_descuenta_dos_veces_si_confirma_despues_de_la_ventana(self):
+        """Si el stock ya se reservó de forma perezosa, aprobar la fecha (que
+        lleva el pedido a Confirmado/Preparando) no debe volver a
+        descontarlo."""
+        self.crear(self._pedido_en_negociacion())
+        v = self.venta()
+        self._vencer_ventana(v.ID_Venta)
+        obtener_pedido(self.db, v.ID_Venta)  # reserva perezosa
+        stock_tras_reserva = self.stock_prod(ID_P1)
+
+        from src.features.ventas.gestion_ventas.services.service import aprobar_fecha_directa
+        aprobar_fecha_directa(self.db, v.ID_Venta, self.mock_admin())
+
+        self.assertEqual(self.stock_prod(ID_P1), stock_tras_reserva)
+
+    def test_orden_de_produccion_se_crea_al_cerrar_la_ventana(self):
+        """El faltante también abre su orden de producción (fila en BD) al
+        cerrarse la ventana, sin esperar a que el pedido avance de estado."""
+        pedido = self._pedido_en_negociacion()  # stock=4, pide 6 → faltan 2
+        self.crear(pedido)
+        v = self.venta()
+        self.assertEqual(len(self.ops(v.ID_Venta)), 0)  # todavía no hay OP
+        self._vencer_ventana(v.ID_Venta)
+
+        obtener_pedido(self.db, v.ID_Venta)
+
+        ops = self.ops(v.ID_Venta)
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0].Cantidad, 2)
+        self.assertEqual(ops[0].Estado, 1)  # Pendiente: nace sin arrancar
+
+    def test_cancelar_tras_reserva_perezosa_restaura_el_stock(self):
+        """Si el pedido se cancela DESPUÉS de que la ventana lo reservó (pero
+        sin haber llegado nunca a CONFIRMADO), el stock reservado se
+        devuelve igual — la marca Stock_Reservado es la fuente de verdad,
+        no el Estado."""
+        self.crear(self._pedido_en_negociacion())
+        v = self.venta()
+        self._vencer_ventana(v.ID_Venta)
+        obtener_pedido(self.db, v.ID_Venta)  # reserva perezosa, Estado sigue Pendiente
+        self.assertEqual(self.stock_prod(ID_P1), 0)
+
+        cambiar_estado(self.db, v.ID_Venta, EstadoPedido.CANCELADO)
+
+        self.assertEqual(self.stock_prod(ID_P1), 4)
+        self.db.refresh(v)
+        self.assertFalse(bool(v.Stock_Reservado))
 
 
 if __name__ == "__main__":

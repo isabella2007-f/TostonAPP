@@ -697,11 +697,6 @@ def migrate_db():
     # ── Nuevas columnas PUNTO 1-7 (flujo completo de pagos y negociación) ─────
     with engine.connect() as conn:
         for stmt in [
-            # PUNTO 2: contador de comprobantes rechazados (anticipo + saldo)
-            "ALTER TABLE Ventas ADD COLUMN intentos_rechazo_comprobante INT NOT NULL DEFAULT 0",
-            # PUNTO 4: contraofertas de fecha del admin y flag de propuesta final
-            "ALTER TABLE Ventas ADD COLUMN contraoferta_admin_count INT NOT NULL DEFAULT 0",
-            "ALTER TABLE Ventas ADD COLUMN propuesta_final_cliente TINYINT NOT NULL DEFAULT 0",
             # PUNTO 7: liquidación del efectivo cobrado por el repartidor
             "ALTER TABLE Domicilios ADD COLUMN Efectivo_Liquidado TINYINT NOT NULL DEFAULT 0",
             "ALTER TABLE Domicilios ADD COLUMN Fecha_Liquidacion DATETIME NULL",
@@ -713,16 +708,33 @@ def migrate_db():
             except Exception:
                 pass  # columna ya existe
 
-    # ── PUNTO 6: estado Retenido en Tienda (ID 21) ────────────────────────────
+    # ── prompt-pedidos-2: estados 21/22/23 del flujo de pedidos ───────────────
+    # El ID 21 lo usó primero una implementación paralela (PUNTO 6, "Retenido
+    # en tienda") que quedó reemplazada por el diseño más completo de este
+    # prompt (FECHA_PROPUESTA_FINAL=21, RETENIDO_EN_TIENDA=22,
+    # EN_RUTA_RETORNO=23, ver estados.py). INSERT IGNORE no pisa una fila que
+    # ya exista con la etiqueta vieja, así que el 21 se corrige con UPDATE.
     with engine.connect() as conn:
         try:
             conn.execute(text(
                 "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) "
-                "VALUES (21, 21, 'Retenido en tienda')"
+                "VALUES (21, 21, 'Fecha propuesta final')"
+            ))
+            conn.execute(text(
+                "UPDATE Estados SET Estado = 'Fecha propuesta final', Codigo = 21 "
+                "WHERE ID_Estados = 21 AND Estado <> 'Fecha propuesta final'"
+            ))
+            conn.execute(text(
+                "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) "
+                "VALUES (22, 22, 'Retenido en tienda')"
+            ))
+            conn.execute(text(
+                "INSERT IGNORE INTO Estados (ID_Estados, Codigo, Estado) "
+                "VALUES (23, 23, 'En ruta de retorno')"
             ))
             conn.commit()
         except Exception as exc:
-            _log.error("migración estado 21 FALLÓ — %s", exc, exc_info=True)
+            _log.error("migración estados 21/22/23 FALLÓ — %s", exc, exc_info=True)
 
     # FK de Domicilios.ID_Liquidado_Por → Usuarios (solo si la columna ya existe)
     with engine.connect() as conn:
@@ -783,6 +795,11 @@ def _migrar_catalogo_permisos(engine):
         ("ver_domicilios", "ver_detalle_domicilios"),
         ("editar_devoluciones", "aprobar_devoluciones"),
         ("editar_pedidos", "cancelar_pedidos"),
+        # `cambiar_estado_pedidos` es nuevo (prompt-pedidos-2, 3.14): gobierna
+        # las transiciones/aprobaciones del flujo de pedidos, que antes vivían
+        # bajo `editar_pedidos`. Todo rol que ya podía editar pedidos conserva
+        # esa capacidad sin que se le desaparezca al migrar.
+        ("editar_pedidos", "cambiar_estado_pedidos"),
     ]
     obsoletos = ["ver_landing_page"]
 

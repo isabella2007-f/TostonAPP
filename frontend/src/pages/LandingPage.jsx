@@ -57,6 +57,10 @@ function ProductDetailModal({ product, cat, onClose, onAddToCart }) {
   const agotado = product.stock === 0;
   const stock   = product.stock ?? 0;
   const parcial = !agotado && qty > stock && stock > 0;
+  // Sin stock pero producible: se puede pedir igual (se hornea bajo pedido),
+  // así que el mensaje debe invitar a pedir, no sonar a "no disponible".
+  const sinStockProducible   = agotado && !!product.requiereProduccion;
+  const sinStockNoProducible = agotado && !product.requiereProduccion;
 
   // Cerrar con Escape
   useEffect(() => {
@@ -195,10 +199,16 @@ function ProductDetailModal({ product, cat, onClose, onAddToCart }) {
           )}
 
           {/* Info de stock */}
-          {agotado && (
+          {sinStockNoProducible && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
               <p className="font-black text-amber-700 text-sm mb-1">⏳ Sin stock inmediato</p>
               <p className="text-amber-600 text-xs leading-relaxed">Este producto no está disponible para entrega inmediata. Al pedirlo lo recibirás cuando haya producción disponible.</p>
+            </div>
+          )}
+          {sinStockProducible && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+              <p className="font-black text-amber-700 text-sm mb-1">🧡 Se prepara especialmente para ti</p>
+              <p className="text-amber-600 text-xs leading-relaxed">Este producto se hornea bajo pedido. Pídelo ahora y te avisamos en cuanto esté listo.</p>
             </div>
           )}
           {parcial && (
@@ -711,15 +721,19 @@ const LandingPage = ({ hideNavbar = false }) => {
               const qty = getQty(p.id);
               const inCartItem = getCart().find(i => i.id === p.id);
               const agotado = p.stock === 0;
+              const sinStockProducible   = agotado && !!p.requiereProduccion;
+              const sinStockNoProducible = agotado && !p.requiereProduccion;
               return (
                 <div
                   key={p.id}
                   className={`group bg-white rounded-[40px] overflow-hidden border transition-all duration-500 flex flex-col ${
-                    agotado
+                    sinStockNoProducible
                       ? 'border-gray-200 opacity-75'
-                      : 'border-[#f1f8f1] hover:border-[#c8e6c9] hover:shadow-[0_30px_60px_rgba(27,94,32,0.1)]'
+                      : sinStockProducible
+                        ? 'border-amber-200 hover:shadow-[0_30px_60px_rgba(27,94,32,0.1)]'
+                        : 'border-[#f1f8f1] hover:border-[#c8e6c9] hover:shadow-[0_30px_60px_rgba(27,94,32,0.1)]'
                   }`}
-                  style={agotado ? { filter: 'grayscale(0.65)' } : undefined}
+                  style={sinStockNoProducible ? { filter: 'grayscale(0.65)' } : undefined}
                 >
                   <div className="relative h-72 overflow-hidden cursor-pointer" data-tooltip="Ver detalles del producto" onClick={() => setSelectedProduct(p)}>
                     {p.imagenPreview || p.imagen
@@ -735,12 +749,12 @@ const LandingPage = ({ hideNavbar = false }) => {
                     <div className="absolute top-6 right-6 bg-white/95 backdrop-blur-sm px-5 py-2.5 rounded-2xl font-black text-[#1b5e20] shadow-lg">
                       {formatCOP(p.precio)}
                     </div>
-                    {agotado && (
+                    {sinStockNoProducible && (
                       <div className="absolute top-6 left-6 bg-gray-600 text-white px-3 py-1.5 rounded-xl text-xs font-black shadow-lg">
                         ⏳ Sin stock
                       </div>
                     )}
-                    {!agotado && inCartItem && (
+                    {!sinStockNoProducible && inCartItem && (
                       <div className="absolute top-6 left-6 bg-[#1b5e20] text-white px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg border border-white/20">
                         <ShoppingCart className="w-3 h-3" />
                         {inCartItem.cantidad} en carrito
@@ -752,16 +766,21 @@ const LandingPage = ({ hideNavbar = false }) => {
                       <h4 className="text-2xl font-black text-[#1b5e20] group-hover:text-[#388e3c] transition-colors">{p.nombre}</h4>
                       <span className="px-3 py-1 bg-[#e8f5e9] text-[#1b5e20] rounded-lg text-[10px] font-black uppercase tracking-widest">{cat.nombre}</span>
                     </div>
-                    {agotado && (
+                    {sinStockNoProducible && (
                       <p className="text-amber-600 text-xs font-bold mb-3 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
                         No disponible para entrega inmediata — puedes hacer un pedido programado.
+                      </p>
+                    )}
+                    {sinStockProducible && (
+                      <p className="text-amber-700 text-xs font-bold mb-3 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                        🧡 Se prepara especialmente para ti — pídelo y te avisamos cuando esté listo.
                       </p>
                     )}
                     <p className="text-[#555] font-medium text-sm mb-4 flex-1 leading-relaxed">{cat.descripcion || 'Sabor auténtico y natural en cada bocado.'}</p>
                     <div className="mb-4">
                       <span className={`inline-flex items-center gap-1.5 text-xs font-black px-3 py-1.5 rounded-xl border ${
                         p.requiereProduccion
-                          ? 'bg-blue-50 text-blue-700 border-blue-100'
+                          ? 'bg-amber-50 text-amber-700 border-amber-200'
                           : p.stock <= 5
                             ? 'bg-red-50 text-red-600 border-red-100'
                             : p.stock <= 15

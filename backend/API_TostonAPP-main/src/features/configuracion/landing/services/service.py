@@ -15,6 +15,7 @@ _MAPPING = {
     "ctaDescription":         "cta_description",
     "contactPhone1":          "contact_phone1",
     "contactPhone2":          "contact_phone2",
+    "contactEmail":           "contact_email",
     "contactAddressLine":     "contact_address_line",
     "contactCity":            "contact_city",
     "contactInstagramUrl":    "contact_instagram_url",

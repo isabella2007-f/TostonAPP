@@ -404,6 +404,10 @@ export default function GestionInsumos() {
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
 
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar insumos">
+            <RefreshCw size={15} />
+          </button>
+
           <div ref={filterRef} style={{ position: "relative" }}>
             <button className={`filter-icon-btn${hasFilter ? " has-filter" : ""}`}
               onClick={() => setShowFilter(v => !v)} data-tooltip="Filtrar insumos">▼</button>
@@ -580,7 +584,7 @@ export default function GestionInsumos() {
       )}
       {modal?.type === "eliminar" && (
         (modal.ins.tieneFicha || modal.ins.tieneOrden || modal.ins.tieneCompra) ? (
-          <div className="modal-overlay" style={{ zIndex: 30000 }}>
+          <div className="modal-overlay">
             <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 440, overflow: "hidden" }}>
 
               {/* ── Cabecera roja ── */}

@@ -36,6 +36,7 @@ const FIELDS = [
     fields: [
       { key: "contactPhone1",          label: "Teléfono 1",             type: "text", placeholder: LANDING_DEFAULTS.contactPhone1 },
       { key: "contactPhone2",          label: "Teléfono 2",             type: "text", placeholder: LANDING_DEFAULTS.contactPhone2 },
+      { key: "contactEmail",           label: "Correo de contacto",     type: "text", placeholder: "contacto@tostonapp.com" },
       { key: "contactAddressLine",     label: "Dirección",              type: "text", placeholder: LANDING_DEFAULTS.contactAddressLine },
       { key: "contactCity",            label: "Ciudad y país",          type: "text", placeholder: LANDING_DEFAULTS.contactCity },
       { key: "contactInstagramHandle", label: "Instagram (usuario)",    type: "text", placeholder: LANDING_DEFAULTS.contactInstagramHandle },

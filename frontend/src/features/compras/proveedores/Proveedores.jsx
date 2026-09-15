@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Search, X, Check, Eye, PenLine, Trash2, Building2, Phone } from "lucide-react";
+import { Search, X, Check, Eye, PenLine, Trash2, Building2, Phone, RefreshCw } from "lucide-react";
 import "./Proveedores.css";
 import CrearProveedor  from "./CrearProveedor";
 import EditarProveedor from "./EditarProveedor";
@@ -186,6 +186,10 @@ export default function GestionProveedores() {
               onChange={e => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar proveedores">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button

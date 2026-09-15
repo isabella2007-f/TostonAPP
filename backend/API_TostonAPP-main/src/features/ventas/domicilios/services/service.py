@@ -15,7 +15,7 @@ from src.shared.services.models import (
 from src.shared.services.notificaciones_utils import notificar, notificar_stock_producto
 from src.features.ventas.gestion_ventas.services.service import (
     _actualizar_estado_producto, _descontar_fefo_producto, _descontar_stock_venta,
-    _faltantes_sin_cubrir,
+    _faltantes_sin_cubrir, _abonar_credito,
     cambiar_estado as _cambiar_estado_venta,
 )
 from src.shared.services.observaciones_utils import observaciones_limpias
@@ -28,6 +28,7 @@ from .estados import (
     validar_cambio,
 )
 from .schemas import DomicilioCreate, DomicilioUpdate
+from src.features.ventas.pedidos.services.estados import EstadoPedido
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +410,9 @@ def obtener_domicilios(
             "comprobante_pago":     venta.Comprobante_Pago if venta else None,
             "productos":            prods,
             "telefono_cliente":     cliente.Telefono if cliente else "",
+            "efectivo_liquidado":   bool(getattr(dom, "Efectivo_Liquidado", 0)),
+            "fecha_liquidacion":    getattr(dom, "Fecha_Liquidacion", None),
+            "id_liquidado_por":     getattr(dom, "ID_Liquidado_Por", None),
         }
 
     return {
@@ -657,9 +661,13 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
     nuevo_estado = normalizar_estado(nuevo_estado, tiene_repartidor=tiene_repartidor)
     validar_cambio(estado_actual, nuevo_estado)
 
+    # "no_recibido" quedó afuera a propósito (hallazgo #2): significa que el
+    # domiciliario NO cobró, así que no puede habilitar marcar el domicilio
+    # como Entregado. Ese caso ahora lo resuelve el flujo de 3.7
+    # (entrega_fallida → EN_RUTA_RETORNO), no este endpoint.
     _ESTADOS_PAGO_ENTREGA = {
         "efectivo_recibido", "pagado_completo", "anticipo_pagado",
-        "no_recibido", "pendiente_validacion",
+        "pendiente_validacion",
     }
 
     if nuevo_estado == EstadoDomicilio.EN_CAMINO and not dom.ID_Empleado:
@@ -852,6 +860,68 @@ def registrar_pago_efectivo(
     # la entrega, y mezclarle las líneas [COBRO|...] las volvía ilegibles.
     auditoria = dom.Cobro_Auditoria or ""
     dom.Cobro_Auditoria = f"{auditoria}\n{audit_line}".strip()
+
+    # 3.7: si no se pudo cobrar, el domiciliario no puede seguir camino con la
+    # mercancía — el pedido pasa a "En ruta de retorno" (vuelve a la tienda).
+    if not datos.recibido and venta.Estado == EstadoPedido.EN_CAMINO:
+        venta.Estado = EstadoPedido.EN_RUTA_RETORNO
+        notificar(
+            db, "pedido_retenido", f"Entrega fallida — Pedido #{dom.ID_Venta}",
+            "El domiciliario no pudo cobrar y está regresando el pedido a la tienda.",
+            dom.ID_Venta, "/ventas/pedidos",
+        )
+
+    db.commit()
+    db.refresh(dom)
+    return _formato_domicilio(dom, db)
+
+
+def confirmar_retorno_tienda(db: Session, id_domicilio: int) -> dict:
+    """El domiciliario confirma que el producto ya está físicamente de vuelta
+    en la tienda: el pedido pasa a 'Retenido en tienda', mismo estado y mismo
+    abanico de 3 acciones de resolución que la excepción de cobro en tienda
+    (3.7) — no se duplica esa lógica acá.
+
+    Si el cliente había pagado algo por transferencia, se descuenta el costo
+    de domicilio de ida Y vuelta (el mismo Precio_Domicilio_Final congelado,
+    duplicado) del saldo a favor que le quedaría, antes de acreditar nada.
+    """
+    dom = db.query(Domicilio).filter(Domicilio.ID_Domicilio == id_domicilio).first()
+    if not dom:
+        raise HTTPException(status_code=404, detail="Domicilio no encontrado")
+    if not dom.ID_Venta:
+        raise HTTPException(status_code=400, detail="Este domicilio no tiene venta asociada")
+
+    venta = db.query(Venta).filter(Venta.ID_Venta == dom.ID_Venta).with_for_update().first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta asociada no encontrada")
+    if venta.Estado != EstadoPedido.EN_RUTA_RETORNO:
+        raise HTTPException(status_code=400, detail="Este pedido no está en ruta de retorno")
+
+    costo_domicilio = Decimal(str(dom.Precio_Domicilio_Final or 0))
+    costo_ida_y_vuelta = costo_domicilio * 2
+    transferido = Decimal(str(getattr(venta, "Anticipo_Monto", 0) or 0)) if getattr(venta, "Anticipo_Registrado", 0) else Decimal("0")
+    if transferido > 0:
+        a_favor = transferido - costo_ida_y_vuelta
+        if a_favor > 0:
+            _abonar_credito(db, venta.ID_Usuario, a_favor, dom.ID_Venta)
+        # Si a_favor <= 0, el costo de ida y vuelta consume o supera lo
+        # transferido: no se acredita ni se cobra nada extra (2.4.2 — no se
+        # retiene "gastos operativos", pero tampoco se le regala domicilio al
+        # cliente que ya no puede recibir el pedido).
+        venta.Anticipo_Registrado = 0
+        venta.Anticipo_Monto      = Decimal("0")
+
+    venta.Estado                   = EstadoPedido.RETENIDO_EN_TIENDA
+    venta.Estado_Pago              = "no_recibido"
+    venta.Fecha_Retenido_En_Tienda = _now()
+    dom.Estado = EstadoDomicilio.CANCELADO
+
+    notificar(
+        db, "pedido_retenido", f"Pedido de vuelta en tienda — Pedido #{dom.ID_Venta}",
+        "Tu pedido volvió a la tienda. Tienes 24 horas para pasar a pagarlo antes de que se cancele.",
+        dom.ID_Venta, "/cliente/pedidos",
+    )
 
     db.commit()
     db.refresh(dom)

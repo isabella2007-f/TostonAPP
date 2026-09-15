@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Search, Plus, Pencil, Trash2, Eye } from "lucide-react";
+import { Search, Plus, Pencil, Trash2, Eye, RefreshCw } from "lucide-react";
 import { usePrivilegios } from "../../../context/PrivilegiosContext";
 import { formatCOP } from "../../../utils/formato";
 import {
@@ -118,6 +118,9 @@ export default function PestanaOfertas() {
           <Search size={15} className="ub-search__icon" />
           <input placeholder="Buscar oferta…" value={texto} onChange={(e) => setTexto(e.target.value)} />
         </div>
+        <button className="ub-icon-btn" onClick={refrescar} data-tooltip="Actualizar ofertas">
+          <RefreshCw size={14} />
+        </button>
         <select className="ub-select" value={filtroTipo} onChange={(e) => { setFiltroTipo(e.target.value); setPagina(1); }}>
           <option value="">Tipo: todos</option>
           <option value="descuento">Descuentos</option>

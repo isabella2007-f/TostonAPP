@@ -17,13 +17,14 @@ const ESTADO_PEDIDO_MAP = {
   18: "Parcialmente entregado",
   19: "Escalado a admin",
   20: "Esperando pago",
-  21: "Retenido en tienda",
+  21: "Fecha propuesta final",
+  22: "Retenido en tienda",
+  23: "En ruta de retorno",
 };
 
 const adaptPedido = (p) => {
   const estado = ESTADO_PEDIDO_MAP[p.Estado] || p.estado_label || "Pendiente";
 
-  // Build product list first so grupos_envio can cross-reference names without JSX logic.
   const productosItems = (p.productos || p.Productos || []).map(i => ({
     idProducto:        i.ID_Producto     || i.id_producto,
     nombre:            i.nombre_producto || i.Nombre || i.nombre || "",
@@ -90,9 +91,13 @@ const adaptPedido = (p) => {
     pago_final_fecha:          p.pago_final_fecha    || null,
     estado_pago:               p.estado_pago         || null,
     motivo_rechazo_comprobante: p.motivo_rechazo_comprobante || null,
-    intentos_rechazo_comprobante: p.intentos_rechazo_comprobante ?? 0,
-    contraoferta_admin_count: p.contraoferta_admin_count ?? 0,
-    propuesta_final_cliente:  !!(p.propuesta_final_cliente),
+    // Segundo comprobante: el saldo restante tras el anticipo (3.10)
+    saldo_comprobante_url: p.saldo_comprobante_url || null,
+    intentos_rechazo_comprobante_anticipo: p.intentos_rechazo_comprobante_anticipo || 0,
+    intentos_rechazo_comprobante_saldo:    p.intentos_rechazo_comprobante_saldo    || 0,
+    // 3.7: cuándo entró a "Retenido en tienda" (ventanas de 24h/48h, solo UI —
+    // el backend valida lo mismo al actuar).
+    fecha_retenido_en_tienda: p.fecha_retenido_en_tienda || null,
     envio_completo_domingo:
       p.envio_completo_domingo == null ? null : !!p.envio_completo_domingo,
     cliente: {
@@ -178,7 +183,6 @@ export const getMisVentas = async ({ pagina = 1, porPagina = 100 } = {}) => {
   };
 };
 
-// Detalle de una venta propia: devuelve grupos_envio completos (la lista batch los omite).
 export const getMiVenta = async (id) => {
   const data = await apiFetch(`/ventas/mis-ventas/${id}`);
   return adaptPedido(data);
@@ -193,10 +197,10 @@ export const editarMiPedido = async (id, datos) =>
     body: JSON.stringify(datos),
   });
 
-export const proponerFechaProduccion = async (id, fecha) =>
+export const proponerFechaProduccion = async (id, fecha, motivo = null) =>
   apiFetch(`/ventas/${id}/proponer-fecha`, {
     method: "PATCH",
-    body: JSON.stringify({ fecha_entrega: fecha }),
+    body: JSON.stringify({ fecha_entrega: fecha, motivo }),
   });
 
 export const aceptarFechaProduccion = async (id) => {
@@ -226,8 +230,19 @@ export const pagarPedido = async (id, { comprobante_url, monto = null }) => {
   return adaptPedido(data);
 };
 
-export const rechazarFechaProduccion = async (id, motivo = null) => {
+// El cliente rechaza la fecha propuesta con su propia contraoferta final:
+// fecha propia y motivo, los dos obligatorios (prompt-pedidos-2, 3.4).
+export const rechazarFechaProduccion = async (id, fechaPropuesta, motivo) => {
   const data = await apiFetch(`/ventas/${id}/rechazar-fecha`, {
+    method: "PATCH",
+    body: JSON.stringify({ fecha_propuesta: fechaPropuesta, motivo }),
+  });
+  return adaptPedido(data);
+};
+
+// Admin rechaza en definitivo la propuesta final del cliente (3.4) → Escalado a admin.
+export const rechazarFechaFinal = async (id, motivo = null) => {
+  const data = await apiFetch(`/ventas/${id}/rechazar-fecha-final`, {
     method: "PATCH",
     body: JSON.stringify({ motivo: motivo || null }),
   });
@@ -270,12 +285,56 @@ export const registrarCobroPedido = async (id, { recibido, monto = null, motivo 
     body: JSON.stringify({ recibido, monto, motivo }),
   });
 
-// PUNTO 5: aprobación/rechazo del pago final (saldo)
-export const aprobarPagoFinal = async (id) =>
-  apiFetch(`/ventas/${id}/aprobar-pago-final`, { method: "PATCH" });
+// Segundo comprobante: el saldo restante tras el anticipo, solo cuando ese
+// resto se paga por transferencia (3.10). Mismo mecanismo de 3 intentos que
+// el primer comprobante (pagarPedido/aprobarComprobante/rechazarComprobante).
+export const pagarSaldoPedido = async (id, { comprobante_url, monto = null }) => {
+  const data = await apiFetch(`/pedidos/${id}/pagar-saldo`, {
+    method: "PATCH",
+    body: JSON.stringify({ comprobante_url, monto }),
+  });
+  return adaptPedido(data);
+};
 
-export const rechazarPagoFinal = async (id, motivo) =>
-  apiFetch(`/ventas/${id}/rechazar-pago-final`, {
+export const aprobarComprobanteSaldo = async (id) =>
+  apiFetch(`/pedidos/${id}/aprobar-comprobante-saldo`, { method: "PATCH" });
+
+export const rechazarComprobanteSaldo = async (id, motivo) =>
+  apiFetch(`/pedidos/${id}/rechazar-comprobante-saldo`, {
     method: "PATCH",
     body: JSON.stringify({ motivo }),
   });
+
+// ── 3.7: excepción de cobro en efectivo (recoger en tienda) ──
+export const marcarRetenidoEnTienda = async (id) => {
+  const data = await apiFetch(`/pedidos/${id}/retener-en-tienda`, { method: "PATCH" });
+  return adaptPedido(data);
+};
+
+export const reintentarPagoRetenido = async (id, { recibido, monto = null, motivo = null }) => {
+  const data = await apiFetch(`/pedidos/${id}/reintentar-pago-retenido`, {
+    method: "PATCH",
+    body: JSON.stringify({ recibido, monto, motivo }),
+  });
+  return adaptPedido(data);
+};
+
+export const cambiarADomicilioRetenido = async (id, datos) => {
+  const data = await apiFetch(`/pedidos/${id}/cambiar-a-domicilio`, {
+    method: "PATCH",
+    body: JSON.stringify(datos),
+  });
+  return adaptPedido(data);
+};
+
+export const cancelarRetenidoEnTienda = async (id) => {
+  const data = await apiFetch(`/pedidos/${id}/cancelar-retenido`, { method: "PATCH" });
+  return adaptPedido(data);
+};
+
+// ── 3.11: avisos de despacho (no cambian de estado) ──
+export const avisarPuedeRecoger = async (id) =>
+  apiFetch(`/pedidos/${id}/avisar-puede-recoger`, { method: "PATCH" });
+
+export const avisarEnviarAEntregar = async (id) =>
+  apiFetch(`/pedidos/${id}/avisar-enviar-a-entregar`, { method: "PATCH" });

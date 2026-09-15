@@ -12,7 +12,7 @@ from src.shared.services.models import (
 from src.features.ventas.gestion_ventas.services.service import (
     _formato_venta, _now, cambiar_estado as _gv_cambiar_estado,
     _abonar_credito, _avanzar_tras_pago_aprobado, _validar_fecha_entrega_esperada,
-    LIMITE_INTENTOS_RECHAZO,
+    _evaluar_cierre_ventana,
 )
 from src.features.ventas.ubicaciones.services.service import resolver_domicilio
 from src.features.ventas.domicilios.services.estados import EstadoDomicilio
@@ -75,6 +75,13 @@ def obtener_pedidos(
         .all()
     )
 
+    # 3.6: la lista es el lugar más realista donde un admin "toca" pedidos que
+    # llevan rato esperando — se evalúa el cierre de ventana por cada fila de
+    # esta página. Ya es no-op tras la primera vez (Stock_Reservado) así que
+    # el costo real es solo en la página donde el pedido cruza el minuto 10.
+    for p in pedidos:
+        _evaluar_cierre_ventana(db, p)
+
     venta_ids = [p.ID_Venta for p in pedidos]
     dxv_map = {}
     if venta_ids:
@@ -112,6 +119,7 @@ def obtener_pedido(db: Session, id_venta: int) -> dict:
     )
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    _evaluar_cierre_ventana(db, pedido)
     return _formato_venta(pedido, db)
 
 
@@ -244,9 +252,9 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
     abren las órdenes de producción del faltante y queda En producción (13) en
     vez de Confirmado: pasa a Listo cuando esas órdenes se completan.
 
-    Regla de negocio: pedidos con pago por transferencia no pueden confirmarse
-    hasta que el comprobante haya sido aprobado (Estado_Pago = pagado_completo
-    o anticipo_pagado para mixto).
+    El comprobante de transferencia NUNCA se exige acá (3.2): para el cliente
+    siempre queda diferido al mecanismo de Esperando Pago (`pagar_pedido` /
+    `aprobar_comprobante`), sin importar si el pedido necesita producción.
     """
     pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
     if not pedido:
@@ -272,14 +280,6 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
         db.refresh(pedido)
         return _formato_venta(pedido, db)
 
-    if _lleva_transferencia(pedido.Metodo_Pago):
-        ep = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
-        if ep not in {"pagado_completo", "anticipo_pagado"}:
-            raise HTTPException(
-                status_code=400,
-                detail="El comprobante de transferencia debe ser aprobado antes de confirmar el pedido.",
-            )
-
     return _gv_cambiar_estado(db, id_venta, EstadoPedido.CONFIRMADO)
 
 
@@ -304,6 +304,7 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
     _ESTADOS_CANCELABLES_CLIENTE = frozenset({
         EstadoPedido.PENDIENTE,
         EstadoPedido.FECHA_PROPUESTA,
+        EstadoPedido.FECHA_PROPUESTA_FINAL,
         EstadoPedido.FECHA_RECHAZADA,
         EstadoPedido.ESCALADO_A_ADMIN,
     })
@@ -312,15 +313,13 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
         id_usuario = actual["registro"].ID_Usuario
         if pedido.ID_Usuario != id_usuario:
             raise HTTPException(status_code=403, detail="No puedes cancelar pedidos de otros clientes")
-        if getattr(pedido, "Requiere_Anticipo", None):
+        # Bloquea por lo PAGADO, no por lo exigido (prompt-pedidos-2, 3.4): con
+        # el chequeo viejo (Requiere_Anticipo) ningún pedido que superara el
+        # umbral podía cancelarse jamás, así hubiera pagado o no.
+        if getattr(pedido, "Anticipo_Registrado", None):
             raise HTTPException(
                 status_code=400,
-                detail="Este pedido no puede cancelarse porque requiere anticipo. Si necesitas cancelarlo, escríbenos.",
-            )
-        if not _dentro_ventana_edicion(pedido):
-            raise HTTPException(
-                status_code=400,
-                detail="Solo puedes cancelar tu pedido durante los primeros 10 minutos después de crearlo. Escríbenos si necesitas cancelarlo.",
+                detail="Este pedido no puede cancelarse porque ya se registró el anticipo. Si necesitas cancelarlo, escríbenos.",
             )
         if pedido.Estado not in _ESTADOS_CANCELABLES_CLIENTE:
             raise HTTPException(
@@ -329,6 +328,16 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
                     "Este pedido ya está en producción y no puede cancelarse desde aquí. "
                     "Escríbenos y lo revisamos."
                 ),
+            )
+        # La ventana de 10 minutos protege el arrepentimiento inmediato tras
+        # crear el pedido (Pendiente); en negociación de fecha o escalado el
+        # cliente puede cancelar en cualquier momento — esos estados solo se
+        # alcanzan bastante después de los 10 minutos, así que exigir la
+        # ventana ahí bloqueaba la cancelación siempre, contradiciendo 3.4.
+        if pedido.Estado == EstadoPedido.PENDIENTE and not _dentro_ventana_edicion(pedido):
+            raise HTTPException(
+                status_code=400,
+                detail="Solo puedes cancelar tu pedido durante los primeros 10 minutos después de crearlo. Escríbenos si necesitas cancelarlo.",
             )
 
     return _gv_cambiar_estado(db, id_venta, EstadoPedido.CANCELADO)
@@ -339,6 +348,12 @@ _ESTADOS_PAGO_BLOQUEADO_EDICION = {"efectivo_recibido", "pagado_completo", "no_r
 _ESTADOS_FINALES = frozenset({EstadoPedido.CANCELADO, EstadoPedido.ENTREGADO})
 
 _VENTANA_EDICION = timedelta(minutes=10)
+
+# Rechazos que tolera un mismo comprobante (el primero -anticipo o total sin
+# producción-, o el segundo -saldo restante-) antes de cancelar el pedido
+# solo. Los dos usan el mismo límite, pero cada uno cuenta aparte (ver
+# Intentos_Rechazo_Comprobante_Anticipo / _Saldo en el modelo).
+LIMITE_INTENTOS_COMPROBANTE = 3
 
 
 def _dentro_ventana_edicion(venta: Venta) -> bool:
@@ -426,6 +441,22 @@ def _reabrir_pedido_produccion(db: Session, pedido: Venta, productos_nuevos, fec
         pedido.Necesita_Produccion = 1 if necesita_produccion else 0
         pedido.Sobre_Stock         = 1 if sobre_stock else 0
 
+        # 3.6: una edición dentro de la ventana puede cruzar el umbral de
+        # anticipo para arriba o para abajo — se recalcula sobre el total ya
+        # ajustado. Todavía no hay nada pagado en este punto (el anticipo de
+        # un pedido con producción recién se exige al aprobarse la fecha, ver
+        # `_avanzar_tras_fecha_confirmada`), así que no hay que reconciliar
+        # plata ya registrada, solo el requisito.
+        from src.features.ventas.gestion_ventas.services.service import (
+            _pide_anticipo, _calcular_anticipo,
+        )
+        if _pide_anticipo(pedido.Total):
+            pedido.Requiere_Anticipo  = 1
+            pedido.Anticipo_Requerido = _calcular_anticipo(pedido.Total, Decimal("0"))
+        else:
+            pedido.Requiere_Anticipo  = 0
+            pedido.Anticipo_Requerido = Decimal("0")
+
     if fecha_nueva is not None:
         _validar_fecha_entrega_esperada(db, fecha_nueva)
         pedido.Fecha_entrega_esperada = fecha_nueva
@@ -469,10 +500,15 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
     if actual.get("tipo") == "cliente":
         if pedido.ID_Usuario != actual["registro"].ID_Usuario:
             raise HTTPException(status_code=403, detail="No puedes editar pedidos de otros clientes")
-        if getattr(pedido, "Requiere_Anticipo", None):
+        # Bloquea por lo PAGADO, no por lo exigido (mismo fix que
+        # cancelar_pedido, prompt-pedidos-2 3.4): con el chequeo viejo
+        # (Requiere_Anticipo) ningún pedido que superara el umbral podía
+        # editarse jamás, ni siquiera para recalcular ese mismo umbral tras
+        # ajustar cantidades dentro de la ventana (3.6).
+        if getattr(pedido, "Anticipo_Registrado", None):
             raise HTTPException(
                 status_code=400,
-                detail="Este pedido no puede editarse porque requiere anticipo. Si necesitas un cambio, escríbenos.",
+                detail="Este pedido no puede editarse porque ya se registró el anticipo. Si necesitas un cambio, escríbenos.",
             )
         if not _fuera_de_ventana_ok and not _dentro_ventana_edicion(pedido):
             raise HTTPException(
@@ -659,7 +695,17 @@ def registrar_cobro_pedido(db: Session, id_venta: int, datos, id_usuario_actual:
             else "pagado_completo"
         )
     else:
+        # Mismo registro que en el mixto: sin esto, un pedido con anticipo
+        # cuyo saldo se cobra 100% en efectivo quedaba con Estado_Pago =
+        # 'efectivo_recibido' pero Pago_Final_Registrado en 0, y el gate de
+        # `cambiar_estado` hacia ENTREGADO (que exige Pago_Final_Registrado
+        # en todo pedido con anticipo) lo bloqueaba para siempre.
         venta.Estado_Pago = "efectivo_recibido"
+        if getattr(venta, "Requiere_Anticipo", 0):
+            venta.Pago_Final_Registrado  = 1
+            venta.Pago_Final_Monto       = datos.monto if datos.monto is not None else venta.Total
+            venta.Pago_Final_Metodo_Pago = "Efectivo"
+            venta.Pago_Final_Fecha       = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(venta)
     return _formato_venta(venta, db)
@@ -759,9 +805,14 @@ def pagar_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> dict:
 
 def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_actual: int) -> dict:
     """
-    Admin rechaza el comprobante de transferencia.
+    Admin rechaza el comprobante de transferencia (el primero: el anticipo de
+    un pedido con producción, o el total de uno sin ella).
     Estado_Pago → 'comprobante_rechazado'. El comprobante NO se elimina.
     El motivo se notifica al cliente; no se guarda en columna nueva.
+
+    Al 3er rechazo (LIMITE_INTENTOS_COMPROBANTE, 3.5) el pedido se cancela
+    solo, reusando el mismo camino de cancelación que ya reversa stock/crédito
+    (`cambiar_estado` → CANCELADO), sin duplicar esa lógica acá.
     """
     from src.shared.services.notificaciones_utils import notificar
 
@@ -779,31 +830,32 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
     if estado_pago == "comprobante_rechazado":
         raise HTTPException(status_code=409, detail="El comprobante ya fue rechazado")
 
-    intentos = int(getattr(pedido, "intentos_rechazo_comprobante", 0) or 0) + 1
-    pedido.intentos_rechazo_comprobante = intentos
     pedido.Estado_Pago = "comprobante_rechazado"
     pedido.Motivo_Rechazo_Comprobante = motivo.strip()
+    pedido.Intentos_Rechazo_Comprobante_Anticipo = (
+        int(getattr(pedido, "Intentos_Rechazo_Comprobante_Anticipo", 0) or 0) + 1
+    )
 
-    if intentos >= LIMITE_INTENTOS_RECHAZO:
-        # Auto-cancelar: el cliente agotó sus intentos de comprobante
+    if pedido.Intentos_Rechazo_Comprobante_Anticipo >= LIMITE_INTENTOS_COMPROBANTE:
+        pedido.Motivo_Rechazo_Comprobante = (
+            f"Cancelado automáticamente: comprobante rechazado "
+            f"{LIMITE_INTENTOS_COMPROBANTE} veces. Último motivo: {motivo.strip()}"
+        )
         notificar(
             db,
             "comprobante_rechazado",
-            f"Pedido #{id_venta} cancelado — comprobante rechazado 3 veces",
-            f"Último motivo: {motivo}. Se canceló el pedido automáticamente por superar el límite de intentos.",
+            f"Pedido cancelado — Pedido #{id_venta}",
+            pedido.Motivo_Rechazo_Comprobante,
             id_venta,
             "/ventas/pedidos",
         )
-        db.flush()
-        _gv_cambiar_estado(db, id_venta, int(EstadoPedido.CANCELADO))
-        db.refresh(pedido)
-        return _formato_venta(pedido, db)
+        return _gv_cambiar_estado(db, id_venta, EstadoPedido.CANCELADO, saltar_ventana_proteccion=True)
 
     notificar(
         db,
         "comprobante_rechazado",
         f"Comprobante rechazado — Pedido #{id_venta}",
-        f"Motivo: {motivo}. Intento {intentos}/{LIMITE_INTENTOS_RECHAZO}.",
+        f"Motivo: {motivo}. Intento {pedido.Intentos_Rechazo_Comprobante_Anticipo}/{LIMITE_INTENTOS_COMPROBANTE}.",
         id_venta,
         "/ventas/pedidos",
     )
@@ -811,3 +863,343 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
     db.commit()
     db.refresh(pedido)
     return _formato_venta(pedido, db)
+
+
+# ── Segundo comprobante: el saldo restante tras el anticipo (3.10) ──────────
+#
+# Solo aplica cuando el pedido requirió anticipo Y el resto se paga por
+# transferencia (si es en efectivo, se cobra físicamente al entregar/recoger,
+# ver `registrar_cobro_pedido` y 3.11 — este flujo no interviene). Reusa el
+# mismo mecanismo de 3 intentos que el primer comprobante (`rechazar_comprobante`),
+# pero con su propio contador (Intentos_Rechazo_Comprobante_Saldo): son dos
+# validaciones independientes en momentos distintos del pedido.
+
+
+def _saldo_por_transferencia_aplica(pedido: Venta) -> str | None:
+    """Si corresponde pedir el segundo comprobante, devuelve None. Si no
+    corresponde, devuelve el motivo (para el 400)."""
+    if not getattr(pedido, "Requiere_Anticipo", 0):
+        return "Este pedido no tiene anticipo, no aplica un segundo comprobante"
+    if not _lleva_transferencia(pedido.Metodo_Pago):
+        return "El saldo de este pedido se cobra en efectivo, no por transferencia"
+    if getattr(pedido, "Pago_Final_Registrado", 0):
+        return "El saldo de este pedido ya fue registrado"
+    return None
+
+
+def pagar_saldo_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> dict:
+    """El cliente adjunta el comprobante del SALDO restante (segundo
+    comprobante), cuando ese resto se paga por transferencia. No avanza el
+    estado por sí solo — lo hace `aprobar_comprobante_saldo`.
+    """
+    if actual.get("tipo") != "cliente":
+        raise HTTPException(status_code=403, detail="Solo disponible para clientes")
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if pedido.ID_Usuario != actual["registro"].ID_Usuario:
+        raise HTTPException(status_code=403, detail="No puedes pagar pedidos de otros clientes")
+    if pedido.Estado in _ESTADOS_FINALES:
+        raise HTTPException(status_code=400, detail="Este pedido ya fue completado")
+
+    motivo_no_aplica = _saldo_por_transferencia_aplica(pedido)
+    if motivo_no_aplica:
+        raise HTTPException(status_code=400, detail=motivo_no_aplica)
+
+    comprobante_url = (datos.get("comprobante_url") or "").strip()
+    if not comprobante_url:
+        raise HTTPException(status_code=400, detail="Adjunta el comprobante de la transferencia")
+
+    pedido.Saldo_Comprobante_Url = comprobante_url
+    pedido.Estado_Pago           = "saldo_pendiente_validacion"
+
+    db.commit()
+    db.refresh(pedido)
+    return _formato_venta(pedido, db)
+
+
+def aprobar_comprobante_saldo(db: Session, id_venta: int) -> dict:
+    """Admin aprueba el comprobante del saldo restante → registra el pago
+    final (mismos campos Pago_Final_* que `registrar_pago_final`) y libera el
+    despacho (ver el gate en `cambiar_estado`, 3.10)."""
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    estado_pago = (getattr(pedido, "Estado_Pago", None) or "").strip()
+    if estado_pago != "saldo_pendiente_validacion":
+        raise HTTPException(status_code=400, detail="Este pedido no tiene un comprobante de saldo por aprobar")
+
+    monto_adeudado = Decimal(str(pedido.Total or 0)) - Decimal(str(pedido.Anticipo_Monto or 0))
+    pedido.Pago_Final_Monto           = max(Decimal("0"), monto_adeudado)
+    pedido.Pago_Final_Metodo_Pago     = "Transferencia"
+    pedido.Pago_Final_Comprobante_Url = pedido.Saldo_Comprobante_Url
+    pedido.Pago_Final_Fecha           = _now()
+    pedido.Pago_Final_Registrado      = 1
+    pedido.Estado_Pago                = "pagado_completo"
+
+    db.commit()
+    db.refresh(pedido)
+    return _formato_venta(pedido, db)
+
+
+def rechazar_comprobante_saldo(db: Session, id_venta: int, motivo: str, id_usuario_actual: int) -> dict:
+    """Admin rechaza el comprobante del saldo restante. Al 3er rechazo el
+    pedido se cancela solo, sin reembolsar el saldo: nunca se marcó como
+    efectivamente pagado (Pago_Final_Registrado sigue en 0), así que la
+    cascada de cancelación solo devuelve el anticipo -si corresponde-, nunca
+    algo que no llegó a cobrarse."""
+    from src.shared.services.notificaciones_utils import notificar
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    estado_pago = (getattr(pedido, "Estado_Pago", None) or "").strip()
+    if estado_pago != "saldo_pendiente_validacion":
+        raise HTTPException(status_code=400, detail="Este pedido no tiene un comprobante de saldo por aprobar")
+
+    pedido.Estado_Pago = "saldo_comprobante_rechazado"
+    pedido.Motivo_Rechazo_Comprobante = motivo.strip()
+    pedido.Intentos_Rechazo_Comprobante_Saldo = (
+        int(getattr(pedido, "Intentos_Rechazo_Comprobante_Saldo", 0) or 0) + 1
+    )
+
+    if pedido.Intentos_Rechazo_Comprobante_Saldo >= LIMITE_INTENTOS_COMPROBANTE:
+        pedido.Motivo_Rechazo_Comprobante = (
+            f"Cancelado automáticamente: comprobante de saldo rechazado "
+            f"{LIMITE_INTENTOS_COMPROBANTE} veces. Último motivo: {motivo.strip()}"
+        )
+        notificar(
+            db,
+            "comprobante_rechazado",
+            f"Pedido cancelado — Pedido #{id_venta}",
+            pedido.Motivo_Rechazo_Comprobante,
+            id_venta,
+            "/ventas/pedidos",
+        )
+        return _gv_cambiar_estado(db, id_venta, EstadoPedido.CANCELADO, saltar_ventana_proteccion=True)
+
+    notificar(
+        db,
+        "comprobante_rechazado",
+        f"Comprobante de saldo rechazado — Pedido #{id_venta}",
+        f"Motivo: {motivo}",
+        id_venta,
+        "/ventas/pedidos",
+    )
+
+    db.commit()
+    db.refresh(pedido)
+    return _formato_venta(pedido, db)
+
+
+# ── 3.7: excepción de cobro en efectivo ────────────────────────────────────
+# Constantes fijas (no configurables desde el panel, per prompt-pedidos-2 2.4.1):
+# 24h para reintentar el cobro en tienda antes de que solo quede cancelar;
+# 48h totales desde que se entra a "Retenido en tienda" hasta que la
+# cancelación por falta de pago deja de ofrecerse como sugerencia y pasa a
+# ser obligatoria. Ambas se evalúan de forma perezosa (sin scheduler): se
+# comparan contra Fecha_Retenido_En_Tienda cada vez que se toca el pedido.
+_VENTANA_REINTENTO_RETENIDO  = timedelta(hours=24)
+_VENTANA_LIMITE_RETENIDO     = timedelta(hours=48)
+
+
+def marcar_retenido_en_tienda(db: Session, id_venta: int) -> dict:
+    """El cajero no pudo cobrar en efectivo en tienda (recoger en tienda, sin
+    domicilio): el pedido pasa a 'Retenido en tienda'. El producto no se
+    entrega y el stock ya reservado se mantiene apartado."""
+    from src.shared.services.notificaciones_utils import notificar
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if pedido.Estado != EstadoPedido.LISTO:
+        raise HTTPException(status_code=400, detail="Solo se puede retener en tienda un pedido en estado 'Listo'")
+
+    pedido.Estado                    = EstadoPedido.RETENIDO_EN_TIENDA
+    pedido.Estado_Pago               = "no_recibido"
+    pedido.Fecha_Retenido_En_Tienda  = _now()
+
+    notificar(
+        db, "pedido_retenido",
+        f"Pedido retenido en tienda — Pedido #{id_venta}",
+        "No se pudo registrar el cobro en efectivo. Tienes 24 horas para volver a pagarlo antes de que se cancele.",
+        id_venta, "/cliente/pedidos",
+    )
+    db.commit()
+    db.refresh(pedido)
+    return _formato_venta(pedido, db)
+
+
+def _dentro_ventana_reintento(pedido) -> bool:
+    if not pedido.Fecha_Retenido_En_Tienda:
+        return False
+    return _now() - pedido.Fecha_Retenido_En_Tienda < _VENTANA_REINTENTO_RETENIDO
+
+
+def _fuera_de_plazo_limite(pedido) -> bool:
+    """A las 48h la cancelación deja de ser sugerida y pasa a ser obligatoria."""
+    if not pedido.Fecha_Retenido_En_Tienda:
+        return False
+    return _now() - pedido.Fecha_Retenido_En_Tienda >= _VENTANA_LIMITE_RETENIDO
+
+
+def _exigir_retenido_en_tienda(pedido) -> None:
+    if pedido.Estado != EstadoPedido.RETENIDO_EN_TIENDA:
+        raise HTTPException(status_code=400, detail="Este pedido no está retenido en tienda")
+
+
+def reintentar_pago_retenido(db: Session, id_venta: int, datos, id_usuario_actual: int) -> dict:
+    """El cliente vuelve dentro de las 24h y el cajero registra el cobro
+    (efectivo o transferencia con comprobante ya aprobado a mano). Reusa
+    `registrar_cobro_pedido` para no duplicar la validación de monto/mixto,
+    y de ahí avanza directo a Entregado."""
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    _exigir_retenido_en_tienda(pedido)
+
+    if _fuera_de_plazo_limite(pedido):
+        raise HTTPException(
+            status_code=400,
+            detail="Se cumplieron las 48 horas del plazo. Este pedido ya no admite reintento: cancélalo.",
+        )
+    if not _dentro_ventana_reintento(pedido):
+        raise HTTPException(
+            status_code=400,
+            detail="Se cumplieron las 24 horas para reintentar el cobro. Sugerí cancelar el pedido.",
+        )
+
+    # Reabre el Estado_Pago para que registrar_cobro_pedido pueda volver a
+    # evaluarlo (estaba en 'no_recibido', que ya cuenta como "ya cobrado" del
+    # lado equivocado): el pedido no ha cobrado nada todavía.
+    pedido.Estado_Pago = "pendiente"
+    resultado = registrar_cobro_pedido(db, id_venta, datos, id_usuario_actual)
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if (getattr(pedido, "Estado_Pago", None) or "").strip() in _ESTADOS_PAGO_YA_COBRADO:
+        pedido.Estado = EstadoPedido.ENTREGADO
+        db.commit()
+        db.refresh(pedido)
+        resultado = _formato_venta(pedido, db)
+    return resultado
+
+
+def cambiar_a_domicilio_retenido(db: Session, id_venta: int, datos, id_usuario_actual: int) -> dict:
+    """Desde 'Retenido en tienda', cambia la entrega a domicilio: recalcula el
+    costo con `resolver_domicilio` (no se duplica el cálculo), lo suma al
+    saldo pendiente y vuelve a la fase de despacho (3.9)."""
+    from src.shared.services.notificaciones_utils import notificar
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    _exigir_retenido_en_tienda(pedido)
+    if _fuera_de_plazo_limite(pedido):
+        raise HTTPException(
+            status_code=400,
+            detail="Se cumplieron las 48 horas del plazo. Este pedido ya no admite cambios: cancélalo.",
+        )
+
+    ya_tiene_domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first()
+    if ya_tiene_domicilio:
+        raise HTTPException(status_code=400, detail="Este pedido ya tiene un domicilio asociado")
+    if not datos.ID_Barrio:
+        raise HTTPException(status_code=400, detail="Selecciona el barrio de entrega")
+
+    snapshot = resolver_domicilio(db, datos.ID_Barrio)
+    costo = Decimal(str(snapshot["final"] or 0))
+
+    pedido.Total          = Decimal(str(pedido.Total or 0)) + costo
+    pedido.Estado         = EstadoPedido.LISTO
+    pedido.Estado_Pago    = "pendiente"
+    pedido.Fecha_Retenido_En_Tienda = None
+
+    nuevo_dom = Domicilio(
+        ID_Venta             = id_venta,
+        Fecha_asignacion     = None,
+        Observaciones        = datos.Observaciones,
+        Estado               = EstadoDomicilio.PENDIENTE,
+        Direccion_entrega    = datos.Direccion_entrega,
+        Municipio_entrega    = snapshot["ciudad"] or datos.Municipio_entrega,
+        Departamento_entrega = snapshot["departamento"] or datos.Departamento_entrega,
+        ID_Barrio              = snapshot["id_barrio"],
+        Precio_Domicilio_Base  = snapshot["base"],
+        Precio_Domicilio_Final = snapshot["final"],
+        Desglose_Ofertas       = snapshot["desglose"],
+    )
+    db.add(nuevo_dom)
+
+    notificar(
+        db, "domicilio_pendiente", "Domicilio sin repartidor",
+        f"El pedido #{id_venta} pasó a domicilio (venía retenido en tienda) y no tiene repartidor asignado",
+        id_venta, "/ventas/domicilios",
+    )
+    notificar(
+        db, "pedido_confirmado", f"Tu pedido #{id_venta} ahora es a domicilio",
+        f"Se agregó el costo de envío (${costo:,.0f}) a tu saldo pendiente.",
+        id_venta, "/cliente/pedidos",
+    )
+
+    db.commit()
+    db.refresh(pedido)
+    return _formato_venta(pedido, db)
+
+
+# ── 3.11: avisos de despacho (no cambian de estado) ────────────────────────
+def avisar_puede_recoger(db: Session, id_venta: int) -> dict:
+    """Avisa al cliente que su pedido está listo para recoger en tienda.
+    No cambia de estado: reusa `notificar()`, no duplica el mecanismo."""
+    from src.shared.services.notificaciones_utils import notificar
+
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if pedido.Estado != EstadoPedido.LISTO or db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first():
+        raise HTTPException(status_code=400, detail="Este pedido no está listo para recoger en tienda")
+
+    notificar(
+        db, "pedido_confirmado", f"¡Tu pedido #{id_venta} está listo!",
+        "Ya puedes pasar a recogerlo en tienda.",
+        id_venta, "/cliente/pedidos",
+    )
+    db.commit()
+    return _formato_venta(pedido, db)
+
+
+def avisar_enviar_a_entregar(db: Session, id_venta: int) -> dict:
+    """Avisa al domiciliario asignado que salga a entregar. No cambia de
+    estado: el domiciliario marca 'En camino' desde su propio panel al salir
+    (mismo mecanismo de siempre, no se duplica acá)."""
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if pedido.Estado != EstadoPedido.LISTO:
+        raise HTTPException(status_code=400, detail="Este pedido no está listo para despachar")
+
+    dom = db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first()
+    if not dom or not dom.ID_Empleado:
+        raise HTTPException(status_code=400, detail="Este pedido no tiene domiciliario asignado")
+
+    try:
+        from src.shared.services.fcm_service import notificar_asignacion_domicilio_push
+        notificar_asignacion_domicilio_push(dom.ID_Empleado, id_venta, dom.Direccion_entrega or "", db=db)
+    except Exception:
+        pass
+
+    db.commit()
+    return _formato_venta(pedido, db)
+
+
+def cancelar_retenido_en_tienda(db: Session, id_venta: int) -> dict:
+    """Cancelación definitiva desde 'Retenido en tienda' (por falta de pago:
+    el cajero la sugiere a partir de las 24h, y es obligatoria a las 48h).
+    Reusa cambiar_estado→CANCELADO: la misma cascada de reversión de stock,
+    OPs y crédito que cualquier otra cancelación, sin duplicarla acá."""
+    pedido = db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    _exigir_retenido_en_tienda(pedido)
+    return _gv_cambiar_estado(db, id_venta, EstadoPedido.CANCELADO, saltar_ventana_proteccion=True)

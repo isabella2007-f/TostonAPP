@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
-import { Search, X, AlertTriangle, Package, ClipboardList, Eye, PenLine, Trash2, Truck, Clock, AlertCircle, Scale, Utensils, CornerUpLeft, ChevronDown } from "lucide-react";
+import { Search, X, AlertTriangle, Package, ClipboardList, Eye, PenLine, Trash2, Truck, Clock, AlertCircle, Scale, Utensils, CornerUpLeft, ChevronDown, RefreshCw } from "lucide-react";
 import { fmtFecha } from "../../../utils/dateUtils.js";
 import { crearFicha, editarFicha } from "../../../services/fichaTecnicaService.js";
 import { Toast } from "./ui.jsx";
@@ -1078,6 +1078,10 @@ export default function GestionProductos() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar productos">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button

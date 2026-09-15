@@ -8,7 +8,7 @@ import {
   Banknote, Building2, Scale, Eye, Globe, Zap, PenLine, FileText,
   Check, X, Ban, Navigation, ClipboardList, BarChart2, Truck, ChevronRight,
   ChevronDown, History,
-  Utensils,
+  Utensils, RefreshCw,
 } from "lucide-react";
 import { getDomicilios, asignarRepartidor, actualizarDomicilio, cambiarEstadoDomicilio, registrarPagoEfectivo } from "../../../services/domiciliosService.js";
 import { getUsuarios, toggleEstadoUsuario } from "../../../services/usuariosService.js";
@@ -1402,6 +1402,10 @@ export default function GestionDomicilios() {
                   onChange={e => { setSearch(e.target.value); setPage(1); }}
                 />
               </div>
+
+              <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar domicilios">
+                <RefreshCw size={15} />
+              </button>
 
               <button
                 className="btn-action"

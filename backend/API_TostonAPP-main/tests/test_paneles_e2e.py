@@ -253,11 +253,11 @@ class PanelClienteTests(PanelBase):
             self.venta(id_venta).Estado, (PEDIDO_CONFIRMADO, PEDIDO_EN_PRODUCCION)
         )
 
-    def test_rechazar_la_fecha_no_cancela_el_pedido(self):
-        """Rechazar deja el pedido esperando otra fecha, no lo mata.
-
-        Antes se cancelaba, y el de recoger en tienda se perdía sin que nadie
-        pudiera proponer una segunda fecha.
+    def test_rechazar_la_fecha_propone_una_final_que_el_admin_puede_aceptar(self):
+        """El cliente rechaza con su propia contraoferta final (fecha + motivo,
+        prompt-pedidos-2 3.4); si el admin la acepta, el pedido sigue el flujo
+        normal. Ya no reabre la negociación de forma indefinida — antes volvía
+        a Pendiente y se le podía proponer otra fecha sin límite.
         """
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
@@ -266,17 +266,38 @@ class PanelClienteTests(PanelBase):
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
 
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/rechazar-fecha", self.cliente))
+        fecha_final = (datetime.now() + timedelta(days=5)).isoformat()
+        self.afirmar_ok(self.patch(
+            f"/ventas/{id_venta}/rechazar-fecha", self.cliente,
+            {"fecha_propuesta": fecha_final, "motivo": "Ese día no puedo recibirlo"},
+        ))
         venta = self.venta(id_venta)
-        self.assertEqual(venta.Estado, PEDIDO_FECHA_RECHAZADA)
+        self.assertEqual(venta.Estado, PEDIDO_FECHA_PROPUESTA_FINAL)
         self.assertEqual(venta.intentos_rechazo, 1)
 
-        # Y se le puede proponer otra, que es de lo que se trataba.
-        otra = (datetime.now() + timedelta(days=5)).isoformat()
+        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        self.assertIn(
+            self.venta(id_venta).Estado, (PEDIDO_CONFIRMADO, PEDIDO_EN_PRODUCCION)
+        )
+
+    def test_rechazo_final_del_admin_escala_el_pedido(self):
+        """Si el admin no puede cumplir la fecha final del cliente, el pedido
+        pasa a Escalado a admin (3.4.1) — no hay otra ronda de contraofertas.
+        """
+        pedido = self.pedido_con_faltante()
+        id_venta = pedido["ID_Venta"]
+        fecha = (datetime.now() + timedelta(days=3)).isoformat()
         self.afirmar_ok(self.patch(
-            f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": otra}
+            f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
-        self.assertEqual(self.venta(id_venta).Estado, PEDIDO_FECHA_PROPUESTA)
+        fecha_final = (datetime.now() + timedelta(days=5)).isoformat()
+        self.afirmar_ok(self.patch(
+            f"/ventas/{id_venta}/rechazar-fecha", self.cliente,
+            {"fecha_propuesta": fecha_final, "motivo": "Ese día no puedo recibirlo"},
+        ))
+
+        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/rechazar-fecha-final", self.admin))
+        self.assertEqual(self.venta(id_venta).Estado, PEDIDO_ESCALADO)
 
     def test_no_acepta_la_fecha_de_un_pedido_ajeno(self):
         pedido = self.pedido_con_faltante()
@@ -674,7 +695,10 @@ class PanelDomiciliarioTests(PanelBase):
         )
         self.assertIn(respuesta.status_code, (400, 422))
 
-    def test_declarar_que_no_cobro_con_motivo_deja_entregar(self):
+    def test_declarar_que_no_cobro_manda_a_ruta_de_retorno(self):
+        """prompt-pedidos-2 3.7 (hallazgo #2): antes, declarar que no se cobró
+        en efectivo igual dejaba marcar el domicilio como Entregado — ahora el
+        pedido pasa a 'En ruta de retorno' y ya no puede entregarse así."""
         id_venta, id_dom = self.preparar_domicilio()
         self.afirmar_ok(self.patch(
             f"/domicilios/{id_dom}/estado", self.repartidor, {"Estado": DOM_EN_CAMINO}
@@ -683,10 +707,11 @@ class PanelDomiciliarioTests(PanelBase):
             f"/domicilios/{id_dom}/registrar-pago-efectivo", self.repartidor,
             {"recibido": False, "motivo": "el cliente no tenia el efectivo"},
         ))
-        self.afirmar_ok(self.patch(
+        self.assertEqual(self.venta(id_venta).Estado, PEDIDO_EN_RUTA_RETORNO)
+        respuesta = self.patch(
             f"/domicilios/{id_dom}/estado", self.repartidor, {"Estado": DOM_ENTREGADO}
-        ))
-        self.assertEqual(self.venta(id_venta).Estado, PEDIDO_ENTREGADO)
+        )
+        self.assertEqual(respuesta.status_code, 400)
 
     def test_el_cobro_no_se_registra_dos_veces(self):
         _, id_dom = self.preparar_domicilio()
@@ -1483,15 +1508,19 @@ class FechaPropuestaTests(PanelBase):
         self.assertEqual(respuesta.status_code, 400, self.detalle(respuesta))
         self.assertIn("no se fabrican por encargo", self.detalle(respuesta))
 
-    def test_rechazar_con_fecha_propuesta_deja_el_pedido_esperando_otra_fecha(self):
+    def test_rechazar_con_fecha_propuesta_deja_el_pedido_esperando_al_admin(self):
         """Rechazar la fecha no depende de que haya producción en curso: la
         orden sigue bloqueada (ver test de bloqueo arriba) y el pedido queda
-        esperando una nueva propuesta.
+        con la contraoferta final del cliente, esperando al admin (3.4).
         """
         id_venta = self.esperando_respuesta()
 
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/rechazar-fecha", self.cliente))
-        self.assertEqual(self.venta(id_venta).Estado, PEDIDO_FECHA_RECHAZADA)
+        fecha_final = (datetime.now() + timedelta(days=5)).isoformat()
+        self.afirmar_ok(self.patch(
+            f"/ventas/{id_venta}/rechazar-fecha", self.cliente,
+            {"fecha_propuesta": fecha_final, "motivo": "Ese día no puedo recibirlo"},
+        ))
+        self.assertEqual(self.venta(id_venta).Estado, PEDIDO_FECHA_PROPUESTA_FINAL)
 
 
 # ══════════════════════════════════════════════════════════════════════════

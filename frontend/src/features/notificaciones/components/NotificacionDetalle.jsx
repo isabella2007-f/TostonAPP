@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useNotificaciones, TIPO_ICONS, TIPO_LABELS, TIPO_COLORS, TIPOS } from "../context/NotificacionesContext";
 
 import { fmtFechaHora as fmtFechaCompleta } from "../../../utils/dateUtils.js";
-import { aceptarFechaProduccion, rechazarFechaProduccion } from "../../../services/pedidosService.js";
+import { aceptarFechaProduccion } from "../../../services/pedidosService.js";
 import "./notificaciones.css";
 
 /* Mapeo de rutas para navegación rápida */
@@ -67,23 +67,16 @@ export default function NotificacionDetalle({ notif, onClose }) {
     }
   };
 
-  const handleRechazar = async () => {
-    if (!notif.idPedido) { setAccionError("No se encontró el pedido asociado."); return; }
-    setAccionando("rechazar");
-    setAccionError("");
-    try {
-      await rechazarFechaProduccion(notif.idPedido);
-      setAccionDone(true);
-      eliminarNotificacion(notif.id);
-    } catch (e) {
-      setAccionError(e.message || "No se pudo rechazar la fecha");
-    } finally {
-      setAccionando(null);
-    }
+  // Rechazar ya no es de un clic (3.4): el cliente tiene que proponer su
+  // propia fecha final y decir el motivo, así que este botón lleva al
+  // formulario completo de "Mis pedidos" en vez de duplicarlo acá.
+  const handleRechazar = () => {
+    navigate("/cliente/pedidos");
+    onClose();
   };
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 30000 }}>
+    <div className="modal-overlay">
       <div className="modal-box modal-box--sm notif-detalle" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
@@ -137,7 +130,7 @@ export default function NotificacionDetalle({ notif, onClose }) {
               )}
 
               <p style={{ fontSize: 12, color: "#3949ab", marginBottom: 12 }}>
-                Si rechazas, el pedido será cancelado.
+                Si no puedes recibirlo ese día, proponé tu propia fecha desde "Mis pedidos".
               </p>
               {accionError && (
                 <p style={{ fontSize: 11, color: "#c62828", fontWeight: 700, marginBottom: 8, display:"flex", alignItems:"center", gap:4 }}><AlertTriangle size={11} />{accionError}</p>
@@ -146,16 +139,16 @@ export default function NotificacionDetalle({ notif, onClose }) {
                 <button
                   disabled={!!accionando}
                   onClick={handleAceptar}
-                  style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 800, fontSize: 13, cursor: accionando ? "not-allowed" : "pointer", opacity: accionando === "rechazar" ? 0.5 : 1 }}
+                  style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 800, fontSize: 13, cursor: accionando ? "not-allowed" : "pointer" }}
                 >
                   {accionando === "aceptar" ? "Aceptando…" : <><Check size={14} /> Sí, acepto</>}
                 </button>
                 <button
                   disabled={!!accionando}
                   onClick={handleRechazar}
-                  style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none", background: "#c62828", color: "#fff", fontWeight: 800, fontSize: 13, cursor: accionando ? "not-allowed" : "pointer", opacity: accionando === "aceptar" ? 0.5 : 1 }}
+                  style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none", background: "#c62828", color: "#fff", fontWeight: 800, fontSize: 13, cursor: accionando ? "not-allowed" : "pointer" }}
                 >
-                  {accionando === "rechazar" ? "Rechazando…" : <><X size={14} /> Rechazar</>}
+                  <X size={14} /> Proponer otra fecha
                 </button>
               </div>
             </div>

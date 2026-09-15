@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Check, X, Search, User, Eye, PenLine, Trash2, Phone, Shield } from "lucide-react";
+import { Check, X, Search, User, Eye, PenLine, Trash2, Phone, Shield, RefreshCw } from "lucide-react";
 import {
   getUsuarios, eliminarUsuario, toggleEstadoUsuario, cambiarRolUsuario,
 } from "../../../services/usuariosService.js";
@@ -233,6 +233,10 @@ export default function GestionUsuarios() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
+
+          <button className="filter-icon-btn" onClick={() => cargarDatos()} data-tooltip="Actualizar usuarios">
+            <RefreshCw size={15} />
+          </button>
 
           <div ref={filterRef} style={{ position: "relative" }}>
             <button

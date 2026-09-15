@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { formatCOP } from "../../../utils/formato";
 import {
   Search, ChevronRight, Plus, Pencil, Trash2, Eye, MapPin, Building2, Layers,
-  Banknote,
+  Banknote, RefreshCw,
 } from "lucide-react";
 import { usePrivilegios } from "../../../context/PrivilegiosContext";
 import {
@@ -309,6 +309,9 @@ export default function PestanaUbicaciones() {
             onChange={(e) => setTexto(e.target.value)}
           />
         </div>
+        <button className="ub-icon-btn" onClick={refrescar} data-tooltip="Actualizar ubicaciones">
+          <RefreshCw size={14} />
+        </button>
         <select className="ub-select" value={filtroEstado}
           onChange={(e) => { setFiltroEstado(e.target.value); setPagPlanos(1); }}>
           <option value="">Estado efectivo: todos</option>
