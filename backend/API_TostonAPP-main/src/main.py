@@ -708,6 +708,39 @@ def migrate_db():
             except Exception:
                 pass  # columna ya existe
 
+    # ── prompt-pedidos-2: columnas nuevas de Ventas y de la landing ──────────
+    # Las declara el modelo, así que SQLAlchemy las nombra en CADA consulta a
+    # Ventas. Sin la columna en la base, MySQL contesta 1054 "Unknown column" y
+    # el error sale como un 500 en cargar pedidos, crear pedidos y todo lo que
+    # toque una venta.
+    #
+    # En las pruebas no se nota: el arnés crea las tablas desde el modelo, así
+    # que las columnas siempre existen y la suite queda verde con la base real
+    # rota. Por eso cada columna nueva necesita su línea acá.
+    with engine.connect() as conn:
+        for stmt in [
+            # Rechazos de cada comprobante: el del anticipo y el del saldo.
+            "ALTER TABLE Ventas ADD COLUMN Intentos_Rechazo_Comprobante_Anticipo INT NULL DEFAULT 0",
+            "ALTER TABLE Ventas ADD COLUMN Intentos_Rechazo_Comprobante_Saldo INT NULL DEFAULT 0",
+            # Comprobante del saldo mientras se valida.
+            "ALTER TABLE Ventas ADD COLUMN Saldo_Comprobante_Url VARCHAR(500) NULL",
+            # Cuándo se retuvo en tienda, para los plazos de reintento.
+            "ALTER TABLE Ventas ADD COLUMN Fecha_Retenido_En_Tienda DATETIME NULL",
+            # Si ya se reservó el stock de este pedido (evita descontar dos veces).
+            "ALTER TABLE Ventas ADD COLUMN Stock_Reservado INT NULL DEFAULT 0",
+            # Correo de contacto de la landing.
+            "ALTER TABLE Configuracion_Landing ADD COLUMN contact_email VARCHAR(200) NULL",
+        ]:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception as exc:
+                # Lo normal es que la columna ya exista. Cualquier otra cosa se
+                # anota: una migración que falla en silencio deja la API
+                # devolviendo 500 sin que nadie sepa por qué.
+                if "duplicate column" not in str(exc).lower():
+                    _log.error("migración de columna FALLÓ — %s | %s", stmt, exc)
+
     # ── prompt-pedidos-2: estados 21/22/23 del flujo de pedidos ───────────────
     # El ID 21 lo usó primero una implementación paralela (PUNTO 6, "Retenido
     # en tienda") que quedó reemplazada por el diseño más completo de este
