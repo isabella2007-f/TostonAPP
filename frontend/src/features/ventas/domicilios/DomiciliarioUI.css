@@ -650,6 +650,16 @@
 }
 .dom-ui .du-wa:hover { background: #d8f5e4; border-color: #7fdca4; }
 
+/* El mismo verde del botón de arriba, con la forma de los botones de la
+   tarjeta: es una acción más al lado de "Cobrar" y "Actualizar". */
+.dom-ui .du-btn--wa {
+  background: #eafaf0;
+  border: 1px solid #b8ebc9;
+  color: #128c4a;
+  text-decoration: none;
+}
+.dom-ui .du-btn--wa:hover { background: #d8f5e4; border-color: #7fdca4; }
+
 /* El teléfono y el botón de escribir, uno debajo del otro: el número se
    sigue pudiendo leer y copiar —para llamar— y el botón es para escribir. */
 .dom-ui .du-contacto {

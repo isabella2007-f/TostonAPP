@@ -643,6 +643,20 @@ export default function GestionDomiciliosRepartidor() {
             {filtrados.map(dom => {
               const { vars } = varsEstado(dom.estadoId);
               const puedeCambiar = proximosEstados(dom.estadoId).length > 0;
+              // Avisar que va llegando es lo que más se hace en una entrega,
+              // y estaba escondido dentro del detalle. Solo mientras la
+              // entrega siga viva: escribirle por una de hace tres días no
+              // tiene sentido.
+              const wa = esDomicilioActivo(dom.estadoId)
+                ? enlaceWhatsApp(
+                    dom.cliente?.telefono,
+                    saludoDomiciliario({
+                      nombre: dom.cliente?.nombre,
+                      numeroPedido: dom.numero,
+                      enCamino: dom.estadoId === ESTADO_DOMICILIO.EN_CAMINO,
+                    }),
+                  )
+                : null;
               return (
                 <div
                   key={dom.id}
@@ -687,6 +701,18 @@ export default function GestionDomiciliosRepartidor() {
                       <EstadoPagoBadge estadoPago={dom.estado_pago} />
                     </div>
                     <div className="me-card__acciones">
+                      {wa && (
+                        <a
+                          className="du-btn du-btn--wa du-btn--sm"
+                          href={wa}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Escribirle al cliente por WhatsApp"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <MessageCircle size={14} /> Escribir
+                        </a>
+                      )}
                       {/* Cobrar sin cerrar la entrega: a veces el cliente paga
                           y el repartidor todavía tiene algo que resolver. */}
                       {cobroEfectivoPendiente(dom) && esDomicilioActivo(dom.estadoId) && (
