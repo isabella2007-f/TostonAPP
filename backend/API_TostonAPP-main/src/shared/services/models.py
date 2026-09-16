@@ -216,6 +216,7 @@ class Proveedor(Base):
     ID_Proveedor   = Column(Integer, primary_key=True, index=True)
     Sujeto_Derecho = Column(Integer, ForeignKey("Sujeto_Derecho.ID_Sujeto_Derecho"))
     NIT            = Column(String(20), nullable=True)
+    Cedula         = Column(String(20), nullable=True)
     Responsable    = Column(String(100))
     Direccion      = Column(String(50))
     Municipio      = Column(String(25))

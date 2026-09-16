@@ -349,7 +349,7 @@ export default function CrearCompra({ onClose, onSave }) {
                   value={form.idProveedor}
                   onChange={e => set("idProveedor", e.target.value)}
                   getValue={p => p.ID_Proveedor || p.id}
-                  getLabel={p => `${p.Responsable || p.responsable || ""}${p.NIT || p.nit ? ` - NIT ${p.NIT || p.nit}` : ""}`}
+                  getLabel={p => { const doc = p.NIT || p.nit ? `NIT ${p.NIT || p.nit}` : p.Cedula || p.cedula ? `CC ${p.Cedula || p.cedula}` : ""; return `${p.Responsable || p.responsable || ""}${doc ? ` - ${doc}` : ""}`; }}
                   placeholder="— Seleccionar proveedor —"
                   searchPlaceholder="Buscar proveedor…"
                   className="field-select"

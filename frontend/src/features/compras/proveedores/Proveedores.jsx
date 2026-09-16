@@ -21,6 +21,7 @@ const ADAPT = raw => ({
   id:                 raw.ID_Proveedor,
   sujetoDerecho:      raw.Sujeto_Derecho    ?? 1,
   nit:                raw.NIT               ?? "",
+  cedula:             raw.Cedula            ?? "",
   responsable:        raw.Responsable,
   direccion:          raw.Direccion         ?? "",
   ciudad:             raw.Municipio         ?? "",

@@ -174,6 +174,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
 
   const [form,   setForm]   = useState({
     nit:          "",
+    cedula:       "",
     responsable:  "",
     celular:      "",
     correo:       "",
@@ -189,6 +190,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
   // `proveedor` es un prop estable durante la vida del modal → const simple.
   const snapshot = (f) => JSON.stringify({
     nit:          (f.nit          || "").trim(),
+    cedula:       (f.cedula       || "").trim(),
     responsable:  (f.responsable  || "").trim(),
     celular:      (f.celular      || "").replace(/\D/g, ""),
     correo:       (f.correo       || "").trim(),
@@ -229,7 +231,8 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
     setSaving(true);
     try {
       await onSave({
-        NIT:          form.nit?.trim()  || undefined,
+        NIT:          form.nit?.trim()    || undefined,
+        Cedula:       form.cedula?.trim() || undefined,
         Responsable:  form.responsable.trim(),
         Direccion:    form.direccion    || undefined,
         Municipio:    form.ciudad       || undefined,
@@ -271,7 +274,8 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
         <div className="modal-body">
           <p className="section-label" style={{ marginTop: 0 }}>Identificación</p>
           {renderField("responsable", "Nombre / Razón Social", "text", "Ej: Juan García")}
-          {form.sujetoDerecho === 2 && renderField("nit", "NIT", "text", "Ej: 900.123.456-1")}
+          {form.sujetoDerecho === 2 && renderField("nit",    "NIT",    "text", "Ej: 900.123.456-1")}
+          {form.sujetoDerecho !== 2 && renderField("cedula", "Cédula", "text", "Ej: 1234567890")}
 
           <p className="section-label">Contacto</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

@@ -7,6 +7,7 @@ from datetime import datetime
 class ProveedorCreate(BaseModel):
     Sujeto_Derecho: int
     NIT:            Optional[str] = None
+    Cedula:         Optional[str] = None
     Responsable:    str
     Direccion:      Optional[str] = None
     Municipio:      Optional[str] = None
@@ -19,6 +20,7 @@ class ProveedorCreate(BaseModel):
 class ProveedorUpdate(BaseModel):
     Sujeto_Derecho: Optional[int] = None
     NIT:            Optional[str] = None
+    Cedula:         Optional[str] = None
     Responsable:    Optional[str] = None
     Direccion:      Optional[str] = None
     Municipio:      Optional[str] = None
@@ -33,6 +35,7 @@ class ProveedorResponse(BaseModel):
     Sujeto_Derecho:        Optional[int] = None
     nombre_sujeto:         Optional[str] = None
     NIT:                   Optional[str] = None
+    Cedula:                Optional[str] = None
     Responsable:           str
     Direccion:             Optional[str] = None
     Municipio:             Optional[str] = None

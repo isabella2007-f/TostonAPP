@@ -45,6 +45,7 @@ def _formato_proveedor(proveedor: Proveedor, db: Session) -> dict:
         "Sujeto_Derecho":       proveedor.Sujeto_Derecho,
         "nombre_sujeto":        sujeto.Sujeto_Derecho if sujeto else None,
         "NIT":                  proveedor.NIT,
+        "Cedula":               proveedor.Cedula,
         "Responsable":          proveedor.Responsable,
         "Direccion":            proveedor.Direccion,
         "Municipio":            proveedor.Municipio,
@@ -100,6 +101,7 @@ def _batch_proveedores(proveedores: list, db: Session) -> list:
             "Sujeto_Derecho":       prov.Sujeto_Derecho,
             "nombre_sujeto":        sujeto.Sujeto_Derecho if sujeto else None,
             "NIT":                  prov.NIT,
+            "Cedula":               prov.Cedula,
             "Responsable":          prov.Responsable,
             "Direccion":            prov.Direccion,
             "Municipio":            prov.Municipio,
@@ -128,6 +130,7 @@ def obtener_proveedores(
         query = query.filter(
             Proveedor.Responsable.ilike(termino) |
             Proveedor.NIT.ilike(termino) |
+            Proveedor.Cedula.ilike(termino) |
             Proveedor.Correo.ilike(termino) |
             Proveedor.Telefono.ilike(termino)
         )
@@ -162,6 +165,7 @@ def crear_proveedor(db: Session, datos: ProveedorCreate) -> dict:
     nuevo = Proveedor(
         Sujeto_Derecho = datos.Sujeto_Derecho,
         NIT            = datos.NIT,
+        Cedula         = datos.Cedula,
         Responsable    = datos.Responsable,
         Direccion      = datos.Direccion,
         Municipio      = datos.Municipio,

@@ -211,6 +211,7 @@ export default function CrearProveedor({ onClose, onSave }) {
   const [form, setForm] = useState({
     tipo:         "natural",
     nit:          "",
+    cedula:       "",
     responsable:  "",
     celular:      "",
     correo:       "",
@@ -227,6 +228,7 @@ export default function CrearProveedor({ onClose, onSave }) {
       const next = { ...f, [k]: v };
       if (k === "departamento") next.ciudad = "";
       if (k === "tipo" && v === "natural") next.nit = "";
+      if (k === "tipo" && v === "juridica") next.cedula = "";
       return next;
     });
 
@@ -284,7 +286,8 @@ export default function CrearProveedor({ onClose, onSave }) {
     try {
       await onSave({
         Sujeto_Derecho: form.tipo === "juridica" ? 2 : 1,
-        NIT:            form.nit.trim()  || undefined,
+        NIT:            form.nit.trim()    || undefined,
+        Cedula:         form.cedula.trim() || undefined,
         Responsable:    form.responsable.trim(),
         Direccion:      form.direccion?.trim() || undefined,
         Municipio:      form.ciudad       || undefined,
@@ -352,6 +355,15 @@ export default function CrearProveedor({ onClose, onSave }) {
                   onChange={v => set("nit", v)}
                   error={errors.nit}
                   placeholder="Ej: 900.123.456-1"
+                />
+              )}
+              {form.tipo === "natural" && (
+                <FieldText
+                  label="Cédula"
+                  value={form.cedula}
+                  onChange={v => set("cedula", v)}
+                  error={errors.cedula}
+                  placeholder="Ej: 1234567890"
                 />
               )}
             </>
