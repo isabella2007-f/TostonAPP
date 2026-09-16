@@ -555,6 +555,8 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         # Mismo filtro que en domicilios: el resumen del pedido mostraba la
         # línea [COBRO|...] pegada a las notas del cliente.
         "observaciones_domicilio":      observaciones_limpias(domicilio.Observaciones) if domicilio else None,
+        "observaciones_admin":          observaciones_limpias(getattr(domicilio, "Observaciones_Admin", None)) if domicilio else None,
+        "observaciones_repartidor":     observaciones_limpias(getattr(domicilio, "Observaciones_Repartidor", None)) if domicilio else None,
         "nombre_domiciliario":          domiciliario,
         "ID_Empleado":                  id_repartidor,
         "ordenes_produccion_pendientes": ordenes_pendientes,
@@ -857,6 +859,8 @@ def _batch_ventas(ventas: list, db: Session) -> list:
             "municipio_entrega":            dom.Municipio_entrega    if dom else None,
             "departamento_entrega":         dom.Departamento_entrega if dom else None,
             "observaciones_domicilio":      observaciones_limpias(dom.Observaciones) if dom else None,
+            "observaciones_admin":          observaciones_limpias(getattr(dom, "Observaciones_Admin", None)) if dom else None,
+            "observaciones_repartidor":     observaciones_limpias(getattr(dom, "Observaciones_Repartidor", None)) if dom else None,
             "nombre_domiciliario":          domiciliario,
             "ID_Empleado":                  dom.ID_Empleado if dom else None,
             "ordenes_produccion_pendientes": ordenes_counts.get(venta.ID_Venta, 0),

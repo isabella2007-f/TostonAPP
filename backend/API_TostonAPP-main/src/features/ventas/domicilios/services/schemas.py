@@ -44,6 +44,10 @@ class DomicilioResponse(BaseModel):
     Fecha_asignacion:     Optional[datetime] = None
     Fecha_entrega:        Optional[datetime] = None
     Observaciones:        Optional[str]      = None
+    # Una por autor. Sin declararlas acá, Pydantic las descarta aunque el
+    # servicio las devuelva.
+    observaciones_admin:      Optional[str]  = None
+    observaciones_repartidor: Optional[str]  = None
     indicaciones_cliente: Optional[str]      = None
     Estado:               Optional[int]      = None
     estado_label:         Optional[str]      = None

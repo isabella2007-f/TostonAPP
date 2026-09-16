@@ -67,6 +67,8 @@ class PedidoResponse(BaseModel):
     fecha_retenido_en_tienda:                 Optional[datetime] = None
     ID_Empleado:                  Optional[int]     = None
     observaciones_domicilio:      Optional[str]     = None
+    observaciones_admin:          Optional[str]     = None
+    observaciones_repartidor:     Optional[str]     = None
     Numero_Pedido:                Optional[str]     = None
     # Solo los pedidos sobre stock o de producción necesitan fecha propuesta
     requiere_fecha_propuesta:     bool              = False

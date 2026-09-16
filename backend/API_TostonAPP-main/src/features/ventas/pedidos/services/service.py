@@ -195,7 +195,9 @@ def editar_pedido(db: Session, id_venta: int, datos: dict) -> dict:
         if datos.get("Direccion_Entrega") is not None:
             domicilio.Direccion_entrega = datos["Direccion_Entrega"]
         if datos.get("Notas") is not None:
-            domicilio.Observaciones = datos["Notas"]
+            # La nota del administrador, en su propio campo: la del cliente no
+            # se toca.
+            domicilio.Observaciones_Admin = datos["Notas"]
 
         # Barrio de entrega: si llega un ID_Barrio distinto (o el domicilio aún
         # no tiene barrio), se RECALCULA el precio del domicilio y se congela el

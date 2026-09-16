@@ -75,7 +75,10 @@ const adaptPedido = (p) => {
     intentos_rechazo: p.intentos_rechazo || 0,
     resaltarCanalExcepcion: !!(p.resaltar_canal_excepcion),
     comprobante:             p.comprobante_pago || p.Comprobante || p.comprobante || null,
+    // Las tres notas de la entrega, cada una de su autor.
     observaciones_domicilio: p.observaciones_domicilio || null,
+    observaciones_admin:      p.observaciones_admin      || null,
+    observaciones_repartidor: p.observaciones_repartidor || null,
     sobre_stock:      !!(p.sobre_stock),
     anticipo_requerido: p.anticipo_requerido != null ? Number(p.anticipo_requerido) : null,
     anticipo_pagado:    p.anticipo_pagado    != null ? Number(p.anticipo_pagado)    : null,

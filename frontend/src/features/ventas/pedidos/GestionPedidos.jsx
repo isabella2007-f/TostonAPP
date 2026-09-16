@@ -352,15 +352,22 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
                             || (pedido.estado === "Entregado" ? "Sin información" : "Sin asignar")}
                         </span>
                       </div>
-                      {pedido.observaciones_domicilio && (
-                        <div className="info-box info-box--warn" style={{ marginTop: 4 }}>
+                      {/* Cada nota con su autor: el cliente escribe al pedir,
+                          el administrador al editar y el domiciliario al
+                          entregar. Antes eran el mismo campo y se pisaban. */}
+                      {[
+                        ["Observaciones del cliente", pedido.observaciones_domicilio, false],
+                        ["Nota del administrador",    pedido.observaciones_admin,      false],
+                        ["Novedad del domiciliario",  pedido.observaciones_repartidor, true],
+                      ].filter(([, texto]) => texto).map(([titulo, texto, avisa]) => (
+                        <div key={titulo} className={`info-box${avisa ? " info-box--warn" : ""}`} style={{ marginTop: 4 }}>
                           <span className="info-box__icon"><PenLine size={16} /></span>
                           <div>
-                            <span className="info-box__label">Observaciones del cliente</span>
-                            <span className="info-box__text" style={{ display: "block" }}>{pedido.observaciones_domicilio}</span>
+                            <span className="info-box__label">{titulo}</span>
+                            <span className="info-box__text" style={{ display: "block" }}>{texto}</span>
                           </div>
                         </div>
-                      )}
+                      ))}
                     </>
                   )}
                   <div className="ver-ped-field">

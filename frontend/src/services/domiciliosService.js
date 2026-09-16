@@ -19,10 +19,13 @@ const adaptDomicilio = (d) => {
     direccion_entrega:  d.Direccion_entrega   || "",
     municipio_entrega:  d.Municipio_entrega   || "",
     departamento_entrega: d.Departamento_entrega || "",
-    // Observaciones = nota de esta entrega; indicaciones = referencia que el
-    // cliente guardó en su perfil. El backend las envía separadas.
-    obs_domicilio:      observaciones,
-    indicaciones_cliente: indicaciones,
+    // Cuatro textos distintos, cada uno de un autor. Antes el del
+    // domiciliario se escribía encima del del cliente y se perdía el
+    // complemento de la dirección justo cuando más falta hacía.
+    obs_domicilio:      observaciones,                       // lo puso el cliente al pedir
+    obs_admin:          d.observaciones_admin      || "",    // la nota del administrador
+    obs_repartidor:     d.observaciones_repartidor || "",    // la novedad de la entrega
+    indicaciones_cliente: indicaciones,                      // del perfil del cliente
     fecha_pedido:       d.Fecha_asignacion    || "",
     fecha_entrega_real: d.Fecha_entrega       || null,
     total:              d.total               || 0,

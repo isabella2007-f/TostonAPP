@@ -197,7 +197,10 @@ function CobroEfectivoModal({ domicilio, saving, entregarDespues, onClose, onCon
 function CambiarEstadoModal({ domicilio, onClose, onSave }) {
   const posibles = proximosEstados(domicilio.estadoId);
   const [nuevoEstado, setNuevoEstado] = useState(posibles[0]?.valor || "");
-  const [obs, setObs] = useState(domicilio.obs_domicilio || "");
+  // La novedad del domiciliario arranca con LA SUYA, no con la del cliente.
+  // Cuando arrancaba con la del cliente, guardar la escribía encima y se
+  // perdía el complemento de la dirección.
+  const [obs, setObs] = useState(domicilio.obs_repartidor || "");
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -408,12 +411,19 @@ function DetallesModal({ domicilio, onClose, onCambiarEstado, onCobrar, onConfir
             </div>
           )}
 
-          {domicilio.obs_domicilio && (
-            <div className="du-dato du-dato--obs">
-              <div className="du-dato__label">Observaciones</div>
-              <div className="du-dato__valor">{domicilio.obs_domicilio}</div>
+          {/* Las tres, cada una con su autor: la del cliente es la que dice
+              dónde tocar, la del administrador es la instrucción del día y la
+              del domiciliario es lo que pasó en la entrega anterior. */}
+          {[
+            ["Observaciones del cliente", domicilio.obs_domicilio],
+            ["Nota del administrador",    domicilio.obs_admin],
+            ["Novedad anterior",          domicilio.obs_repartidor],
+          ].filter(([, texto]) => texto).map(([titulo, texto]) => (
+            <div key={titulo} className="du-dato du-dato--obs">
+              <div className="du-dato__label">{titulo}</div>
+              <div className="du-dato__valor">{texto}</div>
             </div>
-          )}
+          ))}
 
           {cobroEfectivoPendiente(domicilio) && esDomicilioActivo(domicilio.estadoId) && (
             <button

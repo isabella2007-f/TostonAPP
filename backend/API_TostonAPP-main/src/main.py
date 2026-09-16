@@ -730,6 +730,10 @@ def migrate_db():
             "ALTER TABLE Ventas ADD COLUMN Stock_Reservado INT NULL DEFAULT 0",
             # Correo de contacto de la landing.
             "ALTER TABLE Configuracion_Landing ADD COLUMN contact_email VARCHAR(200) NULL",
+            # Las observaciones, una por autor: la del cliente se queda en
+            # Observaciones y estas dos dejan de pisarla.
+            "ALTER TABLE Domicilios ADD COLUMN Observaciones_Admin TEXT NULL",
+            "ALTER TABLE Domicilios ADD COLUMN Observaciones_Repartidor TEXT NULL",
         ]:
             try:
                 conn.execute(text(stmt))

@@ -163,7 +163,9 @@ const CSV_COLUMNAS = [
   { titulo: "Total",                valor: (d) => (d.total != null ? Math.round(d.total) : "") },
   { titulo: "Fecha del pedido",     valor: (d) => csvFecha(d.fecha_pedido) },
   { titulo: "Fecha de entrega",     valor: (d) => csvFecha(d.fecha_entrega_real) },
-  { titulo: "Observaciones",        valor: (d) => d.obs_domicilio },
+  { titulo: "Observaciones del cliente", valor: (d) => d.obs_domicilio },
+  { titulo: "Nota del administrador",   valor: (d) => d.obs_admin },
+  { titulo: "Novedad del domiciliario", valor: (d) => d.obs_repartidor },
   { titulo: "Indicaciones del cliente", valor: (d) => d.indicaciones_cliente },
 ];
 
@@ -603,15 +605,38 @@ function ModalVerDomicilio({ pedido, emp, domicilios, onClose, onReasignar, onOb
                     </div>
                   </>
                 )}
-                {pedido.obs_domicilio ? (
+                {/* Cada nota con su autor. Antes eran una sola y se pisaban:
+                    el domiciliario escribía su novedad y borraba el
+                    complemento de la dirección que puso el cliente. */}
+                {pedido.obs_domicilio && (
                   <>
-                    <p className="section-label">Observaciones de la entrega</p>
-                    <div className="info-box info-box--warn">
+                    <p className="section-label">Observaciones del cliente</p>
+                    <div className="info-box">
                       <span className="info-box__icon"><PenLine size={14} /></span>
                       <span className="info-box__text">{pedido.obs_domicilio}</span>
                     </div>
                   </>
-                ) : (
+                )}
+                {pedido.obs_admin && (
+                  <>
+                    <p className="section-label">Nota del administrador</p>
+                    <div className="info-box">
+                      <span className="info-box__icon"><PenLine size={14} /></span>
+                      <span className="info-box__text">{pedido.obs_admin}</span>
+                    </div>
+                  </>
+                )}
+                {pedido.obs_repartidor && (
+                  <>
+                    <p className="section-label">Novedad del domiciliario</p>
+                    <div className="info-box info-box--warn">
+                      <span className="info-box__icon"><PenLine size={14} /></span>
+                      <span className="info-box__text">{pedido.obs_repartidor}</span>
+                    </div>
+                  </>
+                )}
+                {!pedido.obs_domicilio && !pedido.obs_admin
+                  && !pedido.obs_repartidor && (
                   <p style={{ fontSize: 12, color: "#bdbdbd", marginTop: 12 }}>Sin observaciones registradas.</p>
                 )}
               </>

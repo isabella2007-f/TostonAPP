@@ -523,7 +523,19 @@ class Domicilio(Base):
     ID_Empleado          = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
     Fecha_asignacion     = Column(DateTime)
     Fecha_entrega        = Column(DateTime)
+    # Lo que dejó escrito EL CLIENTE al pedir: el complemento de la dirección
+    # y cómo llegar. Se escribe al crear el domicilio y no se vuelve a tocar.
     Observaciones        = Column(Text)
+    # La nota que agrega EL ADMINISTRADOR al editar el pedido.
+    Observaciones_Admin  = Column(Text, nullable=True)
+    # La novedad que deja EL DOMICILIARIO en la entrega ("no había nadie",
+    # "dejado en portería").
+    #
+    # Las tres viven separadas porque antes eran una sola: el domiciliario
+    # escribía su novedad y borraba el complemento de la dirección que había
+    # puesto el cliente, o al revés. El que escribía último se llevaba lo
+    # anterior, y el domiciliario siguiente salía sin saber dónde tocar.
+    Observaciones_Repartidor = Column(Text, nullable=True)
     # Quién registró el cobro en efectivo, cuándo y por cuánto. Vive aparte de
     # Observaciones porque eso es texto que el cliente escribe y lee.
     Cobro_Auditoria      = Column(Text, nullable=True)

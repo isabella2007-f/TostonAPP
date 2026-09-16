@@ -106,6 +106,8 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
         "Fecha_asignacion":     dom.Fecha_asignacion,
         "Fecha_entrega":        dom.Fecha_entrega,
         "Observaciones":        observaciones_limpias(dom.Observaciones),
+        "observaciones_admin":  observaciones_limpias(getattr(dom, "Observaciones_Admin", None)),
+        "observaciones_repartidor": observaciones_limpias(getattr(dom, "Observaciones_Repartidor", None)),
         # Indicaciones de entrega tomadas del perfil del cliente (Usuarios.Indicaciones),
         # que es donde el cliente las registra. Separado de Observaciones (nota por-entrega).
         "indicaciones_cliente": cliente.Indicaciones if cliente else None,
@@ -387,6 +389,8 @@ def obtener_domicilios(
             "Fecha_asignacion":     dom.Fecha_asignacion,
             "Fecha_entrega":        dom.Fecha_entrega,
             "Observaciones":        observaciones_limpias(dom.Observaciones),
+            "observaciones_admin":  observaciones_limpias(getattr(dom, "Observaciones_Admin", None)),
+            "observaciones_repartidor": observaciones_limpias(getattr(dom, "Observaciones_Repartidor", None)),
             "indicaciones_cliente": cliente.Indicaciones if cliente else None,
             "Estado":               estado_canonico,
             "estado_label":         estado_obj.Estado if estado_obj else None,
@@ -766,7 +770,12 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
     dom.Estado = nuevo_estado
 
     if observaciones is not None:
-        dom.Observaciones = observaciones
+        # La novedad de quien mueve la entrega —en la práctica, el
+        # domiciliario— va a su propio campo. Antes se escribía encima de
+        # `Observaciones`, que es lo que dejó el cliente al pedir: el
+        # complemento de la dirección y cómo llegar. Se perdía justo cuando
+        # más falta hacía.
+        dom.Observaciones_Repartidor = observaciones
 
     db.commit()
     db.refresh(dom)
