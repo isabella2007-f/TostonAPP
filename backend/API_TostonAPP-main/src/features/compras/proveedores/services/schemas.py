@@ -6,6 +6,7 @@ from datetime import datetime
 # ── Crear proveedor ──
 class ProveedorCreate(BaseModel):
     Sujeto_Derecho: int
+    NIT:            Optional[str] = None
     Responsable:    str
     Direccion:      Optional[str] = None
     Municipio:      Optional[str] = None
@@ -17,6 +18,7 @@ class ProveedorCreate(BaseModel):
 # ── Editar proveedor ──
 class ProveedorUpdate(BaseModel):
     Sujeto_Derecho: Optional[int] = None
+    NIT:            Optional[str] = None
     Responsable:    Optional[str] = None
     Direccion:      Optional[str] = None
     Municipio:      Optional[str] = None
@@ -30,6 +32,7 @@ class ProveedorResponse(BaseModel):
     ID_Proveedor:          int
     Sujeto_Derecho:        Optional[int] = None
     nombre_sujeto:         Optional[str] = None
+    NIT:                   Optional[str] = None
     Responsable:           str
     Direccion:             Optional[str] = None
     Municipio:             Optional[str] = None

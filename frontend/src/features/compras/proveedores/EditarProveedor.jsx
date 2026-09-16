@@ -173,6 +173,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
   if (isView) return <VistaProveedor proveedor={proveedor} onClose={onClose} />;
 
   const [form,   setForm]   = useState({
+    nit:          "",
     responsable:  "",
     celular:      "",
     correo:       "",
@@ -187,6 +188,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
   // Instantánea del formulario al abrir, para detectar "guardar sin cambios".
   // `proveedor` es un prop estable durante la vida del modal → const simple.
   const snapshot = (f) => JSON.stringify({
+    nit:          (f.nit          || "").trim(),
     responsable:  (f.responsable  || "").trim(),
     celular:      (f.celular      || "").replace(/\D/g, ""),
     correo:       (f.correo       || "").trim(),
@@ -227,6 +229,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
     setSaving(true);
     try {
       await onSave({
+        NIT:          form.nit?.trim()  || undefined,
         Responsable:  form.responsable.trim(),
         Direccion:    form.direccion    || undefined,
         Municipio:    form.ciudad       || undefined,
@@ -268,6 +271,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
         <div className="modal-body">
           <p className="section-label" style={{ marginTop: 0 }}>Identificación</p>
           {renderField("responsable", "Nombre / Razón Social", "text", "Ej: Juan García")}
+          {renderField("nit", "NIT", "text", "Ej: 900.123.456-1")}
 
           <p className="section-label">Contacto</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

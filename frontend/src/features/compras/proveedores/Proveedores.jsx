@@ -19,6 +19,7 @@ const ITEMS_PER_PAGE = 5;
 
 const ADAPT = raw => ({
   id:                 raw.ID_Proveedor,
+  nit:                raw.NIT               ?? "",
   responsable:        raw.Responsable,
   direccion:          raw.Direccion         ?? "",
   ciudad:             raw.Municipio         ?? "",

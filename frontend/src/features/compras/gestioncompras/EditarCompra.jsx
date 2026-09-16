@@ -636,7 +636,7 @@ export default function EditarCompra({ compra, mode, onClose, onSave }) {
                     value={form.idProveedor}
                     onChange={e => set("idProveedor", e.target.value)}
                     getValue={p => p.ID_Proveedor || p.id}
-                    getLabel={p => `${p.Responsable || p.responsable} · ${p.Municipio || p.ciudad}`}
+                    getLabel={p => `${p.Responsable || p.responsable || ""}${p.NIT || p.nit ? ` - NIT ${p.NIT || p.nit}` : ""}`}
                     placeholder="— Seleccionar proveedor —"
                     searchPlaceholder="Buscar proveedor…"
                     className={`field-select ${errors.idProveedor ? "error" : ""}`}

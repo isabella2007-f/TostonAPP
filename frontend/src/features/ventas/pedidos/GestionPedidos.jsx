@@ -1215,7 +1215,7 @@ function ModalAsignarDomiciliario({ pedido, empleados, repartidores, onClose, on
               value={empId}
               onChange={e => { setEmpId(e.target.value); setError(""); }}
               getValue={e => e.id}
-              getLabel={e => `${e.nombre} ${e.apellidos}${e.id === pedido.idEmpleado ? " (actual)" : ""}`}
+              getLabel={e => `${e.nombre} ${e.apellidos}${e.cedula ? ` - CC ${e.cedula}` : ""}${e.id === pedido.idEmpleado ? " (actual)" : ""}`}
               placeholder="— Elegir de la lista —"
               searchPlaceholder="Buscar repartidor…"
               className={`field-input${error ? " error" : ""}`}

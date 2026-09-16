@@ -210,6 +210,7 @@ function FieldText({ label, value, onChange, error, type = "text", placeholder =
 export default function CrearProveedor({ onClose, onSave }) {
   const [form, setForm] = useState({
     tipo:         "natural",
+    nit:          "",
     responsable:  "",
     celular:      "",
     correo:       "",
@@ -282,6 +283,7 @@ export default function CrearProveedor({ onClose, onSave }) {
     try {
       await onSave({
         Sujeto_Derecho: form.tipo === "juridica" ? 2 : 1,
+        NIT:            form.nit.trim()  || undefined,
         Responsable:    form.responsable.trim(),
         Direccion:      form.direccion?.trim() || undefined,
         Municipio:      form.ciudad       || undefined,
@@ -341,6 +343,13 @@ export default function CrearProveedor({ onClose, onSave }) {
                 error={errors.responsable}
                 placeholder={form.tipo === "juridica" ? "Ej: Distribuidora XYZ S.A.S." : "Ej: Juan García"}
                 required
+              />
+              <FieldText
+                label="NIT"
+                value={form.nit}
+                onChange={v => set("nit", v)}
+                error={errors.nit}
+                placeholder="Ej: 900.123.456-1"
               />
             </>
           )}
