@@ -226,6 +226,7 @@ export default function CrearProveedor({ onClose, onSave }) {
     setForm(f => {
       const next = { ...f, [k]: v };
       if (k === "departamento") next.ciudad = "";
+      if (k === "tipo" && v === "natural") next.nit = "";
       return next;
     });
 
@@ -344,13 +345,15 @@ export default function CrearProveedor({ onClose, onSave }) {
                 placeholder={form.tipo === "juridica" ? "Ej: Distribuidora XYZ S.A.S." : "Ej: Juan García"}
                 required
               />
-              <FieldText
-                label="NIT"
-                value={form.nit}
-                onChange={v => set("nit", v)}
-                error={errors.nit}
-                placeholder="Ej: 900.123.456-1"
-              />
+              {form.tipo === "juridica" && (
+                <FieldText
+                  label="NIT"
+                  value={form.nit}
+                  onChange={v => set("nit", v)}
+                  error={errors.nit}
+                  placeholder="Ej: 900.123.456-1"
+                />
+              )}
             </>
           )}
 

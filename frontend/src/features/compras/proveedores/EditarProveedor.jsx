@@ -271,7 +271,7 @@ export default function EditarProveedor({ proveedor, mode = "edit", onClose, onS
         <div className="modal-body">
           <p className="section-label" style={{ marginTop: 0 }}>Identificación</p>
           {renderField("responsable", "Nombre / Razón Social", "text", "Ej: Juan García")}
-          {renderField("nit", "NIT", "text", "Ej: 900.123.456-1")}
+          {form.sujetoDerecho === 2 && renderField("nit", "NIT", "text", "Ej: 900.123.456-1")}
 
           <p className="section-label">Contacto</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
