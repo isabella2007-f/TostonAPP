@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Eye, Save, RotateCcw, CheckCircle2, Info, Lock, Clock3, MapPin } from "lucide-react";
+import MapaSelectorAdmin from "./MapaSelectorAdmin";
 import {
   getLandingConfig,
   saveLandingConfig,
@@ -234,32 +235,20 @@ export default function EditarLanding() {
         </div>
         <div className="p-6 space-y-4">
           <p className="text-xs text-gray-500">
-            Punto exacto del local para el mapa del pie de página. Cópialo de Google Maps
-            (clic derecho sobre el local → la primera línea son latitud y longitud). Si lo
-            dejas vacío, se ubica aproximando la dirección de texto.
+            Busca la dirección para colocar el pin automáticamente. Si el punto queda
+            desplazado, arrástralo o haz clic en la posición correcta del mapa.
+            Guarda los cambios para que el pie de página use ese punto exacto.
           </p>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1.5">Latitud</label>
-              <input
-                type="number" step="0.0000001" inputMode="decimal"
-                value={form.mapLat ?? ""}
-                onChange={e => handleChange("mapLat", e.target.value === "" ? null : e.target.value)}
-                placeholder="Ej: 10.9878"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:border-[#4caf50] focus:ring-2 focus:ring-[#4caf50]/20 text-sm transition"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1.5">Longitud</label>
-              <input
-                type="number" step="0.0000001" inputMode="decimal"
-                value={form.mapLng ?? ""}
-                onChange={e => handleChange("mapLng", e.target.value === "" ? null : e.target.value)}
-                placeholder="Ej: -74.7889"
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:border-[#4caf50] focus:ring-2 focus:ring-[#4caf50]/20 text-sm transition"
-              />
-            </div>
-          </div>
+          <MapaSelectorAdmin
+            lat={form.mapLat}
+            lng={form.mapLng}
+            address={form.contactAddressLine}
+            city={form.contactCity}
+            onChange={(lat, lng) => {
+              handleChange("mapLat", lat);
+              handleChange("mapLng", lng);
+            }}
+          />
         </div>
       </section>
 
