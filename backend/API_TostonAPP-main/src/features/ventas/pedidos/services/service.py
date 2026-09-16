@@ -307,6 +307,7 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
         EstadoPedido.FECHA_PROPUESTA_FINAL,
         EstadoPedido.FECHA_RECHAZADA,
         EstadoPedido.ESCALADO_A_ADMIN,
+        EstadoPedido.ESPERANDO_PAGO,
     })
 
     if actual and actual.get("tipo") == "cliente":
@@ -325,7 +326,7 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Este pedido ya está en producción y no puede cancelarse desde aquí. "
+                    "Este pedido ya está en proceso y no puede cancelarse desde aquí. "
                     "Escríbenos y lo revisamos."
                 ),
             )

@@ -575,7 +575,7 @@ const PedidosClientePage = () => {
     }
   };
 
-  const ESTADOS_CANCELABLES = ['Pendiente', 'Fecha propuesta', 'Fecha propuesta final', 'Fecha rechazada', 'Escalado a admin'];
+  const ESTADOS_CANCELABLES = ['Pendiente', 'Fecha propuesta', 'Fecha propuesta final', 'Fecha rechazada', 'Escalado a admin', 'Esperando pago'];
 
   const abrirEditModal = (pedido) => {
     const metodo = pedido.metodo_pago || pedido.Metodo_Pago || '';
