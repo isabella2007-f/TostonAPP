@@ -267,6 +267,14 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
     if pedido.Estado != EstadoPedido.PENDIENTE:
         return _formato_venta(pedido, db)
 
+    # Bloquear si el cliente todavía está dentro de su ventana de edición.
+    if pedido.Fecha_Venta and (_now() - pedido.Fecha_Venta) < _VENTANA_EDICION:
+        mins_restantes = int((_VENTANA_EDICION - (_now() - pedido.Fecha_Venta)).total_seconds() / 60) + 1
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este pedido está en período de edición del cliente ({mins_restantes} min restantes). Espera antes de procesarlo.",
+        )
+
     # Un "Pendiente de Aprobación" (necesita producción) no se confirma como un
     # pedido normal: confirmarlo es aprobar de una la fecha que trajo (Camino
     # A), igual que el botón "Aprobar" del panel.

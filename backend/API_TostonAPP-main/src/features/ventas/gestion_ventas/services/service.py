@@ -1655,7 +1655,7 @@ def _evaluar_cierre_ventana(db: Session, pedido: Venta) -> None:
         return
     if pedido.Estado in (EstadoPedido.CANCELADO, EstadoPedido.ENTREGADO):
         return
-    if not pedido.Fecha_Venta or (datetime.utcnow() - pedido.Fecha_Venta) < _VENTANA_PROTECCION:
+    if not pedido.Fecha_Venta or (_now() - pedido.Fecha_Venta) < _VENTANA_PROTECCION:
         return
     tiene_domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == pedido.ID_Venta).first() is not None
     if tiene_domicilio:
@@ -1684,8 +1684,8 @@ def cambiar_estado(
     # sistema como consecuencia de una acción del cliente dentro del pedido
     # (p. ej. su 3er comprobante rechazado, prompt-pedidos-2 3.5/3.10): no es
     # un admin adelantándose, es el pedido cerrándose solo.
-    if not saltar_ventana_proteccion and venta.Fecha_Venta and (datetime.utcnow() - venta.Fecha_Venta) < _VENTANA_PROTECCION:
-        mins_restantes = int((_VENTANA_PROTECCION - (datetime.utcnow() - venta.Fecha_Venta)).total_seconds() / 60) + 1
+    if not saltar_ventana_proteccion and venta.Fecha_Venta and (_now() - venta.Fecha_Venta) < _VENTANA_PROTECCION:
+        mins_restantes = int((_VENTANA_PROTECCION - (_now() - venta.Fecha_Venta)).total_seconds() / 60) + 1
         raise HTTPException(
             status_code=400,
             detail=f"Este pedido está en período de edición del cliente ({mins_restantes} min restantes). Espera antes de procesarlo.",
