@@ -21,6 +21,13 @@ def _formato_cliente(cliente: Usuario) -> dict:
         "Direccion":      cliente.Direccion,
         "Departamento":   cliente.Departamento,
         "Municipio":      cliente.Municipio,
+        # El barrio guardado del cliente. De él sale el precio del domicilio,
+        # así que sin esto el panel tiene que volver a preguntarlo al armar un
+        # pedido a nombre de alguien que ya lo tiene puesto.
+        "ID_Barrio":      getattr(cliente, "ID_Barrio", None),
+        # Cómo llegar a su casa. Es lo que lee el domiciliario; si no viaja,
+        # el pedido que arma el personal sale sin indicaciones.
+        "Indicaciones":   getattr(cliente, "Indicaciones", None),
         "Auto_Eliminado": bool(getattr(cliente, "Auto_Eliminado", 0)),
         "tiene_foto":     cliente.Foto_perfil is not None,
     }
