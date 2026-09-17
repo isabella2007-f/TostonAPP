@@ -65,6 +65,9 @@ class DomicilioResponse(BaseModel):
     # Pago mixto: lo que hay que cobrar en mano (el resto ya vino por transferencia)
     monto_efectivo:       Optional[float]    = None
     estado_pago:          Optional[str]      = None
+    # Anticipo: cuánto se pagó por adelantado y si ya fue registrado.
+    anticipo_monto:       Optional[float]    = None
+    anticipo_registrado:  Optional[bool]     = None
     productos:            Optional[List[Any]] = None
     telefono_cliente:     Optional[str]      = None
     # Estado de la venta asociada y comprobante de pago. El servicio ya los

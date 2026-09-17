@@ -128,6 +128,10 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
         "monto_efectivo":       monto_efectivo,
         "comprobante_pago":     venta.Comprobante_Pago if venta else None,
         "estado_pago":          venta.Estado_Pago if venta else None,
+        # Anticipo: cuánto se pagó por adelantado y si ya se registró.
+        # El domiciliario lo necesita para calcular el saldo real a cobrar.
+        "anticipo_monto":       float(getattr(venta, "Anticipo_Monto", 0) or 0) if venta else 0,
+        "anticipo_registrado":  bool(getattr(venta, "Anticipo_Registrado", 0)) if venta else False,
         "productos":            productos,
         "telefono_cliente":     cliente.Telefono if cliente else "",
         # Liquidación del efectivo cobrado por el repartidor
@@ -412,6 +416,8 @@ def obtener_domicilios(
             # dejaba marcar la entrega.
             "estado_pago":          venta.Estado_Pago if venta else None,
             "comprobante_pago":     venta.Comprobante_Pago if venta else None,
+            "anticipo_monto":       float(getattr(venta, "Anticipo_Monto", 0) or 0) if venta else 0,
+            "anticipo_registrado":  bool(getattr(venta, "Anticipo_Registrado", 0)) if venta else False,
             "productos":            prods,
             "telefono_cliente":     cliente.Telefono if cliente else "",
             "efectivo_liquidado":   bool(getattr(dom, "Efectivo_Liquidado", 0)),
@@ -838,18 +844,34 @@ def registrar_pago_efectivo(
     if datos.recibido:
         if datos.monto is None:
             raise HTTPException(status_code=422, detail="El monto es obligatorio cuando recibido=true")
-        # En un pedido mixto solo se cobra en mano la parte en efectivo; el
-        # resto ya entró por transferencia al hacer el pedido.
-        esperado = float(
-            venta.Monto_Efectivo if _pago_mixto and venta.Monto_Efectivo is not None
-            else (venta.Total or 0)
-        )
+        # Cuánto hay que cobrar en mano:
+        # - Mixto: solo la parte en efectivo (el resto ya entró por transferencia).
+        # - Anticipo ya registrado: solo el saldo (total − anticipo); el cliente
+        #   ya pagó la primera parte y el domiciliario no puede cobrarle dos veces.
+        # - Resto: el total completo.
+        _anticipo_registrado = bool(getattr(venta, "Anticipo_Registrado", 0))
+        _anticipo_monto      = float(getattr(venta, "Anticipo_Monto", 0) or 0)
+        if _pago_mixto and venta.Monto_Efectivo is not None:
+            esperado = float(venta.Monto_Efectivo)
+        elif _anticipo_registrado and _anticipo_monto > 0:
+            esperado = max(0.0, float(venta.Total or 0) - _anticipo_monto)
+        else:
+            esperado = float(venta.Total or 0)
         if round(datos.monto, 2) != round(esperado, 2):
             raise HTTPException(
                 status_code=400,
-                detail=f"El monto recibido ({datos.monto}) no coincide con lo que hay que cobrar ({esperado})",
+                detail=f"El monto recibido ({datos.monto}) no coincide con el saldo pendiente ({esperado})",
             )
         venta.Estado_Pago = "efectivo_recibido"
+        # Un pedido con anticipo exige además Pago_Final_Registrado=1 para poder
+        # cerrarse como Entregado (validado por saldo_final_pendiente). Sin esto,
+        # el domiciliario queda atrapado: el botón "Cobrar" desaparece (Estado_Pago
+        # ya es efectivo_recibido) pero ENTREGADO sigue bloqueado.
+        if getattr(venta, "Requiere_Anticipo", 0):
+            venta.Pago_Final_Registrado  = 1
+            venta.Pago_Final_Monto       = Decimal(str(datos.monto))
+            venta.Pago_Final_Metodo_Pago = "Efectivo"
+            venta.Pago_Final_Fecha       = _now()
         audit_value = f"monto:{datos.monto}"
     else:
         if not datos.motivo or len(datos.motivo.strip()) < 10:

@@ -24,13 +24,17 @@ export const esPagoEfectivo = (metodo) =>
   /efectiv|contra|cash/i.test(metodo || "") || esPagoMixto(metodo);
 
 /**
- * Cuánto hay que cobrar en mano. En un pedido mixto no es el total: la parte
- * transferida ya entró al hacer el pedido.
+ * Cuánto hay que cobrar en mano.
+ * - Pago mixto: solo la parte en efectivo (monto_efectivo).
+ * - Anticipo ya registrado: solo el saldo pendiente (total − anticipo_monto).
+ * - Resto: el total completo.
  */
-export const montoACobrar = (pedido) =>
-  (pedido?.monto_efectivo ?? null) !== null
-    ? Number(pedido.monto_efectivo)
-    : Number(pedido?.total || 0);
+export const montoACobrar = (pedido) => {
+  if ((pedido?.monto_efectivo ?? null) !== null) return Number(pedido.monto_efectivo);
+  if (pedido?.anticipo_registrado && (pedido?.anticipo_monto ?? 0) > 0)
+    return Math.max(0, Number(pedido?.total || 0) - Number(pedido.anticipo_monto));
+  return Number(pedido?.total || 0);
+};
 
 /** Cuánto entró (o va a entrar) por transferencia. */
 export const montoTransferido = (pedido) =>
