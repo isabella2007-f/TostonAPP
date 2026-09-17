@@ -133,14 +133,20 @@ export { esPagoMixto, esPagoTransferencia, esPagoEfectivo, montoACobrar };
 /**
  * ¿Este domicilio todavía tiene plata por cobrar en mano?
  *
- * Solo aplica a los pedidos en efectivo, y deja de aplicar en cuanto el
- * repartidor registra el resultado — lo haya cobrado o no. La misma lista
- * estaba escrita a mano en tres pantallas.
+ * Aplica a pedidos en efectivo/mixto/contraentrega Y a pedidos con anticipo
+ * ya registrado que tienen saldo pendiente (la diferencia total − anticipo se
+ * cobra en mano aunque el método de pago original sea transferencia).
+ * Deja de aplicar en cuanto el repartidor registra el resultado.
  */
-export const cobroEfectivoPendiente = (dom) =>
-  !!dom &&
-  esPagoEfectivo(dom.metodo_pago) &&
-  !["efectivo_recibido", "no_recibido", "pagado_completo"].includes(dom.estado_pago);
+export const cobroEfectivoPendiente = (dom) => {
+  if (!dom) return false;
+  if (["efectivo_recibido", "no_recibido", "pagado_completo"].includes(dom.estado_pago)) return false;
+  if (esPagoEfectivo(dom.metodo_pago)) return true;
+  // Anticipo registrado con saldo pendiente: la diferencia se cobra en mano.
+  return dom.anticipo_registrado === true &&
+    (dom.anticipo_monto ?? 0) > 0 &&
+    Number(dom.total || 0) > Number(dom.anticipo_monto || 0);
+};
 
 /**
  * Motivo por el que no se puede marcar entregado, o null si sí se puede.
