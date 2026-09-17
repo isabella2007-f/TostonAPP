@@ -67,6 +67,11 @@ class PedidoResponse(BaseModel):
     fecha_retenido_en_tienda:                 Optional[datetime] = None
     ID_Empleado:                  Optional[int]     = None
     observaciones_domicilio:      Optional[str]     = None
+    # El IVA ya discriminado del total. El servicio los devuelve, pero sin
+    # declararlos acá Pydantic los descarta y el frontend termina estimando
+    # el impuesto en vez de mostrar el que se guardó.
+    iva_total:                    Optional[Decimal] = None
+    subtotal_base:                Optional[Decimal] = None
     observaciones_admin:          Optional[str]     = None
     observaciones_repartidor:     Optional[str]     = None
     Numero_Pedido:                Optional[str]     = None

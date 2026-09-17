@@ -734,6 +734,12 @@ def migrate_db():
             # Observaciones y estas dos dejan de pisarla.
             "ALTER TABLE Domicilios ADD COLUMN Observaciones_Admin TEXT NULL",
             "ALTER TABLE Domicilios ADD COLUMN Observaciones_Repartidor TEXT NULL",
+            # IVA discriminado. Venían en migrations/add_iva_ventas.sql, un
+            # archivo que hay que acordarse de correr a mano: acá se aplican
+            # solas al desplegar, como todas las demás. Los pedidos viejos
+            # quedan en NULL y el desglose se calcula al vuelo.
+            "ALTER TABLE Ventas ADD COLUMN Subtotal_Base DECIMAL(30,2) NULL",
+            "ALTER TABLE Ventas ADD COLUMN IVA_Total DECIMAL(30,2) NULL",
         ]:
             try:
                 conn.execute(text(stmt))
