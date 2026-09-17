@@ -124,6 +124,10 @@ class VentaResponse(BaseModel):
     barrio_entrega:           Optional[str]      = None
     precio_domicilio_base:    Optional[int]      = None
     precio_domicilio_final:   Optional[int]      = None
+    # Lo que el pedido paga de domicilio. El servicio lo calcula aparte
+    # (`_costo_domicilio_total`) y sin declararlo acá Pydantic lo descartaba:
+    # la app lo leía en cero y el detalle no mostraba el costo del envío.
+    costo_domicilio_total:        Optional[int]     = None
     desglose_domicilio:       Optional[dict]     = None
     observaciones_domicilio:  Optional[str]      = None
     # El IVA ya discriminado del total. El servicio los devuelve, pero sin

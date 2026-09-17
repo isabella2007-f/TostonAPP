@@ -138,6 +138,13 @@ def editar_pedido(db: Session, id_venta: int, datos: dict) -> dict:
 
     if datos.get("Metodo_Pago"):
         pedido.Metodo_Pago = datos["Metodo_Pago"].split(" ")[0].strip()
+        # Al pasar a efectivo puro, el comprobante se va con el método: la
+        # imagen respalda una transferencia que ya no existe. Si se queda, el
+        # panel la sigue mostrando como si hubiera un pago que aprobar.
+        if not _lleva_transferencia(pedido.Metodo_Pago):
+            pedido.Comprobante_Pago = None
+            pedido.Monto_Efectivo = None
+            pedido.Monto_Transferencia = None
 
     if datos.get("Comprobante_Pago") is not None:
         pedido.Comprobante_Pago = datos["Comprobante_Pago"]
@@ -594,6 +601,11 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                 pedido.Estado_Pago = "pendiente"
             pedido.Monto_Efectivo = None
             pedido.Monto_Transferencia = None
+            # Y el comprobante se va con el método: respalda una transferencia
+            # que ya no existe. Si se queda, el panel lo sigue mostrando como
+            # si hubiera un pago que aprobar, y la factura sale con la captura
+            # de algo que se va a pagar en mano.
+            pedido.Comprobante_Pago = None
 
     # Repartir montos cuando el método es Mixto
     if _es_mixto(pedido.Metodo_Pago) and datos.get("Monto_Efectivo") is not None:
