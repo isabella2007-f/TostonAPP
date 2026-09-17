@@ -56,6 +56,8 @@ const adaptPedido = (p) => {
     subtotal:         p.subtotal_bruto    || p.Subtotal         || p.subtotal || 0,
     descuento:        p.credito_aplicado  || p.Descuento        || p.descuento || 0,
     total:            p.Total             || p.total            || 0,
+    iva_total:        p.iva_total     != null ? Number(p.iva_total)     : null,
+    subtotal_base:    p.subtotal_base != null ? Number(p.subtotal_base) : null,
     notas:            p.Notas             || p.notas            || "",
     fecha_pedido:     p.Fecha_pedido      || p.Fecha_Pedido     || p.fecha_pedido || "",
     fecha_venta:      p.Fecha_Venta       || p.fecha_venta      || null,

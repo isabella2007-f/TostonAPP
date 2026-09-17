@@ -7,7 +7,7 @@ const fmtFechaLarga = (str) => {
   return new Date(str).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
 };
 
-function buildHTML({ numero, fecha, estado, cliente, entrega, metodoPago, items, subtotal, costoEntrega, descuento, total, anticipo = 0, pagoFinalRegistrado = false, montoEfectivo = null, montoTransferencia = null }) {
+function buildHTML({ numero, fecha, estado, cliente, entrega, metodoPago, items, subtotal, costoEntrega, descuento, total, anticipo = 0, pagoFinalRegistrado = false, montoEfectivo = null, montoTransferencia = null, subtotalBase = null, domicilioBase = null, ivaTotal = null }) {
   const saldoPendiente = pagoFinalRegistrado ? 0 : Math.max(0, total - anticipo);
   const esMixto = (metodoPago || '').toLowerCase() === 'mixto';
   const year = new Date().getFullYear();
@@ -180,17 +180,21 @@ function buildHTML({ numero, fecha, estado, cliente, entrega, metodoPago, items,
     <!-- Totales -->
     <div class="totals">
       <div class="t-row">
-        <span class="lbl">Subtotal productos</span>
-        <span class="val">${COP(subtotal)}</span>
+        <span class="lbl">Subtotal (base)*</span>
+        <span class="val">${COP(subtotalBase)}</span>
       </div>
       ${costoEntrega > 0 ? `
       <div class="t-row">
-        <span class="lbl">🛵 Costo de domicilio</span>
-        <span class="val">${COP(costoEntrega)}</span>
+        <span class="lbl">🛵 Domicilio (base)*</span>
+        <span class="val">${COP(domicilioBase)}</span>
       </div>` : ''}
+      <div class="t-row" style="color:#1b5e20">
+        <span class="lbl" style="color:#1b5e20;font-weight:800">IVA (19%)</span>
+        <span class="val" style="color:#1b5e20">${COP(ivaTotal)}</span>
+      </div>
       ${descuento > 0 ? `
       <div class="t-row disc">
-        <span class="lbl">🎁 Descuento / crédito aplicado</span>
+        <span class="lbl">🎁 Crédito aplicado</span>
         <span class="val">-${COP(descuento)}</span>
       </div>` : ''}
       <div class="t-div"></div>
@@ -220,6 +224,7 @@ function buildHTML({ numero, fecha, estado, cliente, entrega, metodoPago, items,
       </div>` : ''}
     </div>
 
+    <p style="font-size:11px;color:#9e9e9e;font-weight:700;margin-top:14px;text-align:right">* Los precios incluyen IVA del 19%</p>
     <button class="print-btn" onclick="window.print()">🖨️ &nbsp;Guardar como PDF / Imprimir</button>
   </div>
 
@@ -268,6 +273,15 @@ export function descargarFacturaPedido(pedido, usuario) {
   const desc     = pedido.descuento || 0;
   const total    = pedido.total ?? (subtotal + costo - desc);
 
+  // Desglose IVA: usa los valores del backend si existen (nuevas ventas),
+  // o calcula desde los totales para pedidos anteriores (NULL en DB).
+  const _r = Math.round;
+  const subtotalBase  = _r(subtotal / 1.19);
+  const domicilioBase = _r(costo    / 1.19);
+  const ivaTotal      = pedido.iva_total != null
+    ? pedido.iva_total
+    : _r((subtotal + costo) * 19 / 119);
+
   const anticipoMonto = pedido.anticipo_registrado
     ? Number(pedido.anticipo_monto ?? 0)
     : 0;
@@ -293,6 +307,9 @@ export function descargarFacturaPedido(pedido, usuario) {
     pagoFinalRegistrado,
     montoEfectivo:      pedido.monto_efectivo      ?? null,
     montoTransferencia: pedido.monto_transferencia ?? null,
+    subtotalBase,
+    domicilioBase,
+    ivaTotal,
   });
 
   abrirFactura(html);

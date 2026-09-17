@@ -459,20 +459,42 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
               </table>
 
               <div className="totales-box">
-                <div className="totales-row">
-                  <span>Subtotal</span>
-                  <span>{fmt(pedido.subtotal)}</span>
-                </div>
-                {pedido.descuento > 0 && (
-                  <div className="totales-row totales-row--descuento">
-                    <span style={{display:"inline-flex",alignItems:"center",gap:5}}><CreditCard size={14} /> Crédito aplicado</span>
-                    <span>− {fmt(pedido.descuento)}</span>
-                  </div>
-                )}
-                <div className="totales-row totales-row--total">
-                  <span>Total a pagar</span>
-                  <span>{fmt(pedido.total)}</span>
-                </div>
+                {(() => {
+                  const costo  = pedido.precio_domicilio_final ?? 0;
+                  const _r     = Math.round;
+                  const subBase = _r((pedido.subtotal || 0) / 1.19);
+                  const domBase = _r(costo / 1.19);
+                  const iva     = pedido.iva_total != null
+                    ? pedido.iva_total
+                    : _r(((pedido.subtotal || 0) + costo) * 19 / 119);
+                  return (<>
+                    <div className="totales-row">
+                      <span>Subtotal (base)*</span>
+                      <span>{fmt(subBase)}</span>
+                    </div>
+                    {costo > 0 && (
+                      <div className="totales-row">
+                        <span>Domicilio (base)*</span>
+                        <span>{fmt(domBase)}</span>
+                      </div>
+                    )}
+                    <div className="totales-row" style={{color:"#2e7d32",fontWeight:700}}>
+                      <span>IVA (19%)</span>
+                      <span>{fmt(iva)}</span>
+                    </div>
+                    {pedido.descuento > 0 && (
+                      <div className="totales-row totales-row--descuento">
+                        <span style={{display:"inline-flex",alignItems:"center",gap:5}}><CreditCard size={14} /> Crédito aplicado</span>
+                        <span>− {fmt(pedido.descuento)}</span>
+                      </div>
+                    )}
+                    <div className="totales-row totales-row--total">
+                      <span>Total a pagar</span>
+                      <span>{fmt(pedido.total)}</span>
+                    </div>
+                    <p style={{fontSize:11,color:"#9e9e9e",marginTop:6,textAlign:"right"}}>* Precios IVA incluido (19%)</p>
+                  </>);
+                })()}
               </div>
             </div>
           )}

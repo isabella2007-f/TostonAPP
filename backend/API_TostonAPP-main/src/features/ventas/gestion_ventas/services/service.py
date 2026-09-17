@@ -47,6 +47,21 @@ from src.features.ventas.ubicaciones.services.service import resolver_domicilio
 # nunca se toma del request, el cliente no puede alterarla.
 PORCENTAJE_ANTICIPO_SOBRE_STOCK = Decimal("0.50")
 
+# Los precios de venta al público ya incluyen IVA del 19%.
+# Para extraerlo: base = precio / 1.19;  iva = precio - base.
+_IVA_DIVISOR = Decimal("1.19")
+
+
+def _desglosar_iva(monto_con_iva: Decimal) -> tuple[Decimal, Decimal]:
+    """Extrae la base y el IVA de un monto que ya incluye el 19%.
+
+    Retorna (base, iva) con redondeo al centavo.
+    La suma base + iva siempre es igual al monto original.
+    """
+    base = (monto_con_iva / _IVA_DIVISOR).quantize(Decimal("0.01"))
+    iva  = monto_con_iva - base
+    return base, iva
+
 #: Estado con el que queda un domicilio cancelado (catálogo de Estados).
 #:
 #: Lo usa la división de entregas para retirar del tablero el domicilio
@@ -603,6 +618,8 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         ),
         # Suma de los domicilios que de verdad paga el pedido: el snapshot único.
         "costo_domicilio_total": _costo_domicilio_total(domicilio),
+        "iva_total":     getattr(venta, "IVA_Total",     None),
+        "subtotal_base": getattr(venta, "Subtotal_Base", None),
     }
 
 
@@ -1204,6 +1221,11 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
     costo_domicilio = Decimal(snapshot_domicilio["final"]) if snapshot_domicilio else Decimal("0")
     nueva_venta.Total += costo_domicilio
 
+    # Extraer IVA del total final (precios ya incluyen 19%: base = total / 1.19).
+    _base_total, _iva_total = _desglosar_iva(nueva_venta.Total)
+    nueva_venta.Subtotal_Base = _base_total
+    nueva_venta.IVA_Total     = _iva_total
+
     # Pago mixto: el reparto se hace sobre el total ya cerrado (con domicilio,
     # descuentos y saldo a favor aplicados), no sobre lo que declaró el cliente.
     if _es_mixto(datos.Metodo_Pago):
@@ -1445,7 +1467,7 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
     db.add(DetalleVenta(
         ID_Venta    = nueva_venta.ID_Venta,
         A_Nombre_De = datos.A_Nombre_De,
-        IVA         = Decimal("0"),
+        IVA         = _desglosar_iva(subtotal_bruto)[1],
         Descuento   = credito_aplicado,
         SubTotal    = subtotal_bruto,
     ))

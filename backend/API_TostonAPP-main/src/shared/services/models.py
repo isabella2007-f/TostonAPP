@@ -462,6 +462,10 @@ class Venta(Base):
     # marca, `_descontar_stock_venta` no tiene cómo distinguir "ya reservado
     # antes" de "reservar ahora" y terminaría descontando dos veces.
     Stock_Reservado                       = Column(Integer, default=0, nullable=True)
+    # IVA discriminado (los precios de venta ya incluyen el 19%; se extrae al crear).
+    # NULL en ventas anteriores a la implementación del IVA discriminado.
+    Subtotal_Base = Column(Numeric(30, 2), nullable=True)
+    IVA_Total     = Column(Numeric(30, 2), nullable=True)
 
     usuario            = relationship("Usuario", back_populates="ventas")
     productos          = relationship("VentaXProducto", back_populates="venta")

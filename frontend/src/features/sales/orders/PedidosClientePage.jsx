@@ -1818,6 +1818,19 @@ const PedidosClientePage = () => {
                         </>
                       );
                     })()}
+                    {(() => {
+                      const _subtotal = (selectedPedido.productosItems || []).reduce((s, p) => s + p.precio * p.cantidad, 0);
+                      const _costo    = selectedPedido.precio_domicilio_final ?? 0;
+                      const iva = selectedPedido.iva_total != null
+                        ? selectedPedido.iva_total
+                        : Math.round((_subtotal + _costo) * 19 / 119);
+                      return (
+                        <tr style={{ borderTop: '1px solid #f0f0f0', background: '#f1f8f1' }}>
+                          <td colSpan={2} style={{ padding: '8px 14px', textAlign: 'right', fontSize: 11, fontWeight: 700, color: '#2e7d32' }}>IVA (19%)*</td>
+                          <td style={{ padding: '8px 14px', textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#2e7d32' }}>{COP(iva)}</td>
+                        </tr>
+                      );
+                    })()}
                     {(selectedPedido.descuento || 0) > 0 && (
                       <tr style={{ borderTop: '1px solid #f0f0f0', background: '#fafafa' }}>
                         <td colSpan={2} style={{ padding: '8px 14px', textAlign: 'right', fontSize: 11, fontWeight: 600, color: '#1976d2' }}><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CreditCard size={11} /> Crédito aplicado</span></td>
@@ -1833,6 +1846,9 @@ const PedidosClientePage = () => {
                           - (selectedPedido.descuento || 0)
                         ))}
                       </td>
+                    </tr>
+                    <tr style={{ background: '#f9fdf9' }}>
+                      <td colSpan={3} style={{ padding: '2px 14px 8px', textAlign: 'right', fontSize: 10, color: '#bdbdbd', fontWeight: 600 }}>* Los precios incluyen IVA del 19%</td>
                     </tr>
                   </tfoot>
                 </table>
