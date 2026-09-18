@@ -24,7 +24,7 @@ import {
 import { getLandingConfig, LANDING_DEFAULTS } from '../services/landingConfigService';
 import { formatCOP } from '../utils/formato';
 import { MAX_QTY } from '../features/sales/orders/services/cartService';
-import { urlProductImg } from '../utils/avatar';
+import { urlProductImg, urlProductImgSrcset } from '../utils/avatar';
 
 /** Input de cantidad editable por teclado (máx. 4 dígitos). */
 function QtyInput({ value, onChange, className = '' }) {
@@ -112,8 +112,11 @@ function ProductDetailModal({ product, cat, onClose, onAddToCart }) {
             {imgs.length > 0 ? (
               <img
                 src={urlProductImg(imgs[imgIdx], 1200)}
+                srcSet={urlProductImgSrcset(imgs[imgIdx], [600, 1200])}
+                sizes="(max-width:640px) 100vw, 50vw"
                 alt={product.nombre}
                 loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover"
                 style={{ maxHeight: 420 }}
               />
@@ -740,7 +743,15 @@ const LandingPage = ({ hideNavbar = false }) => {
                 >
                   <div className="relative h-72 overflow-hidden cursor-pointer" data-tooltip="Ver detalles del producto" onClick={() => setSelectedProduct(p)}>
                     {p.imagenPreview || p.imagen
-                      ? <img src={urlProductImg(p.imagenPreview || p.imagen)} alt={p.nombre} loading="lazy" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                      ? <img
+                          src={urlProductImg(p.imagenPreview || p.imagen, 800)}
+                          srcSet={urlProductImgSrcset(p.imagenPreview || p.imagen)}
+                          sizes="(max-width:640px) 95vw, (max-width:1024px) 45vw, 32vw"
+                          alt={p.nombre}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                        />
                       : <div className="w-full h-full bg-[#f7faf8] flex items-center justify-center"><span className="text-7xl group-hover:scale-125 transition-transform duration-500">{cat.icon || '🍌'}</span></div>
                     }
                     {/* Overlay Ver detalles */}

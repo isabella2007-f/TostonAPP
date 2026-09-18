@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { Search, X, AlertTriangle, Package, ClipboardList, Eye, PenLine, Trash2, Truck, Clock, AlertCircle, Scale, Utensils, CornerUpLeft, ChevronDown, RefreshCw } from "lucide-react";
 import { fmtFecha } from "../../../utils/dateUtils.js";
-import { urlProductImg } from "../../../utils/avatar.js";
+import { urlProductImg, urlProductImgSrcset } from "../../../utils/avatar.js";
 import { crearFicha, editarFicha } from "../../../services/fichaTecnicaService.js";
 import { Toast } from "./ui.jsx";
 import CrearProducto from "./CrearProducto.jsx";
@@ -288,6 +288,9 @@ function ProductImg({ previews, nombre }) {
       src={urlProductImg(thumb, 100)}
       alt={nombre}
       loading="lazy"
+      decoding="async"
+      width={36}
+      height={36}
       style={{
         width: 36, height: 36, borderRadius: 8,
         objectFit: "cover", border: "1px solid #c8e6c9", flexShrink: 0,
@@ -484,8 +487,11 @@ function VerProducto({ product, catObj, onClose, onOpenFicha }) {
                   >
                     <img
                       src={urlProductImg(previews[imgIdx], 1200)}
+                      srcSet={urlProductImgSrcset(previews[imgIdx], [600, 1200])}
+                      sizes="(max-width:640px) 100vw, 50vw"
                       alt={product.nombre}
                       loading="lazy"
+                      decoding="async"
                       style={{ width: "100%", height: "100%", objectFit: "contain" }}
                     />
                   </div>
@@ -511,6 +517,7 @@ function VerProducto({ product, catObj, onClose, onOpenFicha }) {
                             src={urlProductImg(url, 200)}
                             alt="thumb"
                             loading="lazy"
+                            decoding="async"
                             style={{ width: "100%", height: "100%", objectFit: "cover" }}
                           />
                         </div>
