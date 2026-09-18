@@ -396,8 +396,17 @@ const LandingPage = ({ hideNavbar = false }) => {
   }, []);
 
   useEffect(() => {
-    const id = setTimeout(cargarProductos, 0);
-    return () => clearTimeout(id);
+    let done = false;
+    const trigger = () => { if (done) return; done = true; cargarProductos(); };
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) trigger(); },
+      { rootMargin: '400px' }
+    );
+    const el = productsSectionRef.current;
+    if (el) observer.observe(el);
+    else trigger();
+    const id = setTimeout(trigger, 2000);
+    return () => { observer.disconnect(); clearTimeout(id); };
   }, [cargarProductos]);
 
   // Re-fetch al volver a la pestaña (productos pueden haber cambiado)
