@@ -21,6 +21,7 @@ import SearchableSelect from "../../../shared/components/SearchableSelect.jsx";
 import ImageLightbox from "../../../shared/components/ImageLightbox.jsx";
 import { formatCOP } from "../../../utils/formato.js";
 import { enlaceWhatsApp } from "../../../utils/whatsapp";
+import { fechaMinimaPedido, fechaMaximaPedido } from "../../../utils/horario";
 import {
   Trash2, Truck, Package,
   RotateCcw, X, AlertCircle,
@@ -785,14 +786,16 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
    MODAL — PROPONER FECHA DE ENTREGA (producción)
    ═══════════════════════════════════════════════════════════ */
 function ModalProponerFecha({ pedido, saving, onClose, onConfirm }) {
-  const hoy = new Date().toISOString().split("T")[0];
+  const fechaMin = fechaMinimaPedido(null);
+  const fechaMax = fechaMaximaPedido();
   const [fecha, setFecha] = useState("");
   const [motivo, setMotivo] = useState("");
   const [error, setError] = useState("");
 
   const handleSubmit = () => {
     if (!fecha) { setError("Selecciona una fecha de entrega"); return; }
-    if (fecha < hoy) { setError("La fecha no puede ser anterior a hoy"); return; }
+    if (fecha < fechaMin) { setError(`La fecha más próxima disponible es ${fechaMin}`); return; }
+    if (fecha > fechaMax) { setError(`La fecha no puede ser después del ${fechaMax}`); return; }
     onConfirm(pedido.id, fecha, motivo.trim() || null);
   };
 
@@ -821,7 +824,8 @@ function ModalProponerFecha({ pedido, saving, onClose, onConfirm }) {
             </label>
             <input
               type="date"
-              min={hoy}
+              min={fechaMin}
+              max={fechaMax}
               value={fecha}
               onChange={e => { setFecha(e.target.value); setError(""); }}
               className={`w-full bg-gray-50 border-2 rounded-2xl p-4 text-sm font-medium text-gray-700 outline-none transition-all ${
@@ -876,14 +880,16 @@ function ModalProponerFecha({ pedido, saving, onClose, onConfirm }) {
    o cancelar el pedido (→ Cancelado + devuelve crédito).
    ═══════════════════════════════════════════════════════════ */
 function ModalResolverEscalado({ pedido, saving, onClose, onConfirmarAcuerdo, onConfirmarCancelacion }) {
-  const hoy = new Date().toISOString().split("T")[0];
+  const fechaMin = fechaMinimaPedido(null);
+  const fechaMax = fechaMaximaPedido();
   const [opcion, setOpcion] = useState(null); // "acuerdo" | "cancelar"
   const [fecha, setFecha]   = useState("");
   const [error, setError]   = useState("");
 
   const handleAcuerdo = () => {
     if (!fecha) { setError("Selecciona una fecha acordada"); return; }
-    if (fecha < hoy) { setError("La fecha no puede ser anterior a hoy"); return; }
+    if (fecha < fechaMin) { setError(`La fecha más próxima disponible es ${fechaMin}`); return; }
+    if (fecha > fechaMax) { setError(`La fecha no puede ser después del ${fechaMax}`); return; }
     onConfirmarAcuerdo(pedido.id, fecha);
   };
 
@@ -940,7 +946,8 @@ function ModalResolverEscalado({ pedido, saving, onClose, onConfirmarAcuerdo, on
                 </label>
                 <input
                   type="date"
-                  min={hoy}
+                  min={fechaMin}
+                  max={fechaMax}
                   value={fecha}
                   onChange={e => { setFecha(e.target.value); setError(""); }}
                   className={`w-full bg-gray-50 border-2 rounded-2xl p-4 text-sm font-medium text-gray-700 outline-none transition-all ${

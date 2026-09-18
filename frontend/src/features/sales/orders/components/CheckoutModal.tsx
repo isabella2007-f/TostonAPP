@@ -14,7 +14,7 @@ import SaldoMonto from '../../../../shared/components/SaldoMonto';
 import SplitPagoMonto from '../../../../shared/components/SplitPagoMonto';
 import TerminosCondicionesModal from '../../../../shared/components/TerminosCondicionesModal';
 import { getLandingConfig, LANDING_DEFAULTS } from '../../../../services/landingConfigService';
-import { estaAbierto, mensajeFueraHorario, rangoHorario, primeraFechaValida } from '../../../../utils/horario';
+import { estaAbierto, mensajeFueraHorario, rangoHorario, primeraFechaValida, fechaMinimaPedido, fechaMaximaPedido } from '../../../../utils/horario';
 import { formatCOP } from '../../../../utils/formato';
 import './CheckoutModal.css';
 
@@ -277,14 +277,18 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
     : 0;
   const totalFinal       = Math.max(0, orderDetails.total + costoDomicilio - creditoAplicar);
 
-  // Fecha límite obligatoria: solo para lo que hay que fabricar. El mínimo
-  // seleccionable es hoy (si todavía se puede recibir) o el próximo día de
-  // atención — la misma regla la valida el servidor al crear el pedido.
-  const fechaMinima = primeraFechaValida(cfgHorario);
+  // Fecha límite obligatoria: solo para lo que hay que fabricar.
+  // Mín: primer día hábil o hoy + DIAS_MIN_PRODUCCION (lo que sea más tarde).
+  // Máx: hoy + MESES_MAX_PEDIDO meses.
+  // La misma regla la valida el servidor al crear el pedido.
+  const fechaMinima = fechaMinimaPedido(cfgHorario);
+  const fechaMaxima = fechaMaximaPedido();
   const faltaFecha  = itemsConDeficit.length > 0 && !date
     ? 'Elige para cuándo necesitas tu pedido'
     : itemsConDeficit.length > 0 && date < fechaMinima
     ? `La fecha más próxima disponible es ${fechaMinima}`
+    : itemsConDeficit.length > 0 && date > fechaMaxima
+    ? `La fecha no puede ser después del ${fechaMaxima}`
     : null;
   const fechaError = fechaTocada ? faltaFecha : null;
 
@@ -440,6 +444,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
                 type="date"
                 value={date}
                 min={fechaMinima}
+                max={fechaMaxima}
                 onChange={e => setDate(e.target.value)}
                 onBlur={() => setFechaTocada(true)}
                 className={inputCls}

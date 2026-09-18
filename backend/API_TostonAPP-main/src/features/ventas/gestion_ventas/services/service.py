@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_CEILING
 from zoneinfo import ZoneInfo
+from dateutil.relativedelta import relativedelta
 
 _BOGOTA = ZoneInfo("America/Bogota")
 
@@ -20,6 +21,11 @@ from src.shared.services.models import (
 
 # Margen mínimo en días entre la fecha del envío anticipado y hoy
 MARGEN_MINIMO_DIAS_ENVIO_ANTICIPADO = 1
+
+# Rango de fechas de entrega permitido para pedidos.
+# Espejo en frontend: DIAS_MIN_PRODUCCION / MESES_MAX_PEDIDO en utils/horario.js.
+DIAS_MIN_PRODUCCION = 7
+MESES_MAX_PEDIDO    = 6
 
 
 def _imagen_producto(db: Session, id_producto: int) -> str | None:
@@ -141,16 +147,26 @@ def _fecha_minima_entrega(db: Session):
 
 
 def _validar_fecha_entrega_esperada(db: Session, fecha_entrega) -> None:
-    """La fecha límite que pide el cliente no puede ser imposible: ni en el
-    pasado, ni hoy si ya se cerró por hoy (`_fecha_minima_entrega`)."""
+    """La fecha límite que pide el cliente no puede ser imposible: ni antes
+    del margen de producción, ni más allá de MESES_MAX_PEDIDO meses."""
     if not fecha_entrega:
         raise HTTPException(status_code=400, detail="Selecciona para cuándo necesitas tu pedido")
     fecha_date = fecha_entrega.date() if hasattr(fecha_entrega, "date") else fecha_entrega
-    minima = _fecha_minima_entrega(db)
+    hoy = _now().date()
+    minima = max(_fecha_minima_entrega(db), hoy + timedelta(days=DIAS_MIN_PRODUCCION))
     if fecha_date < minima:
         raise HTTPException(
             status_code=400,
             detail=f"La fecha más próxima disponible para tu pedido es {minima.isoformat()}",
+        )
+    maxima = hoy + relativedelta(months=MESES_MAX_PEDIDO)
+    if fecha_date > maxima:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"La fecha de entrega no puede ser después del {maxima.isoformat()} "
+                f"({MESES_MAX_PEDIDO} meses desde hoy)"
+            ),
         )
 
 
@@ -2167,13 +2183,20 @@ def proponer_fecha(
                 "o que requieren producción"
             ),
         )
-    # La fecha propuesta no puede ser en el pasado
+    # La fecha propuesta debe respetar el margen de producción y el techo máximo
     hoy = _now().date()
     fecha_propuesta_date = fecha_entrega.date() if hasattr(fecha_entrega, "date") else fecha_entrega
-    if fecha_propuesta_date < hoy:
+    minima = hoy + timedelta(days=DIAS_MIN_PRODUCCION)
+    if fecha_propuesta_date < minima:
         raise HTTPException(
             status_code=400,
-            detail="La fecha de entrega propuesta no puede ser en el pasado",
+            detail=f"La fecha propuesta debe ser al menos {DIAS_MIN_PRODUCCION} días desde hoy (mínimo: {minima.isoformat()})",
+        )
+    maxima = hoy + relativedelta(months=MESES_MAX_PEDIDO)
+    if fecha_propuesta_date > maxima:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La fecha propuesta no puede ser después del {maxima.isoformat()}",
         )
     descartar_notificacion(db, "produccion_requerida", id_venta)
     descartar_notificacion(db, "pedido_sobre_stock",   id_venta)
@@ -2581,8 +2604,18 @@ def rechazar_fecha(db: Session, id_venta: int, actual: dict, fecha_propuesta_cli
 
     hoy = _now().date()
     fecha_date = fecha_propuesta_cliente.date() if hasattr(fecha_propuesta_cliente, "date") else fecha_propuesta_cliente
-    if fecha_date < hoy:
-        raise HTTPException(status_code=400, detail="La fecha que propongas no puede ser en el pasado")
+    minima = hoy + timedelta(days=DIAS_MIN_PRODUCCION)
+    if fecha_date < minima:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La fecha que propongas debe ser al menos {DIAS_MIN_PRODUCCION} días desde hoy (mínimo: {minima.isoformat()})",
+        )
+    maxima = hoy + relativedelta(months=MESES_MAX_PEDIDO)
+    if fecha_date > maxima:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La fecha que propongas no puede ser después del {maxima.isoformat()}",
+        )
 
     fecha_anterior = venta.Fecha_entrega_esperada
     venta.Fecha_Rechazada = _now()
@@ -2725,8 +2758,18 @@ def resolver_escalado_acuerdo_manual(
 
     hoy = _now().date()
     fecha_date = fecha_acordada.date() if hasattr(fecha_acordada, "date") else fecha_acordada
-    if fecha_date < hoy:
-        raise HTTPException(status_code=400, detail="La fecha acordada no puede ser en el pasado")
+    minima = hoy + timedelta(days=DIAS_MIN_PRODUCCION)
+    if fecha_date < minima:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La fecha acordada debe ser al menos {DIAS_MIN_PRODUCCION} días desde hoy (mínimo: {minima.isoformat()})",
+        )
+    maxima = hoy + relativedelta(months=MESES_MAX_PEDIDO)
+    if fecha_date > maxima:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La fecha acordada no puede ser después del {maxima.isoformat()}",
+        )
 
     id_admin = getattr(actual.get("registro"), "ID_Usuario", None)
     _avanzar_tras_fecha_confirmada(db, venta, fecha_acordada, id_usuario=id_admin)

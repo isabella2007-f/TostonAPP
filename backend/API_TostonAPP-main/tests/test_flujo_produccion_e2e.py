@@ -184,7 +184,7 @@ class FlujoProduccionE2EBase(unittest.TestCase):
         # test_crear_venta_e2e.py: mismo criterio, mismo motivo).
         if getattr(datos, "Fecha_entrega_esperada", None) is None and not datos.creado_por_admin:
             from datetime import datetime, timedelta
-            datos.Fecha_entrega_esperada = datetime.now() + timedelta(days=2)
+            datos.Fecha_entrega_esperada = datetime.now() + timedelta(days=8)
         resultado = crear_venta(self.db, datos)
         self.db.commit()
         return resultado

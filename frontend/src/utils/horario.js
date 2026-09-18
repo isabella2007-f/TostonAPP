@@ -5,6 +5,11 @@
 // (1 = lunes … 7 = domingo). Estos helpers deciden si la tienda está abierta y
 // arman los textos que se muestran al cliente (carrito, checkout, footer).
 
+// Rango de fechas seleccionable para pedidos con producción.
+// Espejo en backend: DIAS_MIN_PRODUCCION / MESES_MAX_PEDIDO en service.py.
+export const DIAS_MIN_PRODUCCION = 7;
+export const MESES_MAX_PEDIDO    = 6;
+
 const HORA_APERTURA_DEF = "08:00";
 const HORA_CIERRE_DEF   = "20:00";
 // Se atiende todos los días. Es lo que rige mientras el administrador no
@@ -99,6 +104,22 @@ export const primeraFechaValida = (cfg, ahora = new Date()) => {
     if (dias.has(d)) return isoMasDias(ahora, i);
   }
   return isoMasDias(ahora, 0);
+};
+
+/**
+ * Primer día seleccionable para un pedido con producción: el más tardío
+ * entre el primer día hábil (lógica de horario) y hoy + DIAS_MIN_PRODUCCION.
+ */
+export const fechaMinimaPedido = (cfg, ahora = new Date()) => {
+  const porHorario  = primeraFechaValida(cfg, ahora);
+  const porMargen   = isoMasDias(ahora, DIAS_MIN_PRODUCCION);
+  return porHorario >= porMargen ? porHorario : porMargen;
+};
+
+/** Último día seleccionable para un pedido: hoy + MESES_MAX_PEDIDO meses. */
+export const fechaMaximaPedido = (ahora = new Date()) => {
+  const d = new Date(ahora.getFullYear(), ahora.getMonth() + MESES_MAX_PEDIDO, ahora.getDate());
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
 /** Rango "8:00 am – 8:00 pm" con la config actual. */

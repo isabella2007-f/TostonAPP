@@ -19,6 +19,7 @@ Corre sin credenciales:
     python tests/test_detalle_pedido_movil.py
 """
 import unittest
+from datetime import datetime, timedelta
 
 from panel import ID_CLIENTE, ID_TORTA, PanelBase
 
@@ -213,15 +214,17 @@ class DetalleDelPedidoTests(PanelBase):
         self.assertIsNone(pedido["direccion_entrega"])
         self.assertIsNone(pedido["nombre_domiciliario"])
 
-    def proponer(self, idv, dia="20"):
+    def proponer(self, idv, dias=8):
+        fecha = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%dT10:00:00")
         return self.afirmar_ok(self.patch(
             f"/ventas/{idv}/proponer-fecha", self.admin,
-            {"fecha_entrega": f"2027-09-{dia}T10:00:00"}))
+            {"fecha_entrega": fecha}))
 
-    def rechazar(self, idv, dia="25", motivo="No puedo recibirlo ese día"):
+    def rechazar(self, idv, dias=9, motivo="No puedo recibirlo ese día"):
+        fecha = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%dT10:00:00")
         return self.afirmar_ok(self.patch(
             f"/ventas/{idv}/rechazar-fecha", self.cliente,
-            {"fecha_propuesta": f"2027-09-{dia}T10:00:00", "motivo": motivo}))
+            {"fecha_propuesta": fecha, "motivo": motivo}))
 
     def test_rechazar_la_fecha_no_mata_el_pedido(self):
         """Rechazar deja el pedido en Fecha propuesta final (21), con la

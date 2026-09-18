@@ -185,7 +185,7 @@ class CrearVentaBase(unittest.TestCase):
         # no necesita producción, crear_venta la ignora en ese caso.
         if getattr(datos, "Fecha_entrega_esperada", None) is None and not datos.creado_por_admin:
             from datetime import datetime, timedelta
-            datos.Fecha_entrega_esperada = datetime.now() + timedelta(days=2)
+            datos.Fecha_entrega_esperada = datetime.now() + timedelta(days=8)
         resultado = crear_venta(self.db, datos)
         self.db.commit()
         return resultado

@@ -13,6 +13,7 @@ import SplitPagoMonto from "../../../shared/components/SplitPagoMonto";
 import { getCreditoCliente } from "../../../services/devolucionesService.js";
 // La regla del anticipo vive en un solo lugar, espejo del servidor.
 import { pideAnticipo, esFabricable } from "../../../utils/anticipo.js";
+import { fechaMinimaPedido, fechaMaximaPedido } from "../../../utils/horario";
 import "./Pedidos.css";
 import { formatCOP } from "../../../utils/formato";
 
@@ -337,8 +338,11 @@ export default function CrearPedido({ onClose, onSave }) {
     if (k === "municipio"         && !v.trim()) err = "El municipio es obligatorio";
     if (k === "metodo_pago"       && !v)        err = "Selecciona un método de pago";
     if (k === "fecha_entrega") {
+      const fMin = fechaMinimaPedido(null);
+      const fMax = fechaMaximaPedido();
       if (!v) err = form.domicilio ? "Selecciona la fecha de entrega" : "Selecciona la fecha de recogida";
-      else if (new Date(v + "T00:00:00") < new Date(new Date().toDateString())) err = "La fecha no puede ser en el pasado";
+      else if (v < fMin) err = `La fecha más próxima disponible es ${fMin}`;
+      else if (v > fMax) err = `La fecha no puede ser después del ${fMax}`;
     }
     if (k === "descuento" && Number(v) < 0) {
       err = "El descuento no puede ser negativo";
@@ -472,10 +476,14 @@ export default function CrearPedido({ onClose, onSave }) {
       }
     }
     if (s === 3) {
+      const fMin = fechaMinimaPedido(null);
+      const fMax = fechaMaximaPedido();
       if (!form.fecha_entrega)
         e.fecha_entrega = form.domicilio ? "Selecciona la fecha de entrega" : "Selecciona la fecha de recogida";
-      else if (new Date(form.fecha_entrega + "T00:00:00") < new Date(new Date().toDateString()))
-        e.fecha_entrega = "La fecha no puede ser en el pasado";
+      else if (form.fecha_entrega < fMin)
+        e.fecha_entrega = `La fecha más próxima disponible es ${fMin}`;
+      else if (form.fecha_entrega > fMax)
+        e.fecha_entrega = `La fecha no puede ser después del ${fMax}`;
       if (form.domicilio) {
         const falta = faltaEnLaDireccion();
         if (falta) e.direccion_entrega = falta;
@@ -1020,7 +1028,8 @@ export default function CrearPedido({ onClose, onSave }) {
                   type="date"
                   className={`field-input${errors.fecha_entrega ? " error" : ""}`}
                   value={form.fecha_entrega}
-                  min={new Date().toISOString().split("T")[0]}
+                  min={fechaMinimaPedido(null)}
+                  max={fechaMaximaPedido()}
                   onChange={e => set("fecha_entrega", e.target.value)}
                 />
                 {errors.fecha_entrega && <span className="field-error">{errors.fecha_entrega}</span>}
