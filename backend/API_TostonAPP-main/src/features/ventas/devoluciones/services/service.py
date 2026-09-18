@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime, timedelta
@@ -336,16 +337,17 @@ def crear_devolucion(db: Session, datos: DevolucionCreate) -> dict:
             )
         )
 
-    # 2. Solo bloquear si ya hay una devolución activa (Pendiente o Aprobada).
-    #    Una rechazada no cuenta: el cliente puede volver a intentarlo dentro del plazo.
-    existente = db.query(Devolucion).filter(
+    # 2. Bloquear solo si ya hay una devolución Pendiente para esta venta.
+    #    Una aprobada no bloquea: permite devoluciones parciales en tandas.
+    #    Una rechazada tampoco: el cliente puede reintentar dentro del plazo.
+    pendiente = db.query(Devolucion).filter(
         Devolucion.ID_Venta == datos.ID_Venta,
-        Devolucion.Estado.in_([ESTADO_PENDIENTE, ESTADO_APROBADA])
+        Devolucion.Estado == ESTADO_PENDIENTE,
     ).first()
-    if existente:
+    if pendiente:
         raise HTTPException(
             status_code=400,
-            detail="Ya existe una solicitud de devolución activa para este pedido"
+            detail="Ya tienes una solicitud de devolución pendiente para este pedido. Espera a que sea revisada antes de enviar otra.",
         )
 
     # 3. Cliente existe
@@ -370,14 +372,37 @@ def crear_devolucion(db: Session, datos: DevolucionCreate) -> dict:
                 status_code=400,
                 detail=f"El producto '{nombre}' no pertenece a este pedido"
             )
-        if p.Cantidad > vxp.Cantidad:
+
+        # Cantidad ya comprometida en devoluciones Pendientes + Aprobadas para
+        # este producto en esta venta. Las Rechazadas no cuentan: el cliente
+        # puede reintentar esas unidades.
+        ya_devuelto = int(
+            db.query(func.coalesce(func.sum(DevolucionDetalle.Cantidad), 0))
+            .join(Devolucion, DevolucionDetalle.ID_Devolucion == Devolucion.ID_Devolucion)
+            .filter(
+                Devolucion.ID_Venta      == datos.ID_Venta,
+                Devolucion.Estado.in_([ESTADO_PENDIENTE, ESTADO_APROBADA]),
+                DevolucionDetalle.ID_Producto == p.ID_Producto,
+            )
+            .scalar() or 0
+        )
+        restante = vxp.Cantidad - ya_devuelto
+        if p.Cantidad > restante:
             producto = db.query(Producto).filter(
                 Producto.ID_Producto == p.ID_Producto
             ).first()
             nombre = producto.nombre if producto else str(p.ID_Producto)
+            if restante <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Ya se devolvió la totalidad de '{nombre}' en este pedido"
+                )
             raise HTTPException(
                 status_code=400,
-                detail=f"No puedes devolver más unidades de '{nombre}' de las que compraste ({vxp.Cantidad})"
+                detail=(
+                    f"Solo puedes devolver hasta {restante} unidad{'es' if restante != 1 else ''} "
+                    f"de '{nombre}' (ya se solicitó la devolución de {ya_devuelto})"
+                )
             )
 
     # 5. Calcular total con el precio del CATÁLOGO, no con el del request.

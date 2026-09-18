@@ -241,7 +241,7 @@ class PanelClienteTests(PanelBase):
     def test_acepta_la_fecha_que_le_propone_el_administrador(self):
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        fecha = (datetime.now() + timedelta(days=3)).isoformat()
+        fecha = (datetime.now() + timedelta(days=8)).isoformat()
 
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
@@ -261,12 +261,12 @@ class PanelClienteTests(PanelBase):
         """
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        fecha = (datetime.now() + timedelta(days=3)).isoformat()
+        fecha = (datetime.now() + timedelta(days=8)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
 
-        fecha_final = (datetime.now() + timedelta(days=5)).isoformat()
+        fecha_final = (datetime.now() + timedelta(days=9)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/rechazar-fecha", self.cliente,
             {"fecha_propuesta": fecha_final, "motivo": "Ese día no puedo recibirlo"},
@@ -286,11 +286,11 @@ class PanelClienteTests(PanelBase):
         """
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        fecha = (datetime.now() + timedelta(days=3)).isoformat()
+        fecha = (datetime.now() + timedelta(days=8)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
-        fecha_final = (datetime.now() + timedelta(days=5)).isoformat()
+        fecha_final = (datetime.now() + timedelta(days=9)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/rechazar-fecha", self.cliente,
             {"fecha_propuesta": fecha_final, "motivo": "Ese día no puedo recibirlo"},
@@ -302,7 +302,7 @@ class PanelClienteTests(PanelBase):
     def test_no_acepta_la_fecha_de_un_pedido_ajeno(self):
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        fecha = (datetime.now() + timedelta(days=3)).isoformat()
+        fecha = (datetime.now() + timedelta(days=8)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
@@ -840,7 +840,7 @@ class DevolucionesTests(PanelBase):
             "/devoluciones/", self.cliente, self.cuerpo_devolucion(id_venta)
         )
         self.assertEqual(respuesta.status_code, 400)
-        self.assertIn("activa", self.detalle(respuesta).lower())
+        self.assertIn("pendiente", self.detalle(respuesta).lower())
 
     def test_no_se_puede_devolver_un_producto_que_no_se_compro(self):
         id_venta = self.pedido_entregado()
@@ -960,6 +960,75 @@ class DevolucionesTests(PanelBase):
             )), 201)
         # Se pagó $20.000 por las dos unidades: no se devuelve más que eso.
         self.assertEqual(Decimal(cuerpo["TotalDevuelto"]), Decimal("20000"))
+
+    # ── Devoluciones parciales en tandas ─────────────────────────────────
+
+    def _aprobar(self, id_dev):
+        self.afirmar_ok(self.patch(
+            f"/devoluciones/{id_dev}/resolver", self.admin,
+            {"Estado": DEV_APROBADA, "Comentario": "Procede"},
+        ))
+
+    def test_devolucion_parcial_en_dos_tandas(self):
+        """Primera tanda aprobada → segunda tanda por el restante → permite.
+
+        El pedido tiene 2 tostones; se devuelve 1, se aprueba, luego se
+        pide el segundo: el servidor lo acepta porque la aprobada no bloquea.
+        """
+        id_venta = self.pedido_entregado()
+        primera = self.afirmar_ok(
+            self.post("/devoluciones/", self.cliente, self.cuerpo_devolucion(id_venta)), 201
+        )
+        self._aprobar(primera["ID_Devolucion"])
+
+        segunda = self.post(
+            "/devoluciones/", self.cliente, self.cuerpo_devolucion(id_venta)
+        )
+        self.assertEqual(segunda.status_code, 201, self.detalle(segunda))
+
+    def test_no_se_puede_devolver_mas_de_lo_que_queda_tras_devolucion_aprobada(self):
+        """Primera tanda aprobada → segunda tanda con más del restante → 400.
+
+        Compró 2, ya devolvió 1 (aprobada). Intenta devolver 2 → sobra 1,
+        el servidor rechaza.
+        """
+        id_venta = self.pedido_entregado()
+        primera = self.afirmar_ok(
+            self.post("/devoluciones/", self.cliente, self.cuerpo_devolucion(id_venta)), 201
+        )
+        self._aprobar(primera["ID_Devolucion"])
+
+        respuesta = self.post("/devoluciones/", self.cliente, self.cuerpo_devolucion(
+            id_venta,
+            productos=[{"ID_Producto": ID_TOSTON, "Cantidad": 2, "PrecioUnitario": 10000}],
+        ))
+        self.assertEqual(respuesta.status_code, 400)
+        # El mensaje debe mencionar el límite restante (1 unidad)
+        detalle = self.detalle(respuesta).lower()
+        self.assertTrue(
+            "1 unidad" in detalle or "solo puedes" in detalle,
+            f"mensaje inesperado: {detalle}",
+        )
+
+    def test_el_rechazo_no_reduce_el_restante(self):
+        """Una devolución rechazada no consume cupo: se puede volver a pedir.
+
+        El cliente intenta devolver 1 toston, se rechaza, y puede volver a
+        pedir el mismo producto sin que el servidor lo bloquee por cantidad.
+        """
+        id_venta = self.pedido_entregado()
+        primera = self.afirmar_ok(
+            self.post("/devoluciones/", self.cliente, self.cuerpo_devolucion(id_venta)), 201
+        )
+        self.afirmar_ok(self.patch(
+            f"/devoluciones/{primera['ID_Devolucion']}/resolver", self.admin,
+            {"Estado": DEV_RECHAZADA, "Comentario": "No procede"},
+        ))
+
+        segunda = self.post(
+            "/devoluciones/", self.cliente, self.cuerpo_devolucion(id_venta)
+        )
+        self.assertEqual(segunda.status_code, 201, self.detalle(segunda))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1414,7 +1483,7 @@ class FechaPropuestaTests(PanelBase):
         """Pedido con faltante, confirmado y con la fecha ya propuesta."""
         pedido = self.pedido_con_faltante()
         id_venta = pedido["ID_Venta"]
-        fecha = (datetime.now() + timedelta(days=3)).isoformat()
+        fecha = (datetime.now() + timedelta(days=8)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
@@ -1477,7 +1546,7 @@ class FechaPropuestaTests(PanelBase):
             orden.Estado = ORDEN_CANCELADA
         self.db.commit()
 
-        fecha = (datetime.now() + timedelta(days=3)).isoformat()
+        fecha = (datetime.now() + timedelta(days=8)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
@@ -1515,7 +1584,7 @@ class FechaPropuestaTests(PanelBase):
         """
         id_venta = self.esperando_respuesta()
 
-        fecha_final = (datetime.now() + timedelta(days=5)).isoformat()
+        fecha_final = (datetime.now() + timedelta(days=9)).isoformat()
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/rechazar-fecha", self.cliente,
             {"fecha_propuesta": fecha_final, "motivo": "Ese día no puedo recibirlo"},

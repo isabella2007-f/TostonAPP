@@ -337,7 +337,7 @@ class PanelBase(unittest.TestCase):
             "Metodo_Pago": "Efectivo",
             "productos": [{"ID_Producto": ID_TOSTON, "Cantidad": 2}],
             "Fecha_entrega_esperada":
-                (datetime.now() + timedelta(days=2)).isoformat(),
+                (datetime.now() + timedelta(days=8)).isoformat(),
         }
         cuerpo.update(kw)
         return cuerpo
@@ -479,7 +479,7 @@ class PanelBase(unittest.TestCase):
         cuerpo = dict(
             productos=[{"ID_Producto": ID_TORTA, "Cantidad": cantidad}],
             Metodo_Pago="Transferencia",
-            Fecha_entrega_esperada=(datetime.now() + timedelta(days=2)).isoformat(),
+            Fecha_entrega_esperada=(datetime.now() + timedelta(days=8)).isoformat(),
         )
         cuerpo.update(kw)
         return self.crear_pedido(**cuerpo)
@@ -498,14 +498,29 @@ class PanelBase(unittest.TestCase):
         Un pedido "Pendiente de Aprobación" (necesita producción) se aprueba
         con el Camino A directo; uno normal que por lo que sea sigue Pendiente
         se confirma con el endpoint genérico.
+
+        La ventana de protección de 10 min (para que el cliente pueda editar)
+        se adelanta a mano: en tests no hay usuario real esperando, el helper
+        solo quiere dejar el pedido en el estado correcto.
         """
         venta = self.venta(id_venta)
         if venta.Estado != PEDIDO_PENDIENTE:
             return
+        self._saltar_ventana(id_venta)
+        venta = self.venta(id_venta)
         if getattr(venta, "Necesita_Produccion", 0):
             self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
         else:
             self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+
+    def _saltar_ventana(self, id_venta):
+        """Adelanta Fecha_Venta para que la ventana de protección de 10 min
+        ya haya vencido. En tests no hay usuario esperando; el helper solo
+        quiere dejar el pedido en el estado correcto."""
+        venta = self.venta(id_venta)
+        if venta.Fecha_Venta:
+            venta.Fecha_Venta = datetime.now() - timedelta(minutes=11)
+            self.db.commit()
 
     def poner_estado(self, id_venta, estado):
         """Deja el pedido en ese estado, saltándose los que ya pasó.
@@ -515,6 +530,7 @@ class PanelBase(unittest.TestCase):
         """
         if self.venta(id_venta).Estado == estado:
             return
+        self._saltar_ventana(id_venta)
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/estado", self.admin, {"Estado": estado}))
 

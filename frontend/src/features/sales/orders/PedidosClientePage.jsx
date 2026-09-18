@@ -1,8 +1,9 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, solicitarEscalado, pagarPedido, pagarSaldoPedido } from '../../../services/pedidosService';
 import { getLandingConfig } from '../../../services/landingConfigService';
+import { fechaMinimaPedido, fechaMaximaPedido } from '../../../utils/horario';
 import { subirImagenCloudinary } from '../../../utils/cloudinary.js';
-import { crearDevolucion } from '../../../services/devolucionesService';
+import { crearDevolucion, getMisDevoluciones } from '../../../services/devolucionesService';
 import { fmtFecha } from '../../../utils/dateUtils.js';
 import { getCurrentUser } from '../../client/profile/services/profileService.js';
 import { descargarFacturaPedido } from '../../../utils/facturaGenerator.js';
@@ -319,15 +320,37 @@ const COP_DEV = formatCOP;
 
 function SolicitarDevolucionModal({ pedido, onClose, onSuccess }) {
   const [items,      setItems]      = useState(
-    (pedido.productosItems || []).map(p => ({ ...p, cantDev: 0 }))
+    (pedido.productosItems || []).map(p => ({ ...p, cantDev: 0, cantMax: p.cantidad }))
   );
   const [motivo,     setMotivo]     = useState('');
   const [comentario, setComentario] = useState('');
   const [saving,     setSaving]     = useState(false);
   const [error,      setError]      = useState('');
 
+  // Ajusta cantMax descontando devoluciones Pendientes + Aprobadas previas.
+  useEffect(() => {
+    getMisDevoluciones({ porPagina: 100 })
+      .then(({ devoluciones }) => {
+        const devsVenta = devoluciones.filter(
+          d => String(d.idVenta) === String(pedido.id) && d.estadoId !== 7
+        );
+        if (devsVenta.length === 0) return;
+        setItems(prev => prev.map(item => {
+          const yaDevuelto = devsVenta.reduce((sum, dev) => {
+            const found = (dev.productos || []).find(
+              dp => String(dp.idProducto) === String(item.idProducto)
+            );
+            return sum + (found ? found.cantidad : 0);
+          }, 0);
+          const cantMax = Math.max(0, item.cantidad - yaDevuelto);
+          return { ...item, cantMax, cantDev: Math.min(item.cantDev, cantMax) };
+        }));
+      })
+      .catch(() => {});
+  }, [pedido.id]);
+
   const setCant = (idx, val) => {
-    const n = Math.max(0, Math.min(items[idx].cantidad, Number(val) || 0));
+    const n = Math.max(0, Math.min(items[idx].cantMax, Number(val) || 0));
     setItems(prev => { const a = [...prev]; a[idx] = { ...a[idx], cantDev: n }; return a; });
   };
 
@@ -388,14 +411,14 @@ function SolicitarDevolucionModal({ pedido, onClose, onSuccess }) {
               <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: idx < items.length - 1 ? '1px solid #f5f5f5' : 'none', background: item.cantDev > 0 ? '#f9fdf9' : '#fff' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#212121' }}>{item.nombre}</div>
-                  <div style={{ fontSize: 11, color: '#9e9e9e' }}>{COP_DEV(item.precio)} c/u · comprado: ×{item.cantidad}</div>
+                  <div style={{ fontSize: 11, color: '#9e9e9e' }}>{COP_DEV(item.precio)} c/u · devolvible: ×{item.cantMax}</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <button onClick={() => setCant(idx, item.cantDev - 1)} disabled={item.cantDev === 0}
                     style={{ width: 28, height: 28, borderRadius: '50%', border: '1.5px solid #e0e0e0', background: '#fff', cursor: item.cantDev === 0 ? 'not-allowed' : 'pointer', fontSize: 16, color: '#616161', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
                   <span style={{ minWidth: 24, textAlign: 'center', fontWeight: 800, fontSize: 14, color: item.cantDev > 0 ? '#c62828' : '#bdbdbd' }}>{item.cantDev}</span>
-                  <button onClick={() => setCant(idx, item.cantDev + 1)} disabled={item.cantDev >= item.cantidad}
-                    style={{ width: 28, height: 28, borderRadius: '50%', border: '1.5px solid #e0e0e0', background: '#fff', cursor: item.cantDev >= item.cantidad ? 'not-allowed' : 'pointer', fontSize: 16, color: '#616161', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                  <button onClick={() => setCant(idx, item.cantDev + 1)} disabled={item.cantDev >= item.cantMax}
+                    style={{ width: 28, height: 28, borderRadius: '50%', border: '1.5px solid #e0e0e0', background: '#fff', cursor: item.cantDev >= item.cantMax ? 'not-allowed' : 'pointer', fontSize: 16, color: '#616161', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
                 </div>
                 {item.cantDev > 0 && (
                   <div style={{ minWidth: 72, textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#c62828' }}>{COP_DEV(item.precio * item.cantDev)}</div>
@@ -620,6 +643,22 @@ const PedidosClientePage = () => {
       const totalPedido = Number(editModal.total) || 0;
       if (ef <= 0 || ef >= totalPedido) {
         setEditError(`El monto en efectivo debe ser mayor a $0 y menor al total (${COP(totalPedido)}).`);
+        setEditGuardando(false);
+        return;
+      }
+    }
+
+    // Validar rango de fecha si el cliente está reabriendo la negociación
+    if (puedeReabrirNegociacion(editModal) && editFechaEntrega) {
+      const fechaMin = fechaMinimaPedido(null);
+      const fechaMax = fechaMaximaPedido();
+      if (editFechaEntrega < fechaMin) {
+        setEditError(`La fecha de entrega más próxima disponible es ${fechaMin}`);
+        setEditGuardando(false);
+        return;
+      }
+      if (editFechaEntrega > fechaMax) {
+        setEditError(`La fecha de entrega no puede ser después del ${fechaMax}`);
         setEditGuardando(false);
         return;
       }
@@ -1971,6 +2010,7 @@ const PedidosClientePage = () => {
                     ¿Para cuándo lo necesitas?
                   </label>
                   <input type="date" value={editFechaEntrega} onChange={e => setEditFechaEntrega(e.target.value)}
+                    min={fechaMinimaPedido(null)} max={fechaMaximaPedido()}
                     style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', marginBottom: 4 }} />
                   <p style={{ fontSize: 10, color: '#9e9e9e', margin: 0 }}>
                     Guardar cambios aquí vuelve a poner el pedido en "Pendiente de Aprobación".

@@ -10,18 +10,19 @@
 export const HORAS_LIMITE_DEVOLUCION = 48;
 
 /**
- * Estados que ocupan el pedido. Una rechazada no cuenta: se puede volver a
- * intentar mientras el plazo siga vivo, y así lo hace el servidor.
+ * Estados que bloquean un nuevo pedido de devolución. Solo Pendiente: una
+ * aprobada no bloquea (permite devoluciones parciales en tandas). Una
+ * rechazada tampoco: el cliente puede reintentar esas unidades.
  */
-export const ESTADOS_DEVOLUCION_ACTIVA = ['Pendiente', 'Aprobada'];
+export const ESTADOS_DEVOLUCION_ACTIVA = ['Pendiente'];
 
-/** Los mismos, por id: 3=Pendiente, 6=Aprobada (7=Rechazada no cuenta). */
-export const IDS_DEVOLUCION_ACTIVA = [3, 6];
+/** Los mismos, por id: 3=Pendiente (7=Rechazada, 6=Aprobada no bloquean). */
+export const IDS_DEVOLUCION_ACTIVA = [3];
 
 /** Lo que se le dice al cliente sobre por qué no ve todos sus pedidos. */
 export const AVISO_PLAZO_DEVOLUCION =
   `Los pedidos con más de ${HORAS_LIMITE_DEVOLUCION} horas de entregados ya no ` +
-  'se pueden devolver, y tampoco los que ya tienen una devolución en curso: ' +
+  'se pueden devolver, y tampoco los que ya tienen una devolución pendiente de revisión: ' +
   'por eso no aparecen en la lista.';
 
 /**
