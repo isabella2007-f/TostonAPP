@@ -32,6 +32,17 @@ export function urlProductImg(url, maxW = 800) {
 }
 
 /**
+ * srcset listo para poner en <img srcSet="...">.
+ * Cloudinary sirve WebP automáticamente vía f_auto cuando el navegador lo soporta.
+ * Widths default: 480 (móvil), 800 (tablet/escritorio moderado), 1200 (escritorio 2×).
+ */
+export function urlProductImgSrcset(url, widths = [480, 800, 1200]) {
+  return widths
+    .map(w => `${urlProductImg(url, w)} ${w}w`)
+    .join(', ');
+}
+
+/**
  * `url` recortada a un cuadrado de `lado` píxeles CSS.
  *
  * Lo que no sea una imagen de Cloudinary se devuelve tal cual: una URL de otro
