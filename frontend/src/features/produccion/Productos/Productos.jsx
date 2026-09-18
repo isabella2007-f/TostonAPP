@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { Search, X, AlertTriangle, Package, ClipboardList, Eye, PenLine, Trash2, Truck, Clock, AlertCircle, Scale, Utensils, CornerUpLeft, ChevronDown, RefreshCw } from "lucide-react";
 import { fmtFecha } from "../../../utils/dateUtils.js";
+import { urlProductImg } from "../../../utils/avatar.js";
 import { crearFicha, editarFicha } from "../../../services/fichaTecnicaService.js";
 import { Toast } from "./ui.jsx";
 import CrearProducto from "./CrearProducto.jsx";
@@ -284,8 +285,9 @@ function ProductImg({ previews, nombre }) {
   const thumb = previews && previews.length > 0 ? previews[0] : null;
   return thumb ? (
     <img
-      src={thumb}
+      src={urlProductImg(thumb, 100)}
       alt={nombre}
+      loading="lazy"
       style={{
         width: 36, height: 36, borderRadius: 8,
         objectFit: "cover", border: "1px solid #c8e6c9", flexShrink: 0,
@@ -481,8 +483,9 @@ function VerProducto({ product, catObj, onClose, onOpenFicha }) {
                     }}
                   >
                     <img
-                      src={previews[imgIdx]}
+                      src={urlProductImg(previews[imgIdx], 1200)}
                       alt={product.nombre}
+                      loading="lazy"
                       style={{ width: "100%", height: "100%", objectFit: "contain" }}
                     />
                   </div>
@@ -505,8 +508,9 @@ function VerProducto({ product, catObj, onClose, onOpenFicha }) {
                           }}
                         >
                           <img
-                            src={url}
+                            src={urlProductImg(url, 200)}
                             alt="thumb"
+                            loading="lazy"
                             style={{ width: "100%", height: "100%", objectFit: "cover" }}
                           />
                         </div>

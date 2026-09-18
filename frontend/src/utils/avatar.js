@@ -15,6 +15,23 @@
 const DENSIDAD = 2;
 
 /**
+ * URL de Cloudinary redimensionada para una imagen de producto.
+ * `c_limit` limita el ancho sin recortar ni estirar imágenes más pequeñas.
+ * `q_auto,f_auto`: calidad y formato óptimos para el navegador (WebP cuando lo soporta).
+ */
+export function urlProductImg(url, maxW = 800) {
+  const u = (url || '').trim();
+  if (!u) return '';
+  const marca = '/image/upload/';
+  const corte = u.indexOf(marca);
+  if (!u.startsWith('https://res.cloudinary.com/') || corte === -1) return u;
+  const inicio = corte + marca.length;
+  const resto = u.slice(inicio);
+  if (/^[a-z]+_[^/]+\//.test(resto)) return u;
+  return `${u.slice(0, inicio)}c_limit,w_${maxW},q_auto,f_auto/${resto}`;
+}
+
+/**
  * `url` recortada a un cuadrado de `lado` píxeles CSS.
  *
  * Lo que no sea una imagen de Cloudinary se devuelve tal cual: una URL de otro
