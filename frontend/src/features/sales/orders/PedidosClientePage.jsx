@@ -1,5 +1,10 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { getMisVentas, getMiVenta, cancelarMiPedido, editarMiPedido, aceptarFechaProduccion, rechazarFechaProduccion, solicitarEscalado, pagarPedido, pagarSaldoPedido } from '../../../services/pedidosService';
+import {
+  puedeEditarPedido, puedeCancelarPedido, puedeReabrirNegociacion,
+  puedeAbrirEdicion, restanteDeVentana, llevaTransferencia,
+} from './reglasEdicionCliente';
+import { getProfile } from '../../client/profile/services/profileService';
 import { getLandingConfig } from '../../../services/landingConfigService';
 import { fechaMinimaPedido, fechaMaximaPedido } from '../../../utils/horario';
 import { subirImagenCloudinary } from '../../../utils/cloudinary.js';
@@ -90,21 +95,18 @@ function PedidoStepper({ estado, domicilio }) {
   );
 }
 
-const VENTANA_EDICION_MS = 10 * 60 * 1000;
-
-function CountdownBanner({ fechaVenta }) {
-  const [secsLeft, setSecsLeft] = useState(() => {
-    if (!fechaVenta) return 0;
-    const diff = VENTANA_EDICION_MS - (Date.now() - new Date(fechaVenta).getTime());
-    return Math.max(0, Math.floor(diff / 1000));
-  });
-
-  useEffect(() => {
-    const id = setInterval(() => setSecsLeft(s => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  if (secsLeft <= 0) return null;
+/**
+ * Lo que le queda al cliente para cambiar o cancelar su pedido.
+ *
+ * El contador se calculaba aparte, con `Date.now()` contra una fecha sin
+ * zona horaria, y sobre todo NO mandaba sobre nada: se llegaba a 00:00 y los
+ * botones de editar y cancelar seguian ahi. Ahora los tres —aviso, editar y
+ * cancelar— leen la misma regla y el mismo reloj.
+ */
+function CountdownBanner({ pedido, ahora }) {
+  const restante = restanteDeVentana(pedido, ahora);
+  if (restante <= 0) return null;
+  const secsLeft = Math.floor(restante / 1000);
   const m = String(Math.floor(secsLeft / 60)).padStart(2, '0');
   const s = String(secsLeft % 60).padStart(2, '0');
   return (
@@ -476,6 +478,12 @@ function SolicitarDevolucionModal({ pedido, onClose, onSuccess }) {
 const PedidosClientePage = () => {
   const [pedidos,        setPedidos]        = useState([]);
   const [user,           setUser]           = useState(null);
+  /**
+   * El reloj de la pantalla. Un solo latido para el aviso de los 10 minutos
+   * y para los botones que dependen de el: antes cada tarjeta corria su
+   * propio intervalo y ninguno apagaba nada.
+   */
+  const [ahora,          setAhora]          = useState(() => new Date());
   const [searchTerm,     setSearchTerm]     = useState('');
   const [selectedPedido, setSelectedPedido] = useState(null);
   const [filterEstado,   setFilterEstado]   = useState('todos');
@@ -510,6 +518,10 @@ const PedidosClientePage = () => {
   // (Pendiente de Aprobación / Fecha propuesta).
   const [editCantidades,       setEditCantidades]       = useState({});
   const [editFechaEntrega,     setEditFechaEntrega]     = useState('');
+  /** Barrio y precio que devuelve el selector: el envío lo cotiza el servidor. */
+  const [editCobertura,        setEditCobertura]        = useState(null);
+  /** La dirección que el cliente ya tiene registrada (`/auth/perfil`). */
+  const [perfil,               setPerfil]               = useState(null);
 
   // Pagar el pedido (o su anticipo) mientras está 'Esperando pago'
   const [pagoArchivo,     setPagoArchivo]     = useState(null);
@@ -559,6 +571,11 @@ const PedidosClientePage = () => {
   }, []);
 
   useEffect(() => {
+    const id = setInterval(() => setAhora(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     const currentUser = getCurrentUser();
     setUser(currentUser);
     fetchPedidos();
@@ -577,6 +594,28 @@ const PedidosClientePage = () => {
     const matchEstado = filterEstado === 'todos' || p.estado === filterEstado;
     return matchSearch && matchEstado;
   }).sort((a, b) => new Date(b.fecha_pedido) - new Date(a.fecha_pedido));
+
+  // ── Lo que ya tiene registrado el cliente ──────────────────────────
+  const barrioRegistrado      = perfil?.ID_Barrio ?? null;
+  const direccionRegistrada   = (perfil?.Direccion || '').trim();
+  const indicacionesRegistradas = (perfil?.Indicaciones || '').trim();
+  const barrioAUsar           = editIdBarrio ?? barrioRegistrado;
+
+  /**
+   * El total que va a quedar tras guardar.
+   *
+   * El domicilio se cobra o se devuelve en la misma edición, así que el
+   * reparto del pago mixto tiene que hacerse contra ESTE número. Antes se
+   * repartía el total viejo y la parte por transferencia salía corta.
+   */
+  const costoEnvioActual = Number(editModal?.costo_domicilio_total || 0);
+  const costoEnvioNuevo  = editCobertura?.disponible ? Number(editCobertura.final || 0) : 0;
+  const totalConEntrega  = (() => {
+    const base = Number(editModal?.total) || 0;
+    if (editQuiereDomicilio === true  && !editModal?.domicilio) return base + costoEnvioNuevo;
+    if (editQuiereDomicilio === false &&  editModal?.domicilio) return Math.max(0, base - costoEnvioActual);
+    return base;
+  })();
 
   const handleRequestReturn = (pedido) => {
     closeModal();
@@ -598,11 +637,9 @@ const PedidosClientePage = () => {
     }
   };
 
-  const ESTADOS_CANCELABLES = ['Pendiente', 'Fecha propuesta', 'Fecha propuesta final', 'Fecha rechazada', 'Escalado a admin', 'Esperando pago'];
 
   const abrirEditModal = (pedido) => {
     const metodo = pedido.metodo_pago || pedido.Metodo_Pago || '';
-    const lleva = metodo === 'Transferencia' || metodo === 'Mixto';
     setEditMetodoPago(metodo);
     setEditQuiereDomicilio(null);
     setEditIdBarrio(null);
@@ -610,17 +647,27 @@ const PedidosClientePage = () => {
     setEditNotas('');
     setEditError('');
     setEditComprobante(null);
-    // Pre-poblar el preview si ya tienen comprobante con ese método
-    setEditComprobantePreview(lleva ? (pedido.comprobante || null) : null);
+    // El comprobante NO se hereda al abrir el modal.
+    //
+    // Antes se pre-cargaba el que ya estaba y se volvia a mandar tal cual al
+    // guardar. Un comprobante respalda una cifra: al pasar de transferir el
+    // total a transferir solo una parte (mixto), esa captura dejaba de
+    // corresponder al monto nuevo y aun asi quedaba como el comprobante
+    // valido del pedido, sin que a nadie se le pidiera uno nuevo.
+    setEditComprobantePreview(null);
     setEditMontoEfectivo(pedido.monto_efectivo != null ? String(pedido.monto_efectivo) : '');
     // Reabrir negociación (Pendiente de Aprobación / Fecha propuesta): cantidades
     // de las líneas ya pedidas + la fecha límite deseada.
     setEditCantidades(Object.fromEntries((pedido.productosItems || []).map(it => [it.idProducto, it.cantidad])));
     setEditFechaEntrega(pedido.fecha_propuesta ? pedido.fecha_propuesta.slice(0, 10) : '');
     setEditModal(pedido);
+    // La direccion que el cliente ya tiene registrada, del mismo sitio del
+    // que la saca el checkout. Si pasa a domicilio, no hay que volver a
+    // escribir ni a elegir nada.
+    if (!perfil) {
+      getProfile().then(setPerfil).catch(() => {});
+    }
   };
-
-  const puedeReabrirNegociacion = (pedido) => ['Pendiente', 'Fecha propuesta'].includes(pedido?.estado) && pedido?.requiereFechaPropuesta;
 
   const handleEditarPedido = async () => {
     setEditGuardando(true);
@@ -637,12 +684,13 @@ const PedidosClientePage = () => {
       return;
     }
 
-    // Validar monto efectivo para Mixto
+    // Validar monto efectivo para Mixto, contra el total que va a quedar: si
+    // en la misma edición se agrega el domicilio, el total sube y el reparto
+    // se hace sobre ese número, no sobre el anterior.
     if (editMetodoPago === 'Mixto') {
       const ef = Number(editMontoEfectivo) || 0;
-      const totalPedido = Number(editModal.total) || 0;
-      if (ef <= 0 || ef >= totalPedido) {
-        setEditError(`El monto en efectivo debe ser mayor a $0 y menor al total (${COP(totalPedido)}).`);
+      if (ef <= 0 || ef >= totalConEntrega) {
+        setEditError(`El monto en efectivo debe ser mayor a $0 y menor al total (${COP(totalConEntrega)}).`);
         setEditGuardando(false);
         return;
       }
@@ -678,9 +726,6 @@ const PedidosClientePage = () => {
           setEditGuardando(false);
           return;
         }
-      } else if (requiereComprobante && editComprobantePreview && cambioMetodo) {
-        // URL existente que venía pre-poblada al abrir el modal
-        datos.Comprobante_Pago = editComprobantePreview;
       }
 
       // Montos para Mixto
@@ -691,14 +736,17 @@ const PedidosClientePage = () => {
       if (editQuiereDomicilio !== null) {
         datos.quiere_domicilio = editQuiereDomicilio;
         if (editQuiereDomicilio) {
-          if (!editIdBarrio) {
+          if (!editIdBarrio && !barrioRegistrado) {
             setEditError('Selecciona el barrio de entrega para el domicilio');
             setEditGuardando(false);
             return;
           }
-          datos.ID_Barrio = editIdBarrio;
+          datos.ID_Barrio = barrioAUsar;
           if (editDireccion) datos.Direccion_Entrega = editDireccion;
           if (editNotas) datos.Notas = editNotas;
+          // Sin dirección escrita vale la registrada, que es la que el
+          // servidor usa de respaldo. Acá solo se manda lo que el cliente
+          // cambió a propósito.
         }
       }
 
@@ -725,8 +773,19 @@ const PedidosClientePage = () => {
         return;
       }
 
-      await editarMiPedido(editModal.id, datos);
+      const actualizado = await editarMiPedido(editModal.id, datos);
       setEditModal(null);
+      // El detalle sigue abierto detrás del modal: si no se refresca, queda
+      // mostrando el pedido de antes de guardar (método viejo, total viejo,
+      // el comprobante que se acaba de quitar).
+      if (selectedPedido?.id === editModal.id) {
+        try {
+          setSelectedPedido(await getMiVenta(editModal.id));
+        } catch {
+          setSelectedPedido(null);
+        }
+      }
+      void actualizado;
       fetchPedidos();
     } catch (err) {
       setEditError(err.message || 'No se pudo guardar. Intenta de nuevo.');
@@ -982,7 +1041,7 @@ const PedidosClientePage = () => {
                     </div>
                   </div>
 
-                  {!pedido.requiere_anticipo && <CountdownBanner fechaVenta={pedido.fecha_venta} />}
+                  {!pedido.requiere_anticipo && <CountdownBanner pedido={pedido} ahora={ahora} />}
 
                   {/* Card Body */}
                   <div className="p-6 flex-1 space-y-4">
@@ -1040,7 +1099,7 @@ const PedidosClientePage = () => {
                           Ver detalles
                           <ChevronRight size={12} className="group-hover/btn:translate-x-1 transition-transform" strokeWidth={3} />
                         </button>
-                        {!['Cancelado', 'Entregado'].includes(pedido.estado) && !pedido.requiere_anticipo && (
+                        {puedeAbrirEdicion(pedido, ahora) && (
                           <button
                             onClick={() => abrirEditModal(pedido)}
                             className="w-10 h-10 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-colors shadow-sm"
@@ -1159,7 +1218,8 @@ const PedidosClientePage = () => {
 
               {/* Esperando pago: el total (sin producción) o el anticipo (con
                   fecha ya aprobada) — siempre por transferencia. */}
-              {selectedPedido.estado === 'Esperando pago' && (() => {
+              {selectedPedido.estado === 'Esperando pago'
+                && llevaTransferencia(selectedPedido.metodo_pago) && (() => {
                 const yaSubido   = selectedPedido.estado_pago === 'pendiente_validacion';
                 const rechazado  = selectedPedido.estado_pago === 'comprobante_rechazado';
                 const minimo     = selectedPedido.requiere_anticipo ? Number(selectedPedido.anticipo_requerido || 0) : Number(selectedPedido.total || 0);
@@ -1934,7 +1994,7 @@ const PedidosClientePage = () => {
                   >
                     <FileText size={14} /> Descargar factura
                   </button>
-                  {ESTADOS_CANCELABLES.includes(selectedPedido.estado) && !selectedPedido.anticipo_registrado && (
+                  {puedeCancelarPedido(selectedPedido, ahora) && (
                     <button
                       className="btn-cancel"
                       style={{ background: '#fff5f5', color: '#dc2626', border: '1.5px solid #fca5a5', display: 'flex', alignItems: 'center', gap: 6 }}
@@ -1952,13 +2012,18 @@ const PedidosClientePage = () => {
                       <Upload size={14} /> Enviar comprobante
                     </button>
                   )}
-                  {!['Cancelado', 'Entregado'].includes(selectedPedido.estado) && !selectedPedido.requiere_anticipo && (
+                  {puedeAbrirEdicion(selectedPedido, ahora) && (
                     <button
                       className="btn-cancel"
                       style={{ background: '#f0f4ff', color: '#3730a3', border: '1.5px solid #a5b4fc', display: 'flex', alignItems: 'center', gap: 6 }}
                       onClick={() => abrirEditModal(selectedPedido)}
                     >
                       <PenLine size={14} /> Editar pedido
+                      {puedeEditarPedido(selectedPedido, ahora) && (
+                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
+                          · {Math.floor(restanteDeVentana(selectedPedido, ahora) / 60000) + 1} min
+                        </span>
+                      )}
                     </button>
                   )}
                   {puedeDevolver(selectedPedido) && (
@@ -2072,18 +2137,18 @@ const PedidosClientePage = () => {
                         ¿Cuánto pagas en efectivo? <span style={{ color: '#c62828' }}>*</span>
                       </label>
                       <div style={{ fontSize: 10, color: '#9e9e9e', marginBottom: 6, lineHeight: 1.4 }}>
-                        Total del pedido: <strong>{COP(Number(editModal?.total) || 0)}</strong>. El resto va por transferencia.
+                        Total del pedido: <strong>{COP(totalConEntrega)}</strong>. El resto va por transferencia.
                       </div>
                       <input
                         type="number"
                         min={1}
-                        max={Number(editModal?.total) - 1}
+                        max={totalConEntrega - 1}
                         value={editMontoEfectivo}
                         onChange={e => setEditMontoEfectivo(e.target.value)}
                         placeholder="Ej: 5000"
                         style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
                       />
-                      {editMontoEfectivo && Number(editMontoEfectivo) > 0 && Number(editMontoEfectivo) < Number(editModal?.total) && (
+                      {editMontoEfectivo && Number(editMontoEfectivo) > 0 && Number(editMontoEfectivo) < totalConEntrega && (
                         <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
                           <div style={{ flex: 1, background: '#e8f5e9', borderRadius: 8, padding: '6px 10px', textAlign: 'center' }}>
                             <div style={{ fontSize: 9, fontWeight: 700, color: '#2e7d32', textTransform: 'uppercase' }}>Efectivo</div>
@@ -2091,7 +2156,7 @@ const PedidosClientePage = () => {
                           </div>
                           <div style={{ flex: 1, background: '#e3f2fd', borderRadius: 8, padding: '6px 10px', textAlign: 'center' }}>
                             <div style={{ fontSize: 9, fontWeight: 700, color: '#1565c0', textTransform: 'uppercase' }}>Transferencia</div>
-                            <div style={{ fontSize: 13, fontWeight: 800, color: '#0d47a1' }}>{COP(Math.max(0, Number(editModal?.total) - Number(editMontoEfectivo)))}</div>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#0d47a1' }}>{COP(Math.max(0, totalConEntrega - Number(editMontoEfectivo)))}</div>
                           </div>
                         </div>
                       )}
@@ -2162,16 +2227,41 @@ const PedidosClientePage = () => {
                     ))}
                   </div>
 
-                  {editQuiereDomicilio === true && !editModal.tiene_domicilio && (
+                  {editQuiereDomicilio === true && !editModal.domicilio && (
                     <div style={{ marginTop: 4 }}>
+                      {/* Lo que ya está guardado en su cuenta. Antes había que
+                          elegir departamento, ciudad y barrio otra vez y
+                          escribir la dirección de nuevo: el botón de guardar
+                          se quedaba pidiendo el barrio y pasar a domicilio
+                          "no dejaba". */}
+                      {direccionRegistrada && (
+                        <div style={{ background: '#f1f8e9', border: '1.5px solid #c5e1a5', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                          <p style={{ fontSize: 10, fontWeight: 800, color: '#2e7d32', textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 3px', display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <MapPin size={11} /> Se entrega en tu dirección registrada
+                          </p>
+                          <p style={{ fontSize: 12.5, color: '#33691e', fontWeight: 600, margin: 0 }}>{direccionRegistrada}</p>
+                          {indicacionesRegistradas && (
+                            <p style={{ fontSize: 11, color: '#558b2f', margin: '3px 0 0' }}>{indicacionesRegistradas}</p>
+                          )}
+                          <p style={{ fontSize: 10, color: '#7cb342', margin: '5px 0 0' }}>
+                            Si quieres recibirlo en otra parte, cámbialo aquí abajo.
+                          </p>
+                        </div>
+                      )}
                       <SelectorBarrioEntrega
-                        onChange={(id, cob) => setEditIdBarrio(cob?.disponible ? id : null)}
+                        prefillIdBarrio={barrioRegistrado}
+                        onChange={(id, cob) => {
+                          setEditCobertura(cob || null);
+                          setEditIdBarrio(cob?.disponible ? id : null);
+                        }}
                         mostrarCobertura
                         compacto
                       />
                       <input
                         type="text"
-                        placeholder="Dirección de entrega (vía, apto, referencia…)"
+                        placeholder={direccionRegistrada
+                          ? `Otra dirección (opcional) — ahora: ${direccionRegistrada}`
+                          : 'Dirección de entrega (vía, apto, referencia…)'}
                         value={editDireccion}
                         onChange={e => setEditDireccion(e.target.value)}
                         style={{ width: '100%', marginTop: 8, padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
@@ -2183,28 +2273,28 @@ const PedidosClientePage = () => {
                         onChange={e => setEditNotas(e.target.value)}
                         style={{ width: '100%', marginTop: 6, padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
                       />
-                      {editIdBarrio && (
+                      {costoEnvioNuevo > 0 && (
                         <p style={{ fontSize: 11, color: '#2e7d32', background: '#f1f8e9', borderRadius: 8, padding: '6px 10px', marginTop: 6, margin: 0 }}>
-                          Se sumará el costo del domicilio al total del pedido.
+                          Domicilio {COP(costoEnvioNuevo)} · el pedido queda en {COP(totalConEntrega)}.
                         </p>
                       )}
                     </div>
                   )}
 
-                  {editQuiereDomicilio === true && editModal.tiene_domicilio && (
+                  {editQuiereDomicilio === true && editModal.domicilio && (
                     <p style={{ fontSize: 12, color: '#616161', background: '#f5f5f5', borderRadius: 8, padding: '8px 12px', margin: 0 }}>
                       Tu pedido ya tiene domicilio. Si quieres cambiar el barrio o la dirección, contacta a un empleado.
                     </p>
                   )}
 
-                  {editQuiereDomicilio === false && editModal.tiene_domicilio && (
+                  {editQuiereDomicilio === false && editModal.domicilio && (
                     <div style={{ background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#f57f17', fontWeight: 600, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                       <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-                      El costo del domicilio se restará del total. Si pagaste anticipo superior al nuevo total, el exceso se acreditará a tu cuenta.
+                      Se descuentan {COP(costoEnvioActual)} de domicilio: el pedido queda en {COP(totalConEntrega)}. Si pagaste un anticipo mayor, el exceso se acredita a tu cuenta.
                     </div>
                   )}
 
-                  {editQuiereDomicilio === false && !editModal.tiene_domicilio && (
+                  {editQuiereDomicilio === false && !editModal.domicilio && (
                     <p style={{ fontSize: 12, color: '#616161', background: '#f5f5f5', borderRadius: 8, padding: '8px 12px', margin: 0 }}>
                       Tu pedido ya es de recogida en tienda.
                     </p>

@@ -52,6 +52,8 @@ const adaptPedido = (p) => {
     barrio_entrega:         p.barrio_entrega || "",
     precio_domicilio_base:  p.precio_domicilio_base ?? null,
     precio_domicilio_final: p.precio_domicilio_final ?? null,
+    // Lo que el pedido paga de envío, tal como lo calcula el servidor.
+    costo_domicilio_total:  p.costo_domicilio_total ?? p.precio_domicilio_final ?? 0,
     desglose_domicilio:     p.desglose_domicilio ?? null,
     subtotal:         p.subtotal_bruto    || p.Subtotal         || p.subtotal || 0,
     descuento:        p.credito_aplicado  || p.Descuento        || p.descuento || 0,

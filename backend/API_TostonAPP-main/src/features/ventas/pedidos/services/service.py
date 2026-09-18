@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from src.shared.services.models import (
     Venta, Estado, DetalleVenta, Domicilio,
     VentaXProducto, Producto, DescuentoXVenta,
-    Barrio,
+    Barrio, Usuario,
 )
 from src.features.ventas.gestion_ventas.services.service import (
     _formato_venta, _now, cambiar_estado as _gv_cambiar_estado,
@@ -248,6 +248,16 @@ def editar_pedido(db: Session, id_venta: int, datos: dict) -> dict:
         )
 
     db.commit()
+
+    # Igual que en la edición del cliente: en efectivo no hay comprobante que
+    # esperar, así que el pedido no puede quedarse "Esperando pago" —el estado
+    # con el que el panel y la app le piden al cliente la captura de una
+    # transferencia que ya nadie va a hacer.
+    if (pedido.Estado == EstadoPedido.ESPERANDO_PAGO
+            and not _lleva_transferencia(pedido.Metodo_Pago)):
+        return _gv_cambiar_estado(
+            db, id_venta, EstadoPedido.CONFIRMADO, saltar_ventana_proteccion=True)
+
     db.refresh(pedido)
     return _formato_venta(pedido, db)
 
@@ -357,6 +367,14 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
                 status_code=400,
                 detail="Solo puedes cancelar tu pedido durante los primeros 10 minutos después de crearlo. Escríbenos si necesitas cancelarlo.",
             )
+        # La ventana de proteccion de `cambiar_estado` existe para que un
+        # empleado no procese el pedido mientras el cliente todavia puede
+        # tocarlo. Aplicarsela al propio cliente dejaba la cancelacion
+        # imposible: durante los 10 minutos la rechazaba esa proteccion, y
+        # pasados los 10 minutos la rechazaba la regla de arriba. El boton
+        # existia en las dos pantallas y nunca funcionaba.
+        return _gv_cambiar_estado(
+            db, id_venta, EstadoPedido.CANCELADO, saltar_ventana_proteccion=True)
 
     return _gv_cambiar_estado(db, id_venta, EstadoPedido.CANCELADO)
 
@@ -506,14 +524,31 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
 
-    # Dos puntos de entrada quedan fuera de la ventana de 10 minutos, que existe
-    # para el arrepentimiento inmediato tras crear el pedido, no para esto:
-    # - Reabrir la negociación de fecha (rechazar-con-causa + editar), habilitada
-    #   deliberadamente por la contraoferta del admin.
-    # - Adjuntar el comprobante de un pedido 'Esperando Pago': puede necesitar
-    #   más de 10 minutos (abrir el banco, transferir, tomar la captura).
     _reabre_negociacion = pedido.Estado in (EstadoPedido.PENDIENTE, EstadoPedido.FECHA_PROPUESTA)
-    _fuera_de_ventana_ok = _reabre_negociacion or pedido.Estado == EstadoPedido.ESPERANDO_PAGO
+
+    # La ventana de 10 minutos se aplica a lo que se está cambiando, no al
+    # request entero.
+    #
+    # Antes bastaba con que el pedido estuviera en 'Pendiente', 'Fecha
+    # propuesta' o 'Esperando pago' para saltarse el plazo COMPLETO, y esos
+    # tres estados cubren a casi todos los pedidos vivos: un pedido por
+    # transferencia nace en 'Esperando pago' y uno con producción vive en
+    # 'Pendiente', así que en la práctica cualquiera de los dos se podía
+    # editar días después. La exención existía por dos motivos concretos y
+    # solo esos dos siguen exentos:
+    #
+    # - Reabrir la negociación de fecha (cantidades y fecha límite): la
+    #   contraoferta del admin la habilita a propósito, y ocurre después.
+    # - Adjuntar el comprobante: transferir y tomar la captura lleva más de
+    #   diez minutos. Eso no es editar el pedido, es cumplirlo.
+    #
+    # Todo lo demás —cómo se paga y cómo se entrega— es el arrepentimiento
+    # inmediato que la ventana protege, y vence con ella.
+    _CAMPOS_CON_PLAZO = (
+        "Metodo_Pago", "quiere_domicilio", "Monto_Efectivo",
+        "ID_Barrio", "Direccion_Entrega", "Notas",
+    )
+    _cambia_el_pedido = any(datos.get(c) is not None for c in _CAMPOS_CON_PLAZO)
 
     if actual.get("tipo") == "cliente":
         if pedido.ID_Usuario != actual["registro"].ID_Usuario:
@@ -528,7 +563,7 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                 status_code=400,
                 detail="Este pedido no puede editarse porque ya se registró el anticipo. Si necesitas un cambio, escríbenos.",
             )
-        if not _fuera_de_ventana_ok and not _dentro_ventana_edicion(pedido):
+        if _cambia_el_pedido and not _dentro_ventana_edicion(pedido):
             raise HTTPException(
                 status_code=400,
                 detail="Solo puedes editar tu pedido durante los primeros 10 minutos después de crearlo. Escríbenos si necesitas un cambio.",
@@ -561,68 +596,72 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
             )
         _reabrir_pedido_produccion(db, pedido, productos_nuevos, fecha_nueva)
 
+    # Cuánto se iba a transferir ANTES de tocar nada: si esa cifra cambia, el
+    # comprobante que ya estaba deja de respaldarla (más abajo).
+    transferencia_antes = _monto_a_transferir(pedido)
+
     if datos.get("Metodo_Pago"):
         nuevo_metodo = datos["Metodo_Pago"].strip()
-        # Mixto no puede usarse cuando el pedido exige anticipo del 50%
-        if "mixto" in nuevo_metodo.lower() and pedido.Requiere_Anticipo:
+        # El anticipo es el 50% del pedido POR TRANSFERENCIA. Cualquier método
+        # que no la lleve entera lo saltaría: el efectivo se cobra al recibir
+        # —cuando el pedido ya se produjo— y el mixto transfiere solo una
+        # parte, que puede ser menos del 50%. Antes solo estaba bloqueado el
+        # mixto, así que bastaba con elegir "Efectivo" para no dejar nada.
+        if pedido.Requiere_Anticipo and (
+                _es_mixto(nuevo_metodo) or not _lleva_transferencia(nuevo_metodo)):
             raise HTTPException(
                 status_code=400,
-                detail="El método mixto no está disponible para pedidos que requieren anticipo del 50%.",
+                detail=(
+                    "Este pedido necesita un anticipo del 50% por transferencia, "
+                    "así que no puede pagarse con ese método."
+                ),
             )
         pedido.Metodo_Pago = nuevo_metodo
 
-    # Guardar comprobante si se subió uno nuevo
     comprobante_nuevo = datos.get("Comprobante_Pago")
     if comprobante_nuevo:
         pedido.Comprobante_Pago = comprobante_nuevo
-        # Si no viene cambio de método, actualizar Estado_Pago aquí para que
-        # el admin pueda ver y aprobar el comprobante. El bloque de Metodo_Pago
-        # lo sobreescribiría si ambos llegan juntos, por lo que solo corre cuando
-        # Metodo_Pago no está en el request.
-        if not datos.get("Metodo_Pago"):
-            _metodo_actual = (pedido.Metodo_Pago or "").strip()
-            _ep_actual = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
-            _estados_finales_pago = {"pagado_completo", "efectivo_recibido", "anticipo_pagado"}
-            if _lleva_transferencia(_metodo_actual) and _ep_actual not in _estados_finales_pago:
-                pedido.Estado_Pago = "pendiente_validacion"
 
-    # Actualizar Estado_Pago y montos según el método de pago resultante
-    if datos.get("Metodo_Pago"):
-        metodo_resultante = (pedido.Metodo_Pago or "").strip()
-        estado_pago_actual = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
-        if _lleva_transferencia(metodo_resultante):
-            if comprobante_nuevo or pedido.Comprobante_Pago:
-                pedido.Estado_Pago = "pendiente_validacion"
-            else:
-                pedido.Estado_Pago = "pendiente"
-        else:
-            # Cambio a Efectivo puro: resetear estado y limpiar montos mixto
-            if estado_pago_actual not in _ESTADOS_PAGO_BLOQUEADO_EDICION:
-                pedido.Estado_Pago = "pendiente"
-            pedido.Monto_Efectivo = None
-            pedido.Monto_Transferencia = None
-            # Y el comprobante se va con el método: respalda una transferencia
-            # que ya no existe. Si se queda, el panel lo sigue mostrando como
-            # si hubiera un pago que aprobar, y la factura sale con la captura
-            # de algo que se va a pagar en mano.
-            pedido.Comprobante_Pago = None
+    if not _lleva_transferencia(pedido.Metodo_Pago):
+        # Efectivo puro: no hay nada que transferir ni que revisar. El
+        # comprobante se va con el método —respalda una transferencia que ya
+        # no existe, y si se queda el panel lo sigue mostrando como un pago
+        # por aprobar y la factura sale con la captura de algo que se paga en
+        # mano.
+        pedido.Comprobante_Pago    = None
+        pedido.Monto_Efectivo      = None
+        pedido.Monto_Transferencia = None
 
-    # Repartir montos cuando el método es Mixto
-    if _es_mixto(pedido.Metodo_Pago) and datos.get("Monto_Efectivo") is not None:
-        total_actual = pedido.Total or Decimal(0)
-        monto_ef = Decimal(str(datos["Monto_Efectivo"] or 0))
-        efectivo = max(Decimal("0"), min(monto_ef, total_actual))
-        pedido.Monto_Efectivo = efectivo
-        pedido.Monto_Transferencia = total_actual - efectivo
+    # Mixto: el reparto se valida y se calcula acá, no se acepta del cliente.
+    # El monto a transferir se resuelve después del domicilio, porque el
+    # domicilio cambia el total.
+    monto_efectivo_pedido = datos.get("Monto_Efectivo")
+    if _es_mixto(pedido.Metodo_Pago):
+        if monto_efectivo_pedido is None and pedido.Monto_Efectivo is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Indica cuánto vas a pagar en efectivo para el pago mixto.",
+            )
 
     quiere_domicilio = datos.get("quiere_domicilio")  # True | False | None
     domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first()
     tenia_domicilio = domicilio is not None
 
     if quiere_domicilio is True and not tenia_domicilio:
-        id_barrio = datos.get("ID_Barrio")
+        # A dónde se lleva: lo que venga en el request, y si no, lo que el
+        # cliente ya tiene registrado en su cuenta. Volver a pedir barrio y
+        # dirección para algo que ya está guardado era la razón de que pasar
+        # a domicilio "no dejara": el formulario se quedaba pidiendo el
+        # barrio y no había forma de salir de ahí.
+        cliente = db.query(Usuario).filter(
+            Usuario.ID_Usuario == pedido.ID_Usuario).first()
+        id_barrio = datos.get("ID_Barrio") or getattr(cliente, "ID_Barrio", None)
         if not id_barrio:
             raise HTTPException(status_code=400, detail="Selecciona el barrio de entrega para el domicilio")
+        direccion = (datos.get("Direccion_Entrega") or "").strip() \
+            or (getattr(cliente, "Direccion", None) or "").strip()
+        if not direccion:
+            raise HTTPException(status_code=400, detail="Escribe la dirección de entrega del domicilio")
         snap = resolver_domicilio(db, int(id_barrio))
         costo = Decimal(snap["final"])
         nuevo_domicilio = Domicilio(
@@ -635,7 +674,7 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
             Precio_Domicilio_Base  = snap["base"],
             Precio_Domicilio_Final = snap["final"],
             Desglose_Ofertas       = snap["desglose"],
-            Direccion_entrega      = datos.get("Direccion_Entrega") or "",
+            Direccion_entrega      = direccion,
             Observaciones          = datos.get("Notas"),
         )
         db.add(nuevo_domicilio)
@@ -656,12 +695,83 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
         if anticipo > nuevo_total > 0:
             exceso = anticipo - nuevo_total
             _abonar_credito(db, pedido.ID_Usuario, exceso, id_venta)
-        domicilio.Estado = int(EstadoDomicilio.CANCELADO)
+        # Se borra, como hace el panel al quitar el domicilio. Marcarlo
+        # CANCELADO dejaba la fila, y todo lo que pregunta "¿tiene
+        # domicilio?" mira si la fila existe, no su estado: el pedido seguía
+        # mostrando la dirección y el costo del envío, y la máquina de
+        # estados lo seguía tratando como una entrega a domicilio.
+        db.delete(domicilio)
         pedido.Total = nuevo_total
 
+    # ── Ya está el total definitivo: recién ahora se reparte y se decide qué
+    # queda por revisar ───────────────────────────────────────────────────
+    if _es_mixto(pedido.Metodo_Pago):
+        total = Decimal(str(pedido.Total or 0))
+        efectivo = Decimal(str(
+            monto_efectivo_pedido
+            if monto_efectivo_pedido is not None
+            else pedido.Monto_Efectivo or 0
+        ))
+        # Ni cero ni el total entero: eso no es mixto, es uno de los otros dos
+        # métodos. Antes se recortaba en silencio contra [0, total] y el
+        # pedido quedaba "Mixto" con una de las dos partes en $0.
+        if efectivo <= 0 or efectivo >= total:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"El monto en efectivo debe ser mayor a $0 y menor al total "
+                    f"(${total:,.0f})."
+                ),
+            )
+        pedido.Monto_Efectivo      = efectivo
+        pedido.Monto_Transferencia = total - efectivo
+
+    if _lleva_transferencia(pedido.Metodo_Pago):
+        transferencia_ahora = _monto_a_transferir(pedido)
+        estado_pago_actual = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
+        # Un comprobante respalda una cifra. Si esa cifra cambió —pasó de
+        # transferir el total a transferir solo una parte, cambió el reparto
+        # del mixto, o el domicilio movió el total— el que estaba ya no
+        # respalda nada y no puede quedar como válido.
+        if (pedido.Comprobante_Pago and not comprobante_nuevo
+                and transferencia_ahora != transferencia_antes):
+            pedido.Comprobante_Pago = None
+        if estado_pago_actual not in _ESTADOS_PAGO_YA_COBRADO:
+            pedido.Estado_Pago = (
+                "pendiente_validacion" if pedido.Comprobante_Pago else "pendiente"
+            )
+    elif (getattr(pedido, "Estado_Pago", None) or "pendiente").strip() \
+            not in _ESTADOS_PAGO_BLOQUEADO_EDICION:
+        pedido.Estado_Pago = "pendiente"
+
     db.commit()
+
+    # En efectivo no hay comprobante que esperar: el pedido no puede seguir
+    # "Esperando pago", que es el estado que hace que la app y el panel le
+    # pidan al cliente la captura de una transferencia que ya nadie va a
+    # hacer. Se confirma por el mismo camino que cualquier otro pedido, que
+    # es el que además reserva el stock de lo que se recoge en tienda.
+    if (pedido.Estado == EstadoPedido.ESPERANDO_PAGO
+            and not _lleva_transferencia(pedido.Metodo_Pago)):
+        return _gv_cambiar_estado(
+            db, id_venta, EstadoPedido.CONFIRMADO, saltar_ventana_proteccion=True)
+
     db.refresh(pedido)
     return _formato_venta(pedido, db)
+
+
+def _monto_a_transferir(pedido) -> Decimal:
+    """Lo que este pedido paga por transferencia, según su método.
+
+    Es la cifra que un comprobante tiene que respaldar: el total si se paga
+    todo por transferencia, y solo la parte transferida si es mixto.
+    """
+    if not _lleva_transferencia(pedido.Metodo_Pago):
+        return Decimal("0")
+    if _es_mixto(pedido.Metodo_Pago):
+        return (Decimal(str(pedido.Total or 0))
+                - Decimal(str(pedido.Monto_Efectivo or 0)))
+    return Decimal(str(pedido.Total or 0))
 
 
 _ESTADOS_PAGO_YA_COBRADO = {"efectivo_recibido", "pagado_completo", "anticipo_pagado"}

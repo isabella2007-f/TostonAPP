@@ -163,6 +163,10 @@ class VentaResponse(BaseModel):
     pago_final_comprobante_url: Optional[str]    = None
     pago_final_fecha:         Optional[datetime] = None
     estado_pago:              Optional[str]      = None
+    # Por que se rechazo el comprobante. El servicio lo devuelve, pero sin
+    # declararlo aca Pydantic lo descartaba: el cliente veia "rechazado" sin
+    # motivo y volvia a mandar la misma captura.
+    motivo_rechazo_comprobante: Optional[str]    = None
     # Solo los pedidos sobre stock o de producción necesitan fecha propuesta
     requiere_fecha_propuesta:      bool             = False
     requiere_produccion:           bool             = False
