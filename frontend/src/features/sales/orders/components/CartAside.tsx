@@ -191,14 +191,14 @@ const CartAside: React.FC<CartAsideProps> = ({ isOpen, onClose, onCheckout, onLo
         <div className="px-5 py-4 bg-white border-b border-gray-100 shrink-0">
           <div className="grid grid-cols-2 bg-gray-100 rounded-2xl p-1.5 gap-1.5">
             <button
-              onClick={() => { setTieneDomicilio(false); }}
+              onClick={() => { setTieneDomicilio(false); setCheckoutError(''); }}
               className={`flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-black uppercase tracking-wider transition-all duration-200 ${!tieneDomicilio ? 'bg-white text-green-800 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
             >
               <ShoppingBag size={16} />
               Recogida
             </button>
             <button
-              onClick={() => { setTieneDomicilio(true); }}
+              onClick={() => { setTieneDomicilio(true); setCheckoutError(''); }}
               className={`flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-black uppercase tracking-wider transition-all duration-200 ${tieneDomicilio ? 'bg-white text-green-800 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
             >
               <Truck size={16} />

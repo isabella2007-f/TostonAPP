@@ -505,13 +505,13 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Tipo de entrega</p>
             <div className="grid grid-cols-2 bg-gray-100 rounded-xl p-1 gap-1">
               <button
-                onClick={() => setTieneDomicilio(false)}
+                onClick={() => { setTieneDomicilio(false); setDireccionTocada(false); }}
                 className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-black transition-all duration-200 ${!tieneDomicilio ? 'bg-white text-green-800 shadow' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <ShoppingBag size={13} /> Recogida
               </button>
               <button
-                onClick={() => setTieneDomicilio(true)}
+                onClick={() => { setTieneDomicilio(true); setDireccionTocada(false); }}
                 className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-black transition-all duration-200 ${tieneDomicilio ? 'bg-white text-green-800 shadow' : 'text-gray-400 hover:text-gray-600'}`}
               >
                 <Truck size={13} /> Domicilio
