@@ -45,10 +45,13 @@ const adaptCompra = (c) => ({
     idDetalle:        i.ID_Detalle_Compra || i.ID_Detalle        || i.id_detalle        || null,
     idInsumo:         i.ID_Insumo         || i.id_insumo         || null,
     idLoteCompra:     i.ID_Lote_Compra    || i.id_lote_compra    || null,
-    idUnidad:         i.ID_Unidad_Medida  ?? i.id_unidad_medida  ?? null,
-    nombre:           i.nombre_insumo     || i.nombre            || "",
-    categoria:        i.nombre_categoria  || i.categoria         || "",
-    unidad:           i.simbolo_unidad    || i.unidad            || "",
+    idUnidad:         i.ID_Unidad_Medida      ?? i.id_unidad_medida      ?? null,
+    idUnidadCompra:   i.ID_Unidad_Compra     ?? i.id_unidad_compra     ?? null,
+    nombre:           i.nombre_insumo         || i.nombre               || "",
+    categoria:        i.nombre_categoria      || i.categoria            || "",
+    // Muestra la unidad con la que se registró la compra; si no existe (compra
+    // antigua sin esta columna) cae en el símbolo base del insumo.
+    unidad:           i.simbolo_unidad_compra || i.simbolo_unidad || i.unidad || "",
     cantidad:         Number(i.Cantidad   ?? i.cantidad          ?? 0),
     precioUnd:        Number(i.Precio_Und  ?? i.precio_und        ?? 0),
     subtotal:         i.Subtotal          || i.subtotal          || 0,
@@ -94,6 +97,7 @@ export async function crearCompra(payload) {
     Otros_Costos:         Number(g.otros)      || null,
     detalles: (payload.detalles || []).map(i => ({
       ID_Insumo:         Number(i.idInsumo),
+      ID_Unidad_Compra:  i.idUnidad ? Number(i.idUnidad) : null,
       Cantidad:          Number(i.cantidad),
       Precio_Und:        Number(i.precioUnd),
       Notas:             i.notas || null,
@@ -133,6 +137,7 @@ export async function editarCompra(id, payload) {
   if (Array.isArray(payload.detalles)) {
     body.detalles = payload.detalles.map(i => ({
       ID_Insumo:         Number(i.idInsumo),
+      ID_Unidad_Compra:  i.idUnidad ? Number(i.idUnidad) : null,
       Cantidad:          Number(i.cantidad),
       Precio_Und:        Number(i.precioUnd),
       Notas:             i.notas || null,

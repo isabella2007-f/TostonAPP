@@ -94,6 +94,7 @@ class CompletarCompraInput(BaseModel):
 # ── Detalle de un ítem dentro de la compra ──
 class DetalleCompraInput(BaseModel):
     ID_Insumo:         int
+    ID_Unidad_Compra:  Optional[int] = None   # unidad elegida en el formulario
     Cantidad:          Decimal   # Decimal para soportar kg, g, L, mL
     Precio_Und:        Decimal
     Notas:             Optional[str] = None
@@ -184,15 +185,17 @@ class LoteCompraInfo(BaseModel):
 
 # ── Respuesta de un detalle ──
 class DetalleCompraResponse(BaseModel):
-    ID_Detalle_Compra: int
-    ID_Insumo:         Optional[int]     = None
-    nombre_insumo:     Optional[str]     = None
-    ID_Unidad_Medida:  Optional[int]     = None
-    ID_Lote_Compra:    Optional[int]     = None
-    Cantidad:          Optional[Decimal]  = None
-    Precio_Und:        Optional[Decimal] = None
-    Notas:             Optional[str]     = None
-    Fecha_Vencimiento: Optional[str]     = None
+    ID_Detalle_Compra:     int
+    ID_Insumo:             Optional[int]     = None
+    nombre_insumo:         Optional[str]     = None
+    ID_Unidad_Medida:      Optional[int]     = None
+    ID_Unidad_Compra:      Optional[int]     = None
+    simbolo_unidad_compra: Optional[str]     = None
+    ID_Lote_Compra:        Optional[int]     = None
+    Cantidad:              Optional[Decimal]  = None
+    Precio_Und:            Optional[Decimal] = None
+    Notas:                 Optional[str]     = None
+    Fecha_Vencimiento:     Optional[str]     = None
     # 3.15 — se pueblan solo en GET /compras/{id}
     lote_origen:      Optional[LoteCompraInfo]  = None
     otros_lotes:      list[LoteCompraInfo]      = []

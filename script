@@ -1,0 +1,511 @@
+// TostonApp — esquema completo para dbdiagram.io
+// Incluye la normalizacion propuesta: Pagos (nueva), Detalle_Venta
+// (fusion de Venta_x_Producto + Detalle_Venta vieja, ya no existe aparte).
+
+// ─────────────────────────────
+// USUARIOS Y ACCESOS
+// ─────────────────────────────
+
+Table Estados {
+  ID_Estados int [pk, increment]
+  Codigo int
+  Estado varchar(25)
+}
+
+Table Roles {
+  ID_Rol int [pk, increment]
+  Rol varchar(25)
+  Estado int
+  Icono varchar(500)
+}
+
+Table Permisos {
+  ID_Permiso int [pk, increment]
+  Permiso varchar(60)
+  Descripcion text
+}
+
+Table Rol_x_Permiso {
+  ID_Rol int [ref: > Roles.ID_Rol]
+  ID_Permiso int [ref: > Permisos.ID_Permiso]
+}
+
+Table Usuarios {
+  ID_Usuario int [pk, increment]
+  Cedula varchar(20)
+  Tipo_Documento varchar(5)
+  ID_Rol int [ref: > Roles.ID_Rol]
+  Nombre varchar(50)
+  Apellidos varchar(50)
+  Correo varchar(255)
+  Direccion varchar(50)
+  Municipio varchar(25)
+  Departamento varchar(60)
+  Indicaciones varchar(255)
+  Telefono varchar(20)
+  Foto_perfil varchar(500)
+  Fecha_creacion datetime
+  Contrasena varchar(255)
+  Estado int
+  Correo_Verificado int
+  FCM_Token varchar(300)
+  Intentos_Login int
+  Bloqueado_Hasta datetime
+  Auto_Eliminado int
+  ID_Barrio int [ref: > Barrios.ID_Barrio]
+}
+
+Table Verificaciones_Email {
+  ID_Verificacion int [pk, increment]
+  ID_Usuario int [ref: > Usuarios.ID_Usuario]
+  Token varchar(36)
+  Expira_En datetime
+  Usado boolean
+}
+
+Table Codigos_Reset {
+  ID_Codigo int [pk, increment]
+  Correo varchar(255)
+  Codigo varchar(6)
+  Expira_En datetime
+  Usado boolean
+}
+
+// ─────────────────────────────
+// INSUMOS Y COMPRAS
+// ─────────────────────────────
+
+Table Unidad_Medida {
+  ID_Unidad_Medida int [pk, increment]
+  Simbolo varchar(5)
+  Unidad_Medida varchar(25)
+}
+
+Table Categoria_Insumos {
+  ID_Categoria int [pk, increment]
+  Nombre_Categoria varchar(100)
+  Descripcion text
+  Estado int
+  Icono varchar(500)
+  Fecha_Creacion datetime
+}
+
+Table Insumos {
+  ID_Insumo int [pk, increment]
+  ID_Categoria int [ref: > Categoria_Insumos.ID_Categoria]
+  ID_Lote_Compra int [ref: > Lote_Compra.ID_Lote_Compra]
+  Nombre varchar(100)
+  Unidad_Medida int [ref: > Unidad_Medida.ID_Unidad_Medida]
+  Stock_Actual decimal(10,4)
+  Stock_Minimo int
+  Estado int
+}
+
+Table Lote_Insumos {
+  ID_Lote int [pk, increment]
+  Fecha_Vencimiento datetime
+  Cantidad int
+}
+
+Table Lote_Compra {
+  ID_Lote_Compra int [pk, increment]
+  ID_Insumo int [ref: > Insumos.ID_Insumo]
+  Fecha_Vencimiento datetime
+  Cantidad_Inicial decimal(10,4)
+  Cantidad_Actual decimal(10,4)
+  Estado int
+}
+
+Table Sujeto_Derecho {
+  ID_Sujeto_Derecho int [pk, increment]
+  Sujeto_Derecho varchar(25)
+}
+
+Table Proveedores {
+  ID_Proveedor int [pk, increment]
+  Sujeto_Derecho int [ref: > Sujeto_Derecho.ID_Sujeto_Derecho]
+  Responsable varchar(100)
+  Direccion varchar(50)
+  Municipio varchar(25)
+  Departamento varchar(60)
+  Telefono varchar(20)
+  Correo varchar(255)
+}
+
+Table Compras {
+  ID_Compra int [pk, increment]
+  ID_Proveedor int [ref: > Proveedores.ID_Proveedor]
+  Total_Pago decimal(30,2)
+  Fecha_Compra datetime
+  Fecha_Llegada datetime
+  Fecha_Anulada datetime
+  Estado int
+  Metodo_Pago varchar(20)
+  Notas text
+  Comprobante varchar(500)
+  Costo_Transporte decimal(30,2)
+  IVA_Porcentaje decimal(5,2)
+  Descuento_Porcentaje decimal(5,2)
+  Otros_Costos decimal(30,2)
+}
+
+Table Detalle_Compra {
+  ID_Detalle_Compra int [pk, increment]
+  ID_Compra int [ref: > Compras.ID_Compra]
+  ID_Insumo int [ref: > Insumos.ID_Insumo]
+  ID_Lote_Compra int [ref: > Lote_Compra.ID_Lote_Compra]
+  Notas text
+  Cantidad decimal(10,4)
+  Precio_Und decimal(30,2)
+}
+
+// ─────────────────────────────
+// PRODUCTOS Y PRODUCCION
+// ─────────────────────────────
+
+Table Categoria_Producto {
+  ID_Categoria int [pk, increment]
+  Nombre_Categoria varchar(100)
+  Descripcion text
+  Estado int
+  Icono varchar(500)
+  Fecha_Creacion datetime
+}
+
+Table Producto_Imagenes {
+  ID_Producto_Img int [pk, increment]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  imagen varchar(500)
+}
+
+Table Productos {
+  ID_Producto int [pk, increment]
+  nombre varchar(255)
+  ID_Categoria int [ref: > Categoria_Producto.ID_Categoria]
+  Precio_venta decimal(30,2)
+  Stock int
+  Stock_Minimo int
+  Requiere_Produccion int
+  Estado int
+  ID_Orden_Produccion int [ref: > Orden_Produccion.ID_Orden_Produccion]
+  Imagen int [ref: > Producto_Imagenes.ID_Producto_Img]
+  Publicado int
+  Descripcion_Corta varchar(255)
+  Descripcion_Larga varchar(2000)
+  Fecha_Creacion datetime
+}
+
+Table Ficha_Tecnica {
+  ID_Ficha int [pk, increment]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  Version varchar(25)
+  ID_Categoria int
+  Estado int
+  Observaciones text
+  Procedimiento text
+  Fecha_Creacion datetime
+  Dias_Vida_Util int
+  Vida_Util_Unidad varchar(10)
+}
+
+Table Ficha_Tecnica_Insumo {
+  ID_Ficha_Insumo int [pk, increment]
+  ID_Ficha int [ref: > Ficha_Tecnica.ID_Ficha]
+  ID_Insumo int [ref: > Insumos.ID_Insumo]
+  Cantidad decimal(10,2)
+  Unidad varchar(50)
+}
+
+Table Orden_Produccion {
+  ID_Orden_Produccion int [pk, increment]
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  ID_Insumo int [ref: > Insumos.ID_Insumo]
+  ID_Ficha int [ref: > Ficha_Tecnica.ID_Ficha]
+  Cantidad int
+  Fecha_Creacion datetime
+  Fecha_inicio datetime
+  Fecha_Entrega datetime
+  Fecha_fin datetime
+  Estado int
+  Costo decimal(30,2)
+}
+
+Table Lote_Producto {
+  ID_Lote_Producto int [pk, increment]
+  ID_Orden_Produccion int [ref: > Orden_Produccion.ID_Orden_Produccion]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  Numero_Lote varchar(50)
+  Fecha_Produccion datetime
+  Fecha_Vencimiento datetime
+  Cantidad int
+  Estado int
+}
+
+// ─────────────────────────────
+// VENTAS (normalizado)
+// ─────────────────────────────
+
+Table Ventas {
+  ID_Venta int [pk, increment]
+  ID_Usuario int [ref: > Usuarios.ID_Usuario]
+  Total decimal(30,2)
+  Estado int [ref: > Estados.ID_Estados]
+  Metodo_Pago varchar(20)
+  Fecha_Venta datetime
+  Fecha_pedido datetime
+  Fecha_entrega datetime
+  Fecha_entrega_esperada datetime
+  Sobre_Stock int
+  // Reglas de negocio del anticipo (se quedan aca, no son un pago en si)
+  Anticipo_Requerido decimal(30,2)
+  Anticipo_Pagado decimal(30,2)
+  Requiere_Anticipo int
+  // Absorbido de la vieja Detalle_Venta (era 1:1 con Ventas)
+  A_Nombre_De varchar(100)
+  IVA decimal(30,2)
+  Descuento decimal(30,2)
+  SubTotal decimal(30,2)
+  Necesita_Produccion int
+  Envio_Completo_Domingo int
+  intentos_rechazo int
+  Fecha_Retenido_En_Tienda datetime
+  Stock_Reservado int
+  note: 'Los ~15 campos de Anticipo_*/Pago_Final_*/Estado_Pago/comprobantes se movieron a Pagos'
+}
+
+Table Pagos {
+  ID_Pago int [pk, increment]
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  Tipo varchar(20) [note: 'anticipo | saldo | unico']
+  Monto decimal(30,2)
+  Monto_Efectivo decimal(30,2)
+  Monto_Transferencia decimal(30,2)
+  Metodo_Pago varchar(30)
+  Comprobante_Url varchar(500)
+  Registrado int
+  Estado_Pago varchar(30)
+  Motivo_Rechazo text
+  Fecha_Rechazada datetime
+  Intentos_Rechazo int
+  Fecha_Pago datetime
+}
+
+Table Detalle_Venta {
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  Cantidad int
+  Precio_Unitario decimal(30,2) [note: 'nuevo — arregla el bug de precio historico']
+  Subtotal_Linea decimal(30,2) [note: 'nuevo']
+  Cantidad_Preorden int
+  note: 'Fusion de la vieja Venta_x_Producto + Detalle_Venta (que era 1:1, no por linea)'
+}
+
+Table Historial_Fechas_Propuestas {
+  ID_Historial int [pk, increment]
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  ID_Usuario int [ref: > Usuarios.ID_Usuario]
+  Fecha_Propuesta datetime
+  Fecha_Accion datetime
+  Tipo_Accion varchar(20)
+  Motivo_Rechazo text
+}
+
+// ─────────────────────────────
+// LOGISTICA
+// ─────────────────────────────
+
+Table Domicilios {
+  ID_Domicilio int [pk, increment]
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  ID_Empleado int [ref: > Usuarios.ID_Usuario]
+  Fecha_asignacion datetime
+  Fecha_entrega datetime
+  Observaciones text
+  Cobro_Auditoria text
+  Estado int
+  Direccion_entrega varchar(50)
+  Municipio_entrega varchar(25)
+  Departamento_entrega varchar(60)
+  OTP varchar(10)
+  OTP_Expira datetime
+  ID_Barrio int [ref: > Barrios.ID_Barrio]
+  Precio_Domicilio_Base int
+  Precio_Domicilio_Final int
+  Desglose_Ofertas json
+}
+
+Table MensajesChat {
+  ID_Mensaje int [pk, increment]
+  ID_Domicilio int [ref: > Domicilios.ID_Domicilio]
+  Tipo_Remitente varchar(20)
+  ID_Remitente int
+  Nombre_Remitente varchar(100)
+  Contenido text
+  Fecha datetime
+}
+
+Table Departamentos {
+  ID_Departamento int [pk, increment]
+  Nombre varchar(80)
+  Estado int
+}
+
+Table Ciudades {
+  ID_Ciudad int [pk, increment]
+  ID_Departamento int [ref: > Departamentos.ID_Departamento]
+  Nombre varchar(120)
+  Estado int
+}
+
+Table Barrios {
+  ID_Barrio int [pk, increment]
+  ID_Ciudad int [ref: > Ciudades.ID_Ciudad]
+  Nombre varchar(35)
+  Precio int
+  Es_Base boolean
+  Estado int
+}
+
+Table Ofertas_Domicilio {
+  ID_Oferta int [pk, increment]
+  Nombre varchar(80)
+  Tipo varchar(50)
+  Monto_Pesos int
+  Porcentaje int
+  Dias_Semana varchar(50)
+  Dias_Mes varchar(50)
+  Estado int
+  Fecha_Creacion datetime
+}
+
+Table Oferta_x_Barrio {
+  ID_Oferta int [ref: > Ofertas_Domicilio.ID_Oferta]
+  ID_Barrio int [ref: > Barrios.ID_Barrio]
+}
+
+// ─────────────────────────────
+// DEVOLUCIONES Y CREDITO
+// ─────────────────────────────
+
+Table Devoluciones {
+  ID_Devolucion int [pk, increment]
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  ID_Usuario int [ref: > Usuarios.ID_Usuario]
+  ID_DetalleVenta int [note: 'antes apuntaba a Detalle_Venta 1:1; con la fusion, decidir si pasa a Detalle_Venta.ID_Producto o a Ventas directamente']
+  FechaDevolucion datetime
+  Motivo text
+  Estado int
+  TotalDevuelto decimal(30,2)
+  FechaAprobacion datetime
+  FechaReembolso datetime
+  UsuarioAprueba boolean
+  Comentario text
+  Comprobante_Imagen text
+}
+
+Table Devolucion_Detalle {
+  ID_Devolucion_Detalle int [pk, increment]
+  ID_Devolucion int [ref: > Devoluciones.ID_Devolucion]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  Cantidad int
+  PrecioUnitario decimal(30,2)
+  Subtotal decimal(30,2)
+}
+
+Table Credito_Cliente {
+  ID_Credito int [pk, increment]
+  ID_Usuario int [ref: > Usuarios.ID_Usuario]
+  Saldo decimal(30,2)
+  Fecha_Update datetime
+}
+
+Table Movimiento_Credito {
+  ID_Movimiento int [pk, increment]
+  ID_Credito int [ref: > Credito_Cliente.ID_Credito]
+  ID_Devolucion int [ref: > Devoluciones.ID_Devolucion]
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  Tipo varchar(20)
+  Monto decimal(30,2)
+  Fecha datetime
+}
+
+// ─────────────────────────────
+// OTROS
+// ─────────────────────────────
+
+Table Salidas {
+  ID_Salida int [pk, increment]
+  Tipo varchar(20)
+  ID_Insumo int [ref: > Insumos.ID_Insumo]
+  ID_Producto int [ref: > Productos.ID_Producto]
+  Cantidad int
+  Motivo text
+  ID_Empleado int [ref: > Usuarios.ID_Usuario]
+  Fecha datetime
+  Estado int
+  ID_Anulado_Por int [ref: > Usuarios.ID_Usuario]
+  Fecha_Anulacion datetime
+}
+
+Table Notificaciones {
+  ID_Notificacion int [pk, increment]
+  Tipo varchar(30)
+  Titulo varchar(100)
+  Mensaje text
+  Referencia_ID int
+  Ruta varchar(200)
+  Fecha datetime
+  Leida boolean
+  Descartada boolean
+}
+
+Table Configuracion_Landing {
+  ID int [pk]
+  hero_badge varchar(200)
+  hero_title varchar(200)
+  hero_description text
+  history_title varchar(200)
+  history_description text
+  cta_title varchar(200)
+  cta_description text
+  contact_phone1 varchar(50)
+  contact_phone2 varchar(50)
+  contact_address_line varchar(200)
+  contact_city varchar(200)
+  contact_instagram_url varchar(500)
+  contact_instagram_handle varchar(100)
+  map_lat decimal(10,7)
+  map_lng decimal(10,7)
+  hora_apertura varchar(5)
+  hora_cierre varchar(5)
+  dias_atencion varchar(20)
+  pedido_minimo int
+}
+
+Table Descuentos {
+  ID_Descuento int [pk, increment]
+  Nombre varchar(100)
+  Tipo varchar(20)
+  Codigo varchar(50)
+  Porcentaje decimal(5,2)
+  Meses_Minimos int
+  Fecha_Inicio datetime
+  Fecha_Fin datetime
+  Usos_Max int
+  Usos_Actuales int
+  Estado int
+}
+
+Table Descuento_x_Usuario {
+  ID_Descuento int [ref: > Descuentos.ID_Descuento]
+  ID_Usuario int [ref: > Usuarios.ID_Usuario]
+  Usado boolean
+  Fecha_Asignacion datetime
+}
+
+Table Descuento_x_Venta {
+  ID_Venta int [ref: > Ventas.ID_Venta]
+  ID_Descuento int [ref: > Descuentos.ID_Descuento]
+  Monto_Aplicado decimal(30,2)
+}

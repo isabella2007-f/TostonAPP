@@ -183,6 +183,9 @@ def migrate_db():
                 Fecha            DATETIME,
                 FOREIGN KEY (ID_Domicilio) REFERENCES Domicilios(ID_Domicilio)
             )""",
+            # Unidad con la que se registró la compra (puede diferir de la unidad base
+            # del insumo cuando el proveedor vende por kg y el insumo se lleva en g).
+            "ALTER TABLE Detalle_Compra ADD COLUMN ID_Unidad_Compra INT NULL REFERENCES Unidad_Medida(ID_Unidad_Medida)",
         ]:
             try:
                 conn.execute(text(stmt))

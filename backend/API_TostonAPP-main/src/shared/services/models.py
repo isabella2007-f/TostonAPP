@@ -257,13 +257,15 @@ class DetalleCompra(Base):
     ID_Compra         = Column(Integer, ForeignKey("Compras.ID_Compra"))
     ID_Insumo         = Column(Integer, ForeignKey("Insumos.ID_Insumo"))
     ID_Lote_Compra    = Column(Integer, ForeignKey("Lote_Compra.ID_Lote_Compra"))
+    ID_Unidad_Compra  = Column(Integer, ForeignKey("Unidad_Medida.ID_Unidad_Medida"), nullable=True)
     Notas             = Column(Text)
     Cantidad          = Column(Numeric(10, 4))   # Numeric para soportar kg, g, L, mL
     Precio_Und        = Column(Numeric(30, 2))
 
-    compra      = relationship("Compra", back_populates="detalles")
-    insumo      = relationship("Insumo", back_populates="detalle_compras")
-    lote_compra = relationship("LoteCompra", back_populates="detalle_compras")
+    compra        = relationship("Compra", back_populates="detalles")
+    insumo        = relationship("Insumo", back_populates="detalle_compras")
+    lote_compra   = relationship("LoteCompra", back_populates="detalle_compras")
+    unidad_compra = relationship("UnidadMedida", foreign_keys=[ID_Unidad_Compra])
 
 
 # ─────────────────────────────────────────

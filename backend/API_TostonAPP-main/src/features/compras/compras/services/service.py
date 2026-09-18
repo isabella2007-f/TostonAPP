@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, or_, case
 from src.shared.services.models import (
-    Compra, DetalleCompra, LoteCompra, Insumo, Proveedor, Estado, UnidadMedida
+    Compra, DetalleCompra, LoteCompra, Insumo, Proveedor, Estado, UnidadMedida,
 )
 from src.shared.services.notificaciones_utils import notificar_stock_insumo
 from .schemas import (
@@ -87,19 +87,22 @@ def _parse_fecha_limite(valor, *, fin_del_dia: bool):
 
 def _formato_detalle(detalle: DetalleCompra) -> dict:
     # Usa los relationships: lazy-load en op. individual, eager en listado
-    insumo = detalle.insumo
-    lote   = detalle.lote_compra
+    insumo        = detalle.insumo
+    lote          = detalle.lote_compra
+    unidad_compra = detalle.unidad_compra   # unidad con la que se registró la compra
     fecha_venc = lote.Fecha_Vencimiento.strftime("%Y-%m-%d") if lote and lote.Fecha_Vencimiento else None
     return {
-        "ID_Detalle_Compra": detalle.ID_Detalle_Compra,
-        "ID_Insumo":         detalle.ID_Insumo,
-        "nombre_insumo":     insumo.Nombre if insumo else None,
-        "ID_Unidad_Medida":  insumo.Unidad_Medida if insumo else None,
-        "ID_Lote_Compra":    detalle.ID_Lote_Compra,
-        "Cantidad":          detalle.Cantidad,
-        "Precio_Und":        detalle.Precio_Und,
-        "Notas":             detalle.Notas,
-        "Fecha_Vencimiento": fecha_venc,
+        "ID_Detalle_Compra":   detalle.ID_Detalle_Compra,
+        "ID_Insumo":           detalle.ID_Insumo,
+        "nombre_insumo":       insumo.Nombre if insumo else None,
+        "ID_Unidad_Medida":    insumo.Unidad_Medida if insumo else None,
+        "ID_Unidad_Compra":    detalle.ID_Unidad_Compra,
+        "simbolo_unidad_compra": unidad_compra.Simbolo if unidad_compra else (insumo.unidad_medida.Simbolo if insumo and insumo.unidad_medida else None),
+        "ID_Lote_Compra":      detalle.ID_Lote_Compra,
+        "Cantidad":            detalle.Cantidad,
+        "Precio_Und":          detalle.Precio_Und,
+        "Notas":               detalle.Notas,
+        "Fecha_Vencimiento":   fecha_venc,
     }
 
 
@@ -223,26 +226,33 @@ def obtener_compras(
         if d.ID_Lote_Compra:
             lote_ids.add(d.ID_Lote_Compra)
 
-    # Batch 3: insumos y lotes
+    # Batch 3: insumos, lotes y unidades de compra
     insumos = {i.ID_Insumo: i for i in
                db.query(Insumo).filter(Insumo.ID_Insumo.in_(list(insumo_ids))).all()} if insumo_ids else {}
     lotes   = {l.ID_Lote_Compra: l for l in
                db.query(LoteCompra).filter(LoteCompra.ID_Lote_Compra.in_(list(lote_ids))).all()} if lote_ids else {}
 
+    unidad_compra_ids = {d.ID_Unidad_Compra for d in detalles_all if d.ID_Unidad_Compra}
+    unidades_compra   = {u.ID_Unidad_Medida: u for u in
+                         db.query(UnidadMedida).filter(UnidadMedida.ID_Unidad_Medida.in_(unidad_compra_ids)).all()} if unidad_compra_ids else {}
+
     def _build_detalle(d: DetalleCompra) -> dict:
         ins  = insumos.get(d.ID_Insumo)
         lote = lotes.get(d.ID_Lote_Compra) if d.ID_Lote_Compra else None
         fv   = lote.Fecha_Vencimiento.strftime("%Y-%m-%d") if lote and lote.Fecha_Vencimiento else None
+        uc   = unidades_compra.get(d.ID_Unidad_Compra) if d.ID_Unidad_Compra else None
         return {
-            "ID_Detalle_Compra": d.ID_Detalle_Compra,
-            "ID_Insumo":         d.ID_Insumo,
-            "nombre_insumo":     ins.Nombre if ins else None,
-            "ID_Unidad_Medida":  ins.Unidad_Medida if ins else None,
-            "ID_Lote_Compra":    d.ID_Lote_Compra,
-            "Cantidad":          d.Cantidad,
-            "Precio_Und":        d.Precio_Und,
-            "Notas":             d.Notas,
-            "Fecha_Vencimiento": fv,
+            "ID_Detalle_Compra":     d.ID_Detalle_Compra,
+            "ID_Insumo":             d.ID_Insumo,
+            "nombre_insumo":         ins.Nombre if ins else None,
+            "ID_Unidad_Medida":      ins.Unidad_Medida if ins else None,
+            "ID_Unidad_Compra":      d.ID_Unidad_Compra,
+            "simbolo_unidad_compra": uc.Simbolo if uc else None,
+            "ID_Lote_Compra":        d.ID_Lote_Compra,
+            "Cantidad":              d.Cantidad,
+            "Precio_Und":            d.Precio_Und,
+            "Notas":                 d.Notas,
+            "Fecha_Vencimiento":     fv,
         }
 
     def _build_compra(c: Compra) -> dict:
@@ -411,12 +421,13 @@ def crear_compra(db: Session, datos: CompraCreate) -> dict:
         db.flush()
 
         detalle = DetalleCompra(
-            ID_Compra      = nueva_compra.ID_Compra,
-            ID_Insumo      = item.ID_Insumo,
-            ID_Lote_Compra = lote.ID_Lote_Compra,
-            Cantidad       = item.Cantidad,
-            Precio_Und     = item.Precio_Und,
-            Notas          = item.Notas,
+            ID_Compra        = nueva_compra.ID_Compra,
+            ID_Insumo        = item.ID_Insumo,
+            ID_Lote_Compra   = lote.ID_Lote_Compra,
+            ID_Unidad_Compra = item.ID_Unidad_Compra,
+            Cantidad         = item.Cantidad,
+            Precio_Und       = item.Precio_Und,
+            Notas            = item.Notas,
         )
         db.add(detalle)
 
@@ -568,12 +579,13 @@ def editar_compra(db: Session, id_compra: int, datos) -> dict:
                     db.add(lote)
                     db.flush()
                     db.add(DetalleCompra(
-                        ID_Compra      = id_compra,
-                        ID_Insumo      = item.ID_Insumo,
-                        ID_Lote_Compra = lote.ID_Lote_Compra,
-                        Cantidad       = item.Cantidad,
-                        Precio_Und     = item.Precio_Und,
-                        Notas          = item.Notas,
+                        ID_Compra        = id_compra,
+                        ID_Insumo        = item.ID_Insumo,
+                        ID_Lote_Compra   = lote.ID_Lote_Compra,
+                        ID_Unidad_Compra = item.ID_Unidad_Compra,
+                        Cantidad         = item.Cantidad,
+                        Precio_Und       = item.Precio_Und,
+                        Notas            = item.Notas,
                     ))
                 db.flush()
 
