@@ -37,6 +37,7 @@ function adaptarOrden(o) {
       fechaProduccion:  o.lote.Fecha_Produccion  ? String(o.lote.Fecha_Produccion).split("T")[0]  : null,
       fechaVencimiento: o.lote.Fecha_Vencimiento ? String(o.lote.Fecha_Vencimiento).split("T")[0] : null,
       cantidad:         o.lote.Cantidad,
+      alertaVencimientoPrevioEntrega: o.lote.alerta_vencimiento_previo_entrega ?? false,
     } : null,
   };
 }

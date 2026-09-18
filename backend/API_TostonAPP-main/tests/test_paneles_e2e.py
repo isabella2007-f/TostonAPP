@@ -1899,5 +1899,52 @@ class InsumoApartadoTests(PanelBase):
         self.assertAlmostEqual(self.harina(), 0.0, places=3)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 13. Validación de Dias_Vida_Util en creación de órdenes
+# ══════════════════════════════════════════════════════════════════════════
+class VidaUtilOrdenTests(PanelBase):
+    """Punto 1 y 2 del plan de vida útil:
+    - Sin Dias_Vida_Util en la ficha → 400, no se crea la orden.
+    - Con vida útil suficiente → 201, sin advertencia.
+    - Con vida útil corta vs fecha de entrega lejana → 201 + advertencia_vencimiento.
+    """
+
+    def _crear_orden(self, dias_entrega=8):
+        fecha_entrega = (datetime.now() + timedelta(days=dias_entrega)).strftime("%Y-%m-%d")
+        return self.post("/ordenes-produccion/", self.admin, {
+            "ID_Producto":   ID_TORTA,
+            "Cantidad":      2,
+            "Fecha_Entrega": fecha_entrega,
+        })
+
+    def _quitar_vida_util(self):
+        from src.shared.services.models import FichaTecnica as _F
+        self.db.query(_F).filter(_F.ID_Ficha == 1).update(
+            {"Dias_Vida_Util": None, "Vida_Util_Unidad": None}
+        )
+        self.db.commit()
+
+    def test_crear_orden_sin_vida_util_es_rechazado(self):
+        self._quitar_vida_util()
+        resp = self._crear_orden()
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("vida útil", self.detalle(resp).lower())
+
+    def test_crear_orden_con_vida_util_suficiente_no_tiene_advertencia(self):
+        # Dias_Vida_Util=5 en la ficha; entrega en 4 días → vence el día 5 >= entrega día 4
+        resp = self._crear_orden(dias_entrega=4)
+        self.assertEqual(resp.status_code, 201)
+        cuerpo = resp.json()
+        self.assertIsNone(cuerpo.get("advertencia_vencimiento"))
+
+    def test_crear_orden_con_vida_util_corta_incluye_advertencia(self):
+        # Dias_Vida_Util=5; entrega en 10 días → vence antes de llegar → advertencia
+        resp = self._crear_orden(dias_entrega=10)
+        self.assertEqual(resp.status_code, 201)
+        cuerpo = resp.json()
+        self.assertIn("advertencia_vencimiento", cuerpo)
+        self.assertIn("5 dias", cuerpo["advertencia_vencimiento"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

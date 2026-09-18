@@ -1,5 +1,6 @@
 ﻿import logging
 from datetime import datetime, timedelta, timezone
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session, selectinload
 from fastapi import HTTPException
@@ -689,6 +690,15 @@ def _formato_orden(
             "Fecha_Produccion":  lote.Fecha_Produccion,
             "Fecha_Vencimiento": lote.Fecha_Vencimiento,
             "Cantidad":          lote.Cantidad,
+            "alerta_vencimiento_previo_entrega": bool(
+                lote.Fecha_Vencimiento is not None
+                and orden.Fecha_Entrega is not None
+                and (
+                    lote.Fecha_Vencimiento.date() if hasattr(lote.Fecha_Vencimiento, "date") else lote.Fecha_Vencimiento
+                ) < (
+                    orden.Fecha_Entrega.date() if hasattr(orden.Fecha_Entrega, "date") else orden.Fecha_Entrega
+                )
+            ),
         } if lote else None,
     }
 
@@ -810,8 +820,42 @@ def crear_orden(db: Session, datos: OrdenCreate) -> dict:
     # request se ignora (la fuente de verdad es el producto).
     id_ficha = ficha.ID_Ficha
 
+    if not ficha.Dias_Vida_Util:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La ficha técnica no tiene 'Días de vida útil' configurado. "
+                "Complétalo en Gestión de Productos antes de crear una orden."
+            ),
+        )
+
     ahora        = _ahora_local()
     fecha_inicio = datos.Fecha_inicio or ahora
+
+    # Advertencia (no bloqueante): ¿el lote vencería antes de llegar al cliente
+    # si se produjera hoy mismo?
+    advertencia_vencimiento: str | None = None
+    if datos.Fecha_Entrega:
+        fecha_entrega_date = (
+            datos.Fecha_Entrega.date()
+            if hasattr(datos.Fecha_Entrega, "date") else datos.Fecha_Entrega
+        )
+        hoy_date = ahora.date()
+        unidad = (ficha.Vida_Util_Unidad or "dias").lower()
+        if unidad == "meses":
+            vence_si_hoy = hoy_date + relativedelta(months=ficha.Dias_Vida_Util)
+        elif unidad == "semanas":
+            vence_si_hoy = hoy_date + timedelta(weeks=ficha.Dias_Vida_Util)
+        else:
+            vence_si_hoy = hoy_date + timedelta(days=ficha.Dias_Vida_Util)
+        if vence_si_hoy < fecha_entrega_date:
+            dias_entrega = (fecha_entrega_date - hoy_date).days
+            advertencia_vencimiento = (
+                f"Este producto tiene {ficha.Dias_Vida_Util} {unidad} de vida útil, "
+                f"pero la entrega es en {dias_entrega} días. "
+                f"Si se produce hoy, el lote vencería el {vence_si_hoy.isoformat()} "
+                f"antes de la entrega."
+            )
 
     costo = _calcular_costo(db, id_ficha, datos.ID_Insumo, datos.Cantidad)
 
@@ -829,7 +873,10 @@ def crear_orden(db: Session, datos: OrdenCreate) -> dict:
     db.add(nueva)
     db.commit()
     db.refresh(nueva)
-    return _formato_orden(nueva, db)
+    resp = _formato_orden(nueva, db)
+    if advertencia_vencimiento:
+        resp["advertencia_vencimiento"] = advertencia_vencimiento
+    return resp
 
 
 def editar_orden(db: Session, id_orden: int, datos: OrdenUpdate) -> dict:
@@ -1094,7 +1141,7 @@ def cambiar_estado(
 
         # Al completar (11=Completada): incrementar stock del producto y crear lote
         elif nuevo_estado == ESTADO_COMPLETADA and orden.Estado == ESTADO_EN_PROCESO:
-            from dateutil.relativedelta import relativedelta
+
 
             # Completar es el momento en que la harina dejó de ser harina: acá
             # se descuenta de verdad, del stock y de los lotes (FEFO). Al

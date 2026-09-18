@@ -88,8 +88,13 @@ class FakeDB:
         return None
 
 
-def _ficha(id_producto, id_ficha=30):
-    return type("Ficha", (), {"ID_Producto": id_producto, "ID_Ficha": id_ficha, "Estado": 1})()
+def _ficha(id_producto, id_ficha=30, dias_vida_util=5):
+    return type("Ficha", (), {
+        "ID_Producto":    id_producto,
+        "ID_Ficha":       id_ficha,
+        "Estado":         1,
+        "Dias_Vida_Util": dias_vida_util,
+    })()
 
 
 class OrdenesProduccionTests(unittest.TestCase):
@@ -142,6 +147,19 @@ class OrdenesProduccionTests(unittest.TestCase):
         self.assertEqual(creadas, 0)
         self.assertEqual(db.added, [])
 
+    def test_ficha_sin_dias_vida_util_no_genera_orden(self):
+        """Ficha sin Dias_Vida_Util se trata igual que sin ficha: no se abre la orden."""
+        venta_producto = type("VentaProducto", (), {
+            "ID_Venta": 13, "ID_Producto": 6,
+            "Cantidad": 3, "Cantidad_Preorden": 3,
+        })()
+        producto = type("Producto", (), {"ID_Producto": 6, "Requiere_Produccion": 1, "Stock": 0})()
+        db = FakeDB([venta_producto], [producto], fichas=[_ficha(6, dias_vida_util=None)])
+
+        creadas = _crear_ordenes_produccion_para_venta(db, 13, "2026-01-01")
+
+        self.assertEqual(creadas, 0)
+        self.assertEqual(db.added, [])
 
 
 if __name__ == "__main__":

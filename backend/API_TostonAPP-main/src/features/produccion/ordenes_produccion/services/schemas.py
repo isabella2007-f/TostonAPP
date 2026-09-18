@@ -76,6 +76,7 @@ class OrdenResponse(BaseModel):
     Costo:               Optional[float]    = None
     costo_detalle:       Optional[List[Any]] = None
     lote:                Optional[Any]      = None
+    advertencia_vencimiento: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -2519,6 +2519,10 @@ def _crear_ordenes_produccion_para_venta(
             # pasar a Listo (ver _faltantes_sin_cubrir) hasta que se cargue la
             # ficha; al reintentar "marcar Listo" esta función se vuelve a correr.
             continue
+        if not ficha.Dias_Vida_Util:
+            # Sin vida útil configurada el lote resultante no tendría fecha de
+            # vencimiento y no podría rastrearse. Mismo tratamiento que sin ficha.
+            continue
         db.add(OrdenProduccion(
             ID_Venta       = id_venta,
             ID_Producto    = item.ID_Producto,

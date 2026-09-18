@@ -434,7 +434,13 @@ function ModalDetallesOrden({ orden, onClose }) {
                 </div>
                 <div>
                   <div style={{ fontSize: 10, color: "#616161", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>Vencimiento</div>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>{fmtFecha(orden.lote.fechaVencimiento)}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: orden.lote.alertaVencimientoPrevioEntrega ? "#c62828" : undefined, display: "flex", alignItems: "center", gap: 4 }}>
+                    {orden.lote.alertaVencimientoPrevioEntrega && <AlertTriangle size={12} style={{ flexShrink: 0 }} />}
+                    {fmtFecha(orden.lote.fechaVencimiento)}
+                  </div>
+                  {orden.lote.alertaVencimientoPrevioEntrega && (
+                    <div style={{ fontSize: 10, color: "#c62828", marginTop: 2 }}>Vence antes de la entrega</div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1039,7 +1045,27 @@ function ModalFormOrden({ orden, productos, onClose, onSave }) {
     setErrors(e => ({ ...e, [k]: "" }));
   };
 
-  const sinFicha = !productLoading && form.idProducto && !selectedProduct?.ficha_tecnica;
+  const sinFicha    = !productLoading && form.idProducto && !selectedProduct?.ficha_tecnica;
+  const sinVidaUtil = !productLoading && form.idProducto && !!selectedProduct?.ficha_tecnica && !selectedProduct?.ficha_tecnica?.Dias_Vida_Util;
+
+  // Advertencia no bloqueante: la orden se crea igual, pero se avisa
+  // que el producto vencería antes de llegar al cliente si se produce hoy.
+  let advertenciaVencimiento = null;
+  if (!sinFicha && !sinVidaUtil && selectedProduct?.ficha_tecnica?.Dias_Vida_Util && form.fechaEntrega) {
+    const vidaUtil = Number(selectedProduct.ficha_tecnica.Dias_Vida_Util);
+    const unidad   = (selectedProduct.ficha_tecnica.Vida_Util_Unidad || "dias").toLowerCase();
+    const hoy = new Date(localToday() + "T00:00:00");
+    const vence = new Date(hoy);
+    if (unidad === "meses")        vence.setMonth(vence.getMonth() + vidaUtil);
+    else if (unidad === "semanas") vence.setDate(vence.getDate() + vidaUtil * 7);
+    else                           vence.setDate(vence.getDate() + vidaUtil);
+    const fechaEnt = new Date(form.fechaEntrega + "T00:00:00");
+    if (vence < fechaEnt) {
+      const diasEntrega = Math.round((fechaEnt - hoy) / 86_400_000);
+      const vencIso = vence.toISOString().split("T")[0];
+      advertenciaVencimiento = `Este producto tiene ${vidaUtil} ${unidad} de vida útil, pero la entrega es en ${diasEntrega} días. Si se produce hoy, el lote vencería el ${vencIso} antes de la entrega.`;
+    }
+  }
 
   const handleSave = async () => {
     const today = localToday();
@@ -1050,6 +1076,7 @@ function ModalFormOrden({ orden, productos, onClose, onSave }) {
     else if (cantNum > MAX_CANTIDAD)           e.cantidad   = `El máximo es ${MAX_CANTIDAD}`;
     // 3.10 — sin ficha técnica no se puede generar la orden.
     if (sinFicha)                              e.idProducto = "Este producto no tiene ficha técnica. Créala en Gestión de Productos.";
+    if (sinVidaUtil)                           e.idProducto = "La ficha técnica no tiene 'Días de vida útil' configurado. Complétalo en Gestión de Productos.";
 
     if (!form.fechaEntrega)                    e.fechaEntrega = "La fecha de entrega es obligatoria";
     else if (form.fechaEntrega < today)        e.fechaEntrega = "La fecha no puede ser anterior a hoy";
@@ -1144,6 +1171,11 @@ function ModalFormOrden({ orden, productos, onClose, onSave }) {
                 ⚠ Este producto no tiene ficha técnica. No se puede crear una orden hasta cargarla en Gestión de Productos.
               </p>
             )}
+            {sinVidaUtil && (
+              <p className="field-error" style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                ⚠ La ficha técnica no tiene "Días de vida útil" configurado. Complétalo en Gestión de Productos antes de crear una orden.
+              </p>
+            )}
           </div>
 
           {/* Cantidad */}
@@ -1189,6 +1221,24 @@ function ModalFormOrden({ orden, productos, onClose, onSave }) {
             </div>
           </div>
 
+          {advertenciaVencimiento && (
+            <div style={{
+              display: "flex", alignItems: "flex-start", gap: 10,
+              background: "#fff8e1", border: "1.5px solid #ffe082",
+              borderRadius: 10, padding: "12px 14px",
+            }}>
+              <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 1, color: "#f9a825" }} />
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#6d4c00", marginBottom: 2 }}>
+                  Advertencia: vida útil corta
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 500, color: "#9a6400", lineHeight: 1.4 }}>
+                  {advertenciaVencimiento}
+                </div>
+              </div>
+            </div>
+          )}
+
           {errors._api && (
             <div style={{
               display: "flex", alignItems: "flex-start", gap: 10,
@@ -1210,7 +1260,7 @@ function ModalFormOrden({ orden, productos, onClose, onSave }) {
 
         <div className="modal-footer" style={{ justifyContent: "space-between" }}>
           <button className="btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn-save" onClick={handleSave} disabled={saving || sinFicha || productLoading}>
+          <button className="btn-save" onClick={handleSave} disabled={saving || sinFicha || sinVidaUtil || productLoading}>
             {saving ? "Guardando…" : orden ? "Guardar cambios" : "Crear orden"}
           </button>
         </div>
@@ -1542,7 +1592,16 @@ export default function GestionOrdenesProduccion() {
                     <td style={{ fontSize: 13, fontWeight: 700 }}>
                       {orden.costo > 0 ? fmt(orden.costo) : <span style={{ color: "#9e9e9e" }}>—</span>}
                     </td>
-                    <td><EstadoBadge estado={orden.estado} /></td>
+                    <td>
+                      <EstadoBadge estado={orden.estado} />
+                      {orden.lote?.alertaVencimientoPrevioEntrega && (
+                        <span
+                          data-tooltip="El lote vence antes de la fecha de entrega"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 3, marginTop: 4, background: "#ffebee", border: "1px solid #ef9a9a", borderRadius: 6, padding: "2px 6px", fontSize: 10, fontWeight: 700, color: "#c62828" }}>
+                          <AlertTriangle size={10} />Lote vence pronto
+                        </span>
+                      )}
+                    </td>
                     <td>
                       <div className="actions-cell">
                         {(() => {
