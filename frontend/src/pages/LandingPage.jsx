@@ -662,12 +662,15 @@ const LandingPage = ({ hideNavbar = false }) => {
                 <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#a5d6a7] rounded-3xl rotate-12 -z-10 opacity-40" />
                 <div className="w-full h-full bg-gradient-to-br from-[#1b5e20] to-[#4caf50] rounded-[60px] p-1 shadow-[0_30px_60px_rgba(27,94,32,0.2)] rotate-2 hover:rotate-0 transition-transform duration-700 overflow-hidden group">
                   <div className="w-full h-full bg-white rounded-[58px] overflow-hidden relative">
-                    <img
-                      src="/torta-platano.jpg"
-                      alt="Producto Tostón App"
-                      fetchpriority="high"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                    />
+                    <picture>
+                      <source srcSet="/torta-platano.webp" type="image/webp" />
+                      <img
+                        src="/torta-platano.jpg"
+                        alt="Producto Tostón App"
+                        fetchpriority="high"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                      />
+                    </picture>
                   </div>
                 </div>
               </div>
