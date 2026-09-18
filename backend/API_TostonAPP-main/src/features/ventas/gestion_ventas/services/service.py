@@ -24,7 +24,7 @@ MARGEN_MINIMO_DIAS_ENVIO_ANTICIPADO = 1
 
 # Rango de fechas de entrega permitido para pedidos.
 # Espejo en frontend: DIAS_MIN_PRODUCCION / MESES_MAX_PEDIDO en utils/horario.js.
-DIAS_MIN_PRODUCCION = 7
+DIAS_MIN_PRODUCCION = 1
 MESES_MAX_PEDIDO    = 6
 
 

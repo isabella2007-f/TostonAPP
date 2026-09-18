@@ -7,7 +7,7 @@
 
 // Rango de fechas seleccionable para pedidos con producción.
 // Espejo en backend: DIAS_MIN_PRODUCCION / MESES_MAX_PEDIDO en service.py.
-export const DIAS_MIN_PRODUCCION = 7;
+export const DIAS_MIN_PRODUCCION = 1;
 export const MESES_MAX_PEDIDO    = 6;
 
 const HORA_APERTURA_DEF = "08:00";
