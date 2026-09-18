@@ -39,6 +39,9 @@ export default defineConfig(async () => ({
           vendor: ['react', 'react-dom', 'react-router-dom'],
           charts: ['recharts'],
           icons: ['lucide-react'],
+          map: ['leaflet', 'react-leaflet'],
+          pdf: ['jspdf', 'jspdf-autotable'],
+          excel: ['xlsx'],
         }
       }
     }

@@ -138,7 +138,7 @@ export default function Navbar({ isLanding = false, onToggleSidebar }) {
             style={{ cursor: 'pointer' }}
             data-tooltip="Ir a la página principal"
           >
-            <img src="/Logo.png" alt="Logo" className="logo" />
+            <img src="/Logo.png" alt="Logo" width={713} height={350} className="logo" />
           </div>
 
           {/* RIGHT — íconos de acción */}

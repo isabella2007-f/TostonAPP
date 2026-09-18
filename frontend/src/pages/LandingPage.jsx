@@ -24,6 +24,7 @@ import {
 import { getLandingConfig, LANDING_DEFAULTS } from '../services/landingConfigService';
 import { formatCOP } from '../utils/formato';
 import { MAX_QTY } from '../features/sales/orders/services/cartService';
+import { urlProductImg } from '../utils/avatar';
 
 /** Input de cantidad editable por teclado (máx. 4 dígitos). */
 function QtyInput({ value, onChange, className = '' }) {
@@ -110,8 +111,9 @@ function ProductDetailModal({ product, cat, onClose, onAddToCart }) {
           <div className="relative flex-1" style={{ minHeight: 280, maxHeight: 420 }}>
             {imgs.length > 0 ? (
               <img
-                src={imgs[imgIdx]}
+                src={urlProductImg(imgs[imgIdx], 1200)}
                 alt={product.nombre}
+                loading="lazy"
                 className="w-full h-full object-cover"
                 style={{ maxHeight: 420 }}
               />
@@ -155,7 +157,7 @@ function ProductDetailModal({ product, cat, onClose, onAddToCart }) {
                     i === imgIdx ? 'border-[#1b5e20] scale-95' : 'border-transparent opacity-50 hover:opacity-80'
                   }`}
                 >
-                  <img src={url} alt="" className="w-full h-full object-cover" />
+                  <img src={urlProductImg(url, 200)} alt="" loading="lazy" className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
@@ -224,14 +226,14 @@ function ProductDetailModal({ product, cat, onClose, onAddToCart }) {
           <div className="mt-auto pt-2">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1 bg-[#f7faf8] rounded-2xl border border-[#e8f5e9] p-1.5 flex-shrink-0">
-                <button onClick={() => setQty(q => Math.max(1, q - 1))} data-tooltip="Disminuir cantidad"
+                <button onClick={() => setQty(q => Math.max(1, q - 1))} aria-label="Disminuir cantidad" data-tooltip="Disminuir cantidad"
                   className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-[#e8f5e9] transition-colors active:scale-90 text-[#1b5e20] font-bold text-lg">−</button>
                 <QtyInput
                   value={qty}
                   onChange={setQty}
                   className="w-10 text-center font-black text-[#1b5e20] text-sm bg-transparent border-none outline-none"
                 />
-                <button onClick={() => setQty(q => Math.min(MAX_QTY, q + 1))} data-tooltip="Aumentar cantidad"
+                <button onClick={() => setQty(q => Math.min(MAX_QTY, q + 1))} aria-label="Aumentar cantidad" data-tooltip="Aumentar cantidad"
                   className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-[#e8f5e9] transition-colors active:scale-90 text-[#1b5e20] font-bold text-lg">+</button>
               </div>
               <button
@@ -660,6 +662,7 @@ const LandingPage = ({ hideNavbar = false }) => {
                     <img
                       src="/torta-platano.jpg"
                       alt="Producto Tostón App"
+                      fetchpriority="high"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                     />
                   </div>
@@ -737,7 +740,7 @@ const LandingPage = ({ hideNavbar = false }) => {
                 >
                   <div className="relative h-72 overflow-hidden cursor-pointer" data-tooltip="Ver detalles del producto" onClick={() => setSelectedProduct(p)}>
                     {p.imagenPreview || p.imagen
-                      ? <img src={p.imagenPreview || p.imagen} alt={p.nombre} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                      ? <img src={urlProductImg(p.imagenPreview || p.imagen)} alt={p.nombre} loading="lazy" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
                       : <div className="w-full h-full bg-[#f7faf8] flex items-center justify-center"><span className="text-7xl group-hover:scale-125 transition-transform duration-500">{cat.icon || '🍌'}</span></div>
                     }
                     {/* Overlay Ver detalles */}
@@ -792,7 +795,7 @@ const LandingPage = ({ hideNavbar = false }) => {
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex items-center gap-1 bg-[#f7faf8] rounded-2xl border border-[#e8f5e9] p-1.5">
-                        <button onClick={() => setQty(p.id, qty - 1)} data-tooltip="Disminuir cantidad" className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-[#e8f5e9] transition-colors active:scale-90">
+                        <button onClick={() => setQty(p.id, qty - 1)} aria-label="Disminuir cantidad" data-tooltip="Disminuir cantidad" className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-[#e8f5e9] transition-colors active:scale-90">
                           <Minus className="w-3.5 h-3.5 text-[#1b5e20]" />
                         </button>
                         <QtyInput
@@ -800,7 +803,7 @@ const LandingPage = ({ hideNavbar = false }) => {
                           onChange={(n) => setQty(p.id, n)}
                           className="w-8 text-center font-black text-[#1b5e20] text-sm bg-transparent border-none outline-none"
                         />
-                        <button onClick={() => setQty(p.id, qty + 1)} data-tooltip="Aumentar cantidad" className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-[#e8f5e9] transition-colors active:scale-90">
+                        <button onClick={() => setQty(p.id, qty + 1)} aria-label="Aumentar cantidad" data-tooltip="Aumentar cantidad" className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-[#e8f5e9] transition-colors active:scale-90">
                           <Plus className="w-3.5 h-3.5 text-[#1b5e20]" />
                         </button>
                       </div>
