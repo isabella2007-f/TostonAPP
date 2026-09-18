@@ -1,6 +1,6 @@
 import re
 from sqlalchemy import case
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime
 from decimal import Decimal
@@ -157,15 +157,6 @@ def obtener_productos(
     offset = (pagina - 1) * por_pagina
     productos = (
         query
-        .options(
-            selectinload(Producto.categoria),
-            selectinload(Producto.imagenes),
-            selectinload(Producto.lotes_producto),
-            selectinload(Producto.fichas_tecnicas)
-                .selectinload(FichaTecnica.insumos_ficha)
-                .selectinload(FichaTecnicaInsumo.insumo)
-                .selectinload(Insumo.categoria),
-        )
         .offset(offset)
         .limit(por_pagina)
         .all()
