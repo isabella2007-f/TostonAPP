@@ -7,7 +7,7 @@ const fmtFechaLarga = (str) => {
   return new Date(str).toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
 };
 
-function buildHTML({ numero, fecha, estado, cliente, entrega, metodoPago, items, subtotal, costoEntrega, descuento, total, anticipo = 0, pagoFinalRegistrado = false, montoEfectivo = null, montoTransferencia = null, subtotalBase = null, domicilioBase = null, ivaTotal = null }) {
+function buildHTML({ numero, fecha, estado, cliente, entrega, tipoEntrega = null, domiciliario = null, metodoPago, items, subtotal, costoEntrega, descuento, total, anticipo = 0, pagoFinalRegistrado = false, montoEfectivo = null, montoTransferencia = null, subtotalBase = null, domicilioBase = null, ivaTotal = null }) {
   const saldoPendiente = pagoFinalRegistrado ? 0 : Math.max(0, total - anticipo);
   const esMixto = (metodoPago || '').toLowerCase() === 'mixto';
   const year = new Date().getFullYear();
@@ -141,13 +141,20 @@ function buildHTML({ numero, fecha, estado, cliente, entrega, metodoPago, items,
       <div class="icard">
         <div class="icard-lbl">👤 Cliente</div>
         <div class="icard-val">${cliente.nombre}</div>
+        ${(cliente.tipoDocumento || cliente.cedula) ? `<div class="icard-sub">🪪 ${[cliente.tipoDocumento, cliente.cedula].filter(Boolean).join(' ')}</div>` : ''}
         ${cliente.correo  ? `<div class="icard-sub">✉️ ${cliente.correo}</div>`  : ''}
         ${cliente.telefono? `<div class="icard-sub">📞 ${cliente.telefono}</div>`: ''}
       </div>
       <div class="icard">
-        <div class="icard-lbl">${costoEntrega > 0 ? '🛵 Entrega a domicilio' : '🏪 Retiro en local'}</div>
+        <div class="icard-lbl">${tipoEntrega || (costoEntrega > 0 ? '🛵 Entrega a domicilio' : '🏪 Retiro en local')}</div>
         <div class="icard-val">${entrega}</div>
-        <div class="icard-sub">
+        ${domiciliario ? `
+        <div class="icard-sub" style="margin-top:6px;display:flex;flex-direction:column;gap:2px">
+          <span style="font-weight:800;color:#1a1a1a">🛵 ${domiciliario.nombre}</span>
+          ${domiciliario.cedula  ? `<span>🪪 ${domiciliario.cedula}</span>`  : ''}
+          ${domiciliario.celular ? `<span>📞 ${domiciliario.celular}</span>` : ''}
+        </div>` : ''}
+        <div class="icard-sub" style="margin-top:${domiciliario ? '8' : '0'}px">
           <span class="pay-badge">💳 ${metodoPago}</span>
         </div>
       </div>
@@ -287,16 +294,28 @@ export function descargarFacturaPedido(pedido, usuario) {
     : 0;
   const pagoFinalRegistrado = !!pedido.pago_final_registrado;
 
+  const esDomicilio = !!(pedido.domicilio);
+  const tipoEntregaLabel = esDomicilio ? '🛵 Entrega a domicilio' : '🏪 Retiro en local';
+  const domiciliarioInfo = pedido.nombre_domiciliario ? {
+    nombre: pedido.nombre_domiciliario,
+    cedula:  pedido.cedula_domiciliario  || null,
+    celular: pedido.celular_domiciliario || null,
+  } : null;
+
   const html = buildHTML({
     numero:       pedido.numero,
     fecha:        fmtFechaLarga(pedido.fecha_pedido),
     estado:       pedido.estado || 'Procesado',
     cliente: {
-      nombre:    `${usuario?.nombre || 'Cliente'} ${usuario?.apellidos || ''}`.trim(),
-      correo:    usuario?.correo  || '',
-      telefono:  usuario?.telefono || '',
+      nombre:        `${usuario?.nombre || 'Cliente'} ${usuario?.apellidos || ''}`.trim(),
+      correo:        usuario?.correo    || pedido.cliente?.correo    || '',
+      telefono:      usuario?.telefono  || pedido.cliente?.telefono  || '',
+      cedula:        usuario?.cedula    || pedido.cliente?.cedula    || '',
+      tipoDocumento: usuario?.tipoDocumento || pedido.cliente?.tipoDocumento || '',
     },
-    entrega:      pedido.domicilio ? (pedido.direccion_entrega || 'Domicilio') : 'Retiro en el local',
+    entrega:      esDomicilio ? (pedido.direccion_entrega || 'Domicilio') : 'Retiro en el local',
+    tipoEntrega:  tipoEntregaLabel,
+    domiciliario: domiciliarioInfo,
     metodoPago:   pedido.metodo_pago || 'Efectivo',
     items,
     subtotal,

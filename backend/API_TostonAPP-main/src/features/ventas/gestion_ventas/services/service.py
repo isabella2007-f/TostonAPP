@@ -534,12 +534,16 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
          if d is not None and d.ID_Empleado and d.Estado != 5),
         None,
     )
-    domiciliario = None
+    domiciliario          = None
+    cedula_domiciliario   = None
+    celular_domiciliario  = None
     id_repartidor = dom_con_repartidor.ID_Empleado if dom_con_repartidor else None
     if dom_con_repartidor:
         emp = dom_con_repartidor.empleado
         if emp:
-            domiciliario = f"{emp.Nombre} {emp.Apellidos}"
+            domiciliario         = f"{emp.Nombre} {emp.Apellidos}"
+            cedula_domiciliario  = getattr(emp, "Cedula",   None)
+            celular_domiciliario = getattr(emp, "Telefono", None)
 
     ordenes_pendientes = sum(
         1 for o in venta.ordenes_produccion
@@ -553,9 +557,11 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
     return {
         "ID_Venta":           venta.ID_Venta,
         "ID_Usuario":         venta.ID_Usuario,
-        "nombre_cliente":     f"{usuario.Nombre} {usuario.Apellidos}" if usuario else None,
-        "correo_cliente":     usuario.Correo    if usuario else None,
-        "telefono_cliente":   usuario.Telefono  if usuario else None,
+        "nombre_cliente":          f"{usuario.Nombre} {usuario.Apellidos}" if usuario else None,
+        "correo_cliente":          usuario.Correo         if usuario else None,
+        "telefono_cliente":        usuario.Telefono        if usuario else None,
+        "cedula_cliente":          getattr(usuario, "Cedula",          None) if usuario else None,
+        "tipo_documento_cliente":  getattr(usuario, "Tipo_Documento",  None) if usuario else None,
         "Total":              venta.Total,
         "subtotal_bruto":     subtotal_bruto,
         "credito_aplicado":   credito_aplicado,
@@ -589,6 +595,8 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         "observaciones_admin":          observaciones_limpias(getattr(domicilio, "Observaciones_Admin", None)) if domicilio else None,
         "observaciones_repartidor":     observaciones_limpias(getattr(domicilio, "Observaciones_Repartidor", None)) if domicilio else None,
         "nombre_domiciliario":          domiciliario,
+        "cedula_domiciliario":          cedula_domiciliario,
+        "celular_domiciliario":         celular_domiciliario,
         "ID_Empleado":                  id_repartidor,
         "ordenes_produccion_pendientes": ordenes_pendientes,
         "ordenes_en_espera":             ordenes_en_espera,
@@ -858,8 +866,10 @@ def _batch_ventas(ventas: list, db: Session) -> list:
         credito_aplicado   = detalle.Descuento        if detalle else Decimal("0")
         descuento_aplicado = dxv.Monto_Aplicado       if dxv     else Decimal("0")
         subtotal_bruto     = sum(p["subtotal"] for p in prods_list)
-        domiciliario       = (f"{repartidor.Nombre} {repartidor.Apellidos}"
-                              if repartidor else None)
+        domiciliario         = (f"{repartidor.Nombre} {repartidor.Apellidos}"
+                                if repartidor else None)
+        cedula_domiciliario  = (getattr(repartidor, "Cedula",   None) if repartidor else None)
+        celular_domiciliario = (getattr(repartidor, "Telefono", None) if repartidor else None)
 
         # requiere_fecha_propuesta: usa el snapshot guardado al crear la venta,
         # no el stock actual (que puede haber cambiado después del pedido).
@@ -868,9 +878,11 @@ def _batch_ventas(ventas: list, db: Session) -> list:
         result.append({
             "ID_Venta":           venta.ID_Venta,
             "ID_Usuario":         venta.ID_Usuario,
-            "nombre_cliente":     f"{usuario.Nombre} {usuario.Apellidos}" if usuario else None,
-            "correo_cliente":     usuario.Correo   if usuario else None,
-            "telefono_cliente":   usuario.Telefono if usuario else None,
+            "nombre_cliente":         f"{usuario.Nombre} {usuario.Apellidos}" if usuario else None,
+            "correo_cliente":         usuario.Correo         if usuario else None,
+            "telefono_cliente":       usuario.Telefono        if usuario else None,
+            "cedula_cliente":         getattr(usuario, "Cedula",         None) if usuario else None,
+            "tipo_documento_cliente": getattr(usuario, "Tipo_Documento", None) if usuario else None,
             "Total":              venta.Total,
             "subtotal_bruto":     subtotal_bruto,
             "credito_aplicado":   credito_aplicado,
@@ -895,6 +907,8 @@ def _batch_ventas(ventas: list, db: Session) -> list:
             "observaciones_admin":          observaciones_limpias(getattr(dom, "Observaciones_Admin", None)) if dom else None,
             "observaciones_repartidor":     observaciones_limpias(getattr(dom, "Observaciones_Repartidor", None)) if dom else None,
             "nombre_domiciliario":          domiciliario,
+            "cedula_domiciliario":          cedula_domiciliario,
+            "celular_domiciliario":         celular_domiciliario,
             "ID_Empleado":                  dom.ID_Empleado if dom else None,
             "ordenes_produccion_pendientes": ordenes_counts.get(venta.ID_Venta, 0),
             "ordenes_en_espera":             ordenes_espera.get(venta.ID_Venta, 0),

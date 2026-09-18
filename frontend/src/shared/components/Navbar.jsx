@@ -157,7 +157,7 @@ export default function Navbar({ isLanding = false, onToggleSidebar }) {
                       className="nav-link"
                     >Productos</button>
                     <button
-                      onClick={() => isOnLanding ? scrollToSection('contacto')  : navigate({ pathname: '/', hash: '#contacto' })}
+                      onClick={() => isOnLanding ? scrollToSection('nosotros')  : navigate({ pathname: '/', hash: '#nosotros' })}
                       className="nav-link"
                     >Nosotros</button>
                   </>

@@ -207,14 +207,15 @@
   border: none;
   border-radius: 10px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   color: #555;
   white-space: nowrap;
 }
 
 .section-btn:hover {
-  background: var(--g-soft);
+  background: #c8e0cb;
   color: var(--g);
+  box-shadow: inset 3px 0 0 var(--g);
 }
 
 .section-icon-wrap { display: flex; align-items: center; flex-shrink: 0; color: #7a9e7e; }
@@ -225,7 +226,7 @@
 
 /* Sección que es un enlace directo (sin submenú) */
 .section-btn--link { text-decoration: none; }
-.section-btn--link.active { background: var(--g-soft); color: var(--g); }
+.section-btn--link.active { background: #c8e0cb; color: var(--g); box-shadow: inset 3px 0 0 var(--g); }
 .section-btn--link.active .section-icon-wrap { color: var(--g); }
 .section-btn--link.active .section-label { font-weight: 800; }
 
@@ -250,7 +251,7 @@
   font-weight: 600;
   border-radius: 9px;
   margin: 1px 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   white-space: nowrap;
 }
 
@@ -259,7 +260,7 @@
 .sub-item.active .sub-icon { color: var(--g); }
 .sub-label { overflow: hidden; text-overflow: ellipsis; }
 
-.sub-item:hover { color: var(--g); background: var(--g-soft); }
+.sub-item:hover { color: var(--g); background: #c8e0cb; box-shadow: inset 3px 0 0 var(--g); }
 .sub-item.active {
   color: var(--g);
   background: var(--g-soft);

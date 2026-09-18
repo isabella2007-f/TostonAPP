@@ -116,11 +116,11 @@
 .nav-link {
   color: #444;
   text-decoration: none;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
-  padding: 7px 13px;
+  padding: 8px 16px;
   border-radius: 9px;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.2s ease, color 0.2s ease;
   background: transparent;
   border: none;
   cursor: pointer;
