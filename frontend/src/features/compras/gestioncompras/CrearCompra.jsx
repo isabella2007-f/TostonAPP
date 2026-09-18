@@ -6,7 +6,7 @@ import SearchableSelect from "../../../shared/components/SearchableSelect.jsx";
 import ImageLightbox from "../../../shared/components/ImageLightbox.jsx";
 import { subirImagenCloudinary } from "../../../utils/cloudinary.js";
 import DetalleInsumoFields from "./DetalleInsumoFields.jsx";
-import { GRUPO_UNIDAD, CANT_MAX } from "./compraDetalleUtils.js";
+import { GRUPO_UNIDAD, CANT_MAX, convertirABase } from "./compraDetalleUtils.js";
 import "./compras.css";
 import { formatCOP } from "../../../utils/formato";
 
@@ -282,16 +282,23 @@ export default function CrearCompra({ onClose, onSave }) {
           return;
         }
       }
-      const detallesLimpios = detalles.map(d => ({
-        idInsumo:         Number(d.idInsumo),
-        idUnidad:         d.idUnidad ? Number(d.idUnidad) : null,
-        cantidad:         Number(d.cantidad),
-        precioUnd:        Number(d.precioUnd),
-        notas:            (d.notas || "").trim(),
-        fechaVencimiento: d.vencimientoTipo === "dias"
-          ? (() => { const f = new Date(); f.setDate(f.getDate() + Number(d.vencimientoValor)); return f.toISOString().split("T")[0]; })()
-          : d.fechaVencimiento || null,
-      }));
+      const detallesLimpios = detalles.map(d => {
+        const insumo = insumosActivos.find(i => String(i.id) === String(d.idInsumo));
+        const { cantidad, precioUnd } = convertirABase(
+          Number(d.cantidad), Number(d.precioUnd),
+          d.idUnidad, insumo?.idUnidad,
+        );
+        return {
+          idInsumo:         Number(d.idInsumo),
+          idUnidad:         d.idUnidad ? Number(d.idUnidad) : null,
+          cantidad,
+          precioUnd,
+          notas:            (d.notas || "").trim(),
+          fechaVencimiento: d.vencimientoTipo === "dias"
+            ? (() => { const f = new Date(); f.setDate(f.getDate() + Number(d.vencimientoValor)); return f.toISOString().split("T")[0]; })()
+            : d.fechaVencimiento || null,
+        };
+      });
       onSave({
         ...form,
         detalles: detallesLimpios,

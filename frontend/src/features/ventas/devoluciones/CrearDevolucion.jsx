@@ -125,7 +125,7 @@ function PedidoSelect({ value, pedidos, onChange, onSearch, searching, error, di
                 ? `Sin resultados para "${query}"`
                 : hayOcultos
                   ? "Ninguno de los pedidos entregados se puede devolver ahora."
-                  : "Escribe para buscar un pedido entregado…"}
+                  : "No hay pedidos entregados disponibles para devolución."}
           </div>
         ) : pedidos.map(p => (
           <button
@@ -327,6 +327,8 @@ export default function CrearDevolucion({ onClose, onSave, saving, devoluciones 
       .catch(err => setLoadError(err?.message || "Error al cargar pedidos entregados"))
       .finally(() => setSearching(false));
   }, []);
+
+  useEffect(() => { buscarPedidos(""); }, [buscarPedidos]);
 
   // Calcula la cantidad aún devolvible por producto en un pedido,
   // descontando lo que ya fue aprobado o está pendiente de aprobación.
