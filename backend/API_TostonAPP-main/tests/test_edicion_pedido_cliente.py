@@ -25,6 +25,19 @@ URL = "https://ejemplo/comprobante.jpg"
 
 
 class EdicionBase(PanelBase):
+    def en_ventana_con_comprobante(self, **kw):
+        """Pedido recién hecho, por transferencia y con comprobante.
+
+        El cliente solo puede cambiar el método mientras corren sus 10
+        minutos, y a "Esperando pago" se llega después de que ese plazo
+        cierra: para probar qué pasa con el comprobante al cambiar de método
+        hay que mirarlo acá, o por el panel, que no tiene plazo.
+        """
+        cuerpo = dict(Metodo_Pago="Transferencia",
+                      comprobante_pago="https://ejemplo/comprobante.jpg")
+        cuerpo.update(kw)
+        return self.crear_pedido(**cuerpo)["ID_Venta"]
+
     def setUp(self):
         super().setUp()
         # El cliente del panel tiene direccion pero no barrio: sin el, el
@@ -47,7 +60,12 @@ class EdicionBase(PanelBase):
         return id_venta
 
     def pedido_transferencia(self, **kw):
-        return self.crear_pedido(Metodo_Pago="Transferencia", **kw)["ID_Venta"]
+        """Un pedido ya en "Esperando pago": el panel lo aceptó.
+
+        Ahí es donde el cliente puede pagarlo, y es el estado en el que la
+        mayoría de estas pruebas lo necesitan.
+        """
+        return self.pedido_esperando_pago(**kw)
 
     def pedido_con_anticipo(self):
         """11 tostones = $110.000: por encima del umbral del anticipo."""
@@ -62,14 +80,14 @@ class EdicionBase(PanelBase):
 # ══════════════════════════════════════════════════════════════════════
 class VentanaDeEdicionTest(EdicionBase):
     def test_dentro_de_los_diez_minutos_se_puede(self):
-        id_venta = self.pedido_transferencia()
+        id_venta = self.crear_pedido(Metodo_Pago="Transferencia")["ID_Venta"]
         self.afirmar_ok(self.editar(id_venta, {"Metodo_Pago": "Efectivo"}))
 
     def test_pasados_los_diez_minutos_no_se_puede_esperando_pago(self):
         # "Esperando pago" estaba exento de la ventana entera: bastaba con
         # que el pedido llevara transferencia para poder editarlo para
         # siempre.
-        id_venta = self.envejecer(self.pedido_transferencia())
+        id_venta = self.pedido_transferencia()
         r = self.editar(id_venta, {"Metodo_Pago": "Efectivo"})
         self.assertEqual(r.status_code, 400, self.detalle(r))
 
@@ -90,7 +108,7 @@ class VentanaDeEdicionTest(EdicionBase):
     def test_el_comprobante_sigue_pudiendose_adjuntar_despues(self):
         # Transferir y tomar la captura lleva mas de diez minutos: eso no es
         # editar el pedido, es cumplirlo.
-        id_venta = self.envejecer(self.pedido_transferencia())
+        id_venta = self.pedido_transferencia()
         detalle = self.afirmar_ok(
             self.editar(id_venta, {"Comprobante_Pago": URL}))
         self.assertEqual(detalle["estado_pago"], "pendiente_validacion")
@@ -109,17 +127,18 @@ class MetodoDePagoTest(EdicionBase):
     def test_a_efectivo_el_pedido_deja_de_esperar_pago(self):
         # El bug reportado: el pedido seguia "Esperando pago" y las dos
         # pantallas seguian pidiendo el comprobante de una transferencia que
-        # ya nadie va a hacer.
+        # ya nadie va a hacer. Lo cambia el panel, que es quien puede tocar
+        # un pedido cuyo plazo de cliente ya cerró.
         id_venta = self.pedido_transferencia()
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_ESPERANDO_PAGO)
 
-        detalle = self.afirmar_ok(
-            self.editar(id_venta, {"Metodo_Pago": "Efectivo"}))
+        detalle = self.afirmar_ok(self.put(
+            f"/pedidos/{id_venta}", self.admin, {"Metodo_Pago": "Efectivo"}))
         self.assertEqual(detalle["Estado"], PEDIDO_CONFIRMADO,
                          "en efectivo no hay nada que esperar")
 
     def test_a_efectivo_se_borra_el_comprobante(self):
-        id_venta = self.pedido_transferencia(comprobante_pago=URL)
+        id_venta = self.en_ventana_con_comprobante()
         self.afirmar_ok(self.editar(id_venta, {"Metodo_Pago": "Efectivo"}))
         venta = self.venta(id_venta)
         self.db.refresh(venta)
@@ -198,7 +217,7 @@ class PagoMixtoTest(EdicionBase):
     def test_el_comprobante_de_la_transferencia_entera_no_vale_para_el_mixto(self):
         # Pagaba $20.000 por transferencia y tiene la captura de esos
         # $20.000. Ahora transfiere $12.000: esa captura respalda otra cifra.
-        id_venta = self.pedido_transferencia(comprobante_pago=URL)
+        id_venta = self.en_ventana_con_comprobante()
         detalle = self.afirmar_ok(self.editar(id_venta, {
             "Metodo_Pago": "Mixto", "Monto_Efectivo": 8000}))
         self.assertIsNone(detalle["comprobante_pago"],
@@ -206,10 +225,13 @@ class PagoMixtoTest(EdicionBase):
         self.assertEqual(detalle["estado_pago"], "pendiente")
 
     def test_con_comprobante_nuevo_el_mixto_queda_en_revision(self):
-        id_venta = self.pedido_transferencia(comprobante_pago=URL)
-        detalle = self.afirmar_ok(self.editar(id_venta, {
-            "Metodo_Pago": "Mixto", "Monto_Efectivo": 8000,
-            "Comprobante_Pago": "https://ejemplo/nuevo.jpg"}))
+        # Ya en la etapa de pago, y por el panel: el cliente no adjunta
+        # comprobantes mientras define cómo va a pagar.
+        id_venta = self.pedido_transferencia()
+        detalle = self.afirmar_ok(self.put(
+            f"/pedidos/{id_venta}", self.admin,
+            {"Metodo_Pago": "Transferencia",
+             "Comprobante_Pago": "https://ejemplo/nuevo.jpg"}))
         self.assertEqual(detalle["comprobante_pago"],
                          "https://ejemplo/nuevo.jpg")
         self.assertEqual(detalle["estado_pago"], "pendiente_validacion")
@@ -352,7 +374,7 @@ class CancelarTest(EdicionBase):
 
     def test_esperando_pago_se_cancela_pasada_la_ventana(self):
         # El reloj solo protege el arrepentimiento inmediato en "Pendiente".
-        id_venta = self.envejecer(self.pedido_transferencia())
+        id_venta = self.pedido_transferencia()
         self.afirmar_ok(self.cancelar(id_venta))
 
     def test_pendiente_pasada_la_ventana_ya_no(self):

@@ -84,11 +84,13 @@ class EstadoInicialTest(Base):
         self.assertEqual(self.venta(id_venta).Estado, CONFIRMADO)
         self.assertLess(self.stock(ID_TOSTON), antes, "se aparta lo vendido")
 
-    def test_el_de_transferencia_sigue_esperando_pago(self):
-        # Ese camino no cambia: ya no pasaba por Confirmado y 'Esperando
-        # pago' si deja cancelar.
+    def test_el_de_transferencia_espera_el_pago_al_confirmarse(self):
+        # Nace PENDIENTE como todos, y llega a "Esperando pago" cuando el
+        # panel lo acepta: antes de eso no hay nada que cobrar.
         id_venta = self.crear_pedido(Metodo_Pago="Transferencia")["ID_Venta"]
-        self.assertEqual(self.venta(id_venta).Estado, ESPERANDO_PAGO)
+        self.assertEqual(self.venta(id_venta).Estado, PENDIENTE)
+        self.assertEqual(self.venta(self.pedido_esperando_pago()).Estado,
+                         ESPERANDO_PAGO)
 
     def test_el_programado_sigue_pendiente_de_aprobacion(self):
         id_venta = self.pedido_con_faltante()["ID_Venta"]
@@ -128,8 +130,10 @@ class ComprobanteSegunLaEtapaTest(Base):
             float(detalle["Total"]))
 
     def test_ir_y_volver_de_metodo_no_deja_rastro(self):
+        # Lo que hay que hornear se paga por transferencia, así que el ida y
+        # vuelta se hace entre los dos métodos que sí admite.
         id_venta = self.programado()
-        for metodo in ("Transferencia", "Efectivo", "Mixto", "Transferencia"):
+        for metodo in ("Transferencia", "Mixto", "Transferencia"):
             cuerpo = {"Metodo_Pago": metodo}
             if metodo == "Mixto":
                 cuerpo["Monto_Efectivo"] = 10000
@@ -172,8 +176,7 @@ class ComprobanteSegunLaEtapaTest(Base):
     def test_esperando_pago_el_comprobante_tambien_entra_por_la_edicion(self):
         # Es el camino que usa el panel cuando el cliente manda la captura
         # por otro medio: sigue valiendo, pero solo en esa etapa.
-        id_venta = self.crear_pedido(Metodo_Pago="Transferencia")["ID_Venta"]
-        self.assertEqual(self.venta(id_venta).Estado, ESPERANDO_PAGO)
+        id_venta = self.pedido_esperando_pago()
         detalle = self.afirmar_ok(
             self.editar(id_venta, {"Comprobante_Pago": URL}))
         self.assertEqual(detalle["comprobante_pago"], URL)

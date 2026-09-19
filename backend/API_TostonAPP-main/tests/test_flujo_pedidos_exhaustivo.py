@@ -1131,6 +1131,9 @@ class VentanaCierreStockTest(BaseTest):
         self.marcar_por_encargo(ID_P1)
         self.set_stock(ID_P1, stock)
         return self.pedido(
+            # Por encargo: el negocio solo lo acepta por transferencia (el
+            # efectivo se cobraria al recibir, con el horno ya encendido).
+            Metodo_Pago="Transferencia",
             productos=[ProductoVentaInput(ID_Producto=ID_P1, Cantidad=cantidad)],
             Fecha_entrega_esperada=self.fecha_futura(),
         )

@@ -1020,7 +1020,11 @@ const PedidosClientePage = () => {
                     </div>
                   </div>
 
-                  {!pedido.requiere_anticipo && <CountdownBanner pedido={pedido} ahora={ahora} />}
+                  {/* Solo mientras quede algo que hacer con el plazo: en un
+                      pedido cancelado o ya confirmado, un reloj corriendo
+                      promete algo que no existe. */}
+                  {(puedeAbrirEdicion(pedido, ahora) || puedeCancelarPedido(pedido, ahora))
+                    && <CountdownBanner pedido={pedido} ahora={ahora} />}
 
                   {/* Card Body */}
                   <div className="p-6 flex-1 space-y-4">
@@ -1789,13 +1793,13 @@ const PedidosClientePage = () => {
                     </div>
                   )}
 
-                  {/* Banner anticipo: no puede editarse ni cancelarse */}
-                  {selectedPedido.requiere_anticipo && !['Cancelado', 'Entregado'].includes(selectedPedido.estado) && (
-                    <div style={{ background: '#f3e5f5', border: '1.5px solid #ce93d8', borderRadius: 10, padding: '10px 12px', fontSize: 11, color: '#6a1b9a', lineHeight: 1.6, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                      <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-                      <span>Este pedido no puede editarse ni cancelarse porque requiere anticipo. Si necesitas un cambio, escríbenos directamente.</span>
-                    </div>
-                  )}
+                  {/* Exigir un anticipo no es haberlo cobrado: hasta que la
+                      plata entra, el pedido sigue siendo del cliente y se
+                      edita y se cancela con las mismas reglas que cualquier
+                      otro. El aviso que había acá decía lo contrario y
+                      contradecía a los botones de al lado. Lo que sí cierra
+                      la puerta es el anticipo ya registrado, y eso lo dicen
+                      `puedeEditarPedido` y `puedeCancelarPedido`. */}
 
                   {/* Comprobante rechazado — banner prominente */}
                   {selectedPedido.estado_pago === 'comprobante_rechazado' && (
@@ -1815,6 +1819,35 @@ const PedidosClientePage = () => {
                     </div>
                   )}
 
+                  {/* El comprobante del saldo restante: el segundo pago de un
+                      pedido con anticipo. Se guardaba bien pero no se
+                      mostraba en ninguna parte, así que el cliente lo subía
+                      y no volvía a verlo. */}
+                  {selectedPedido.saldo_comprobante_url && (
+                    <div>
+                      <p style={{ fontSize: 9, fontWeight: 700, color: '#9e9e9e', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Comprobante del saldo restante</p>
+                      <div style={{
+                        background: selectedPedido.estado_pago === 'saldo_comprobante_rechazado' ? '#fff5f5' : '#f0fdf4',
+                        border: `1px solid ${selectedPedido.estado_pago === 'saldo_comprobante_rechazado' ? '#fca5a5' : '#bbf7d0'}`,
+                        borderRadius: 10, padding: '10px 12px',
+                      }}>
+                        <p style={{ fontSize: 11, fontWeight: 700, color: selectedPedido.estado_pago === 'saldo_comprobante_rechazado' ? '#dc2626' : '#15803d', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {selectedPedido.estado_pago === 'saldo_comprobante_rechazado'
+                            ? <><AlertCircle size={13} /> Comprobante del saldo rechazado</>
+                            : selectedPedido.estado_pago === 'saldo_pendiente_validacion'
+                              ? <><Clock size={13} /> Saldo en revisión</>
+                              : <><Check size={13} /> Saldo respaldado</>}
+                        </p>
+                        <ImageLightbox
+                          src={normalizeComprobanteSrc(selectedPedido.saldo_comprobante_url)}
+                          alt="Comprobante del saldo restante"
+                          label="Ver comprobante"
+                          thumbStyle={{ width: '100%', maxHeight: 160, objectFit: 'contain', borderRadius: 8, background: '#fff', cursor: 'zoom-in' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Comprobante */}
                   {(() => {
                     const mp = (selectedPedido.metodo_pago || '').toLowerCase();
@@ -1822,7 +1855,9 @@ const PedidosClientePage = () => {
                     return esTransferencia || !!selectedPedido.comprobante;
                   })() && (
                     <div>
-                      <p style={{ fontSize: 9, fontWeight: 700, color: '#9e9e9e', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>Comprobante de pago</p>
+                      <p style={{ fontSize: 9, fontWeight: 700, color: '#9e9e9e', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>
+                        {selectedPedido.requiere_anticipo ? 'Comprobante del anticipo' : 'Comprobante de pago'}
+                      </p>
                       {selectedPedido.comprobante ? (
                         <div style={{
                           background: selectedPedido.estado_pago === 'comprobante_rechazado' ? '#fff5f5' : '#f0fdf4',
@@ -2083,7 +2118,12 @@ const PedidosClientePage = () => {
                   }}
                   style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', background: '#fff' }}
                 >
-                  <option value="Efectivo">Efectivo</option>
+                  {/* Lo que hay que hornear se respalda antes de encender
+                      el horno: el efectivo se cobraría al recibir, con los
+                      insumos ya gastados. El servidor lo rechaza igual. */}
+                  {!editModal?.requiereFechaPropuesta && (
+                    <option value="Efectivo">Efectivo</option>
+                  )}
                   <option value="Transferencia">Transferencia bancaria</option>
                   {/* Mixto solo disponible si el pedido no requiere anticipo */}
                   {!editModal?.requiere_anticipo && (

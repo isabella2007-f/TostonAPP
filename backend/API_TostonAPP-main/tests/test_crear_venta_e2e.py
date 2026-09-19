@@ -397,8 +397,14 @@ class AnticipoTests(CrearVentaBase):
     """
 
     def sobre_stock(self, cantidad=11, **kwargs):
-        """Pedido que sí pide anticipo: 9 tortas por hornear, $110.000."""
+        """Pedido que sí pide anticipo: 9 tortas por hornear, $110.000.
+
+        Por transferencia: es el único método que el negocio acepta para lo
+        que hay que hornear —el efectivo se cobraría al recibir, con los
+        insumos ya gastados—.
+        """
         self.marcar_por_encargo(ID_TORTA)
+        kwargs.setdefault("Metodo_Pago", "Transferencia")
         return self.pedido(
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=cantidad)],
             **kwargs,
@@ -406,7 +412,7 @@ class AnticipoTests(CrearVentaBase):
 
     def test_sin_respaldo_se_rechaza(self):
         with self.assertRaises(HTTPException) as ctx:
-            self.crear(self.sobre_stock())
+            self.crear(self.sobre_stock(Metodo_Pago="Efectivo"))
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("anticipo", ctx.exception.detail.lower())
 
@@ -487,6 +493,7 @@ class AnticipoTests(CrearVentaBase):
         """Decir "requiere anticipo" sin respaldo no alcanza."""
         with self.assertRaises(HTTPException) as ctx:
             self.crear(self.sobre_stock(
+                Metodo_Pago="Efectivo",
                 requiere_anticipo=True,
                 anticipo_monto=55000.0,
                 anticipo_metodo_pago="Efectivo",
@@ -592,6 +599,7 @@ class SinAnticipoTests(CrearVentaBase):
         """
         self.marcar_por_encargo(ID_TORTA)
         self.crear(self.pedido(
+            Metodo_Pago="Transferencia",
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=3)],
         ))
         v = self.venta_creada()
@@ -604,6 +612,7 @@ class SinAnticipoTests(CrearVentaBase):
         """$99.999: un peso debajo de $100.000 no pide anticipo."""
         self.marcar_por_encargo(ID_TORTA)
         self.crear(self.pedido(
+            Metodo_Pago="Transferencia",
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=5)],
         ))
         v = self.venta_creada()
@@ -614,6 +623,7 @@ class SinAnticipoTests(CrearVentaBase):
         """$50.000 + domicilio = $55.000: sigue por debajo de $100.000."""
         self.marcar_por_encargo(ID_TORTA)
         self.crear(self.pedido(
+            Metodo_Pago="Transferencia",
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=5)],
             domicilio=self.domicilio(),
         ))
@@ -985,7 +995,6 @@ class OrdenProduccionDelFaltanteTests(CrearVentaBase):
         # Ojo: sin marcar_por_encargo, el producto no tiene Requiere_Produccion.
         self.crear(self.pedido(
             productos=[ProductoVentaInput(ID_Producto=ID_TORTA, Cantidad=5)],
-            Metodo_Pago="Transferencia",
             requiere_anticipo=True,
             anticipo_monto=25000.0,
             anticipo_metodo_pago="Transferencia",

@@ -1447,31 +1447,48 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
                 ),
             )
 
+        # Lo que hay que hornear se paga por transferencia, y solo por
+        # transferencia. El efectivo se cobra al recibir —cuando el pedido ya
+        # se produjo y la plata ya se gastó en insumos— y el mixto deja esa
+        # misma parte para el final. Un pedido por encargo respalda con plata
+        # antes de encender el horno.
+        if necesita_produccion and not (
+                _es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago)):
+            db.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Este pedido tiene productos por encargo: se paga por "
+                    "transferencia. Elige Transferencia como método de pago."
+                ),
+            )
+
         if necesita_produccion:
             # Con producción: queda "Pendiente de Aprobación" (Estado ya nace
             # en PENDIENTE) con la fecha obligatoria ya validada arriba. El
             # anticipo, si aplica, se pide cuando el admin apruebe esa fecha.
             pass
         else:
-            # Sin producción: no hay nada que aprobar en planta. Si pide
-            # anticipo (3.1) o el método lleva comprobante, va a Esperando
-            # Pago; si no, entra directo a Confirmado. El comprobante —del
-            # anticipo o del total— se adjunta después, ya no aquí (3.2).
+            # Sin producción: no hay nada que aprobar en planta, pero el
+            # pedido igual nace PENDIENTE y se queda ahí los 10 minutos del
+            # cliente. Lo que se decide acá es cuánto habrá que pagar, no el
+            # estado: a dónde va después lo resuelve `confirmar_pedido`, con
+            # la misma regla, cuando el panel lo acepta.
+            #
+            # Adelantarlo a "Esperando pago" al crear le pedía al cliente el
+            # comprobante de un pedido que nadie había aceptado todavía, y de
+            # paso le quitaba su ventana: en ese estado la app ya no ofrecía
+            # editar.
             if anticipo_obligatorio:
                 nueva_venta.Anticipo_Requerido = _calcular_anticipo(nueva_venta.Total, Decimal("0"))
                 nueva_venta.Requiere_Anticipo  = 1
-                nueva_venta.Estado             = EstadoPedido.ESPERANDO_PAGO
             elif (_es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago)) and nueva_venta.Total <= 0:
                 # El crédito cubrió el total: no hace falta comprobante de
                 # transferencia para algo que ya quedó en $0.
-                nueva_venta.Estado      = EstadoPedido.CONFIRMADO
                 nueva_venta.Estado_Pago = "pagado_completo"
                 nueva_venta.Pago_Final_Registrado = 1
-                if not datos.domicilio:
-                    _descontar_stock_venta(db, nueva_venta.ID_Venta, PARTE_TODO)
-                    nueva_venta.Stock_Reservado = 1
             elif _es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago):
-                nueva_venta.Estado = EstadoPedido.ESPERANDO_PAGO
+                pass
             else:
                 # Efectivo, con stock y sin producción: el pedido más simple
                 # que existe. Se queda en PENDIENTE —el estado con el que

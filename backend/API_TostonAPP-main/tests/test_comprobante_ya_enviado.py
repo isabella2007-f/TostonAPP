@@ -21,10 +21,10 @@ URL = "https://ejemplo/comprobante.jpg"
 
 class ComprobanteYaEnviadoTest(PanelBase):
     def _pedido_esperando_pago(self):
-        pedido = self.crear_pedido(Metodo_Pago="Transferencia")
-        id_venta = pedido["ID_Venta"]
-        self.assertEqual(self.venta(id_venta).Estado, 20,
-                         "un pedido por transferencia espera el pago")
+        # El camino completo: el pedido nace PENDIENTE y llega a "Esperando
+        # pago" cuando el panel lo acepta, no al crearlo.
+        id_venta = self.pedido_esperando_pago()
+        self.assertEqual(self.venta(id_venta).Estado, 20)
         return id_venta
 
     def _detalle_del_cliente(self, id_venta):

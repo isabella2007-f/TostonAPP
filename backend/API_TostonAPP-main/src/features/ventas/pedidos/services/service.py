@@ -307,7 +307,32 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
         db.refresh(pedido)
         return _formato_venta(pedido, db)
 
-    return _gv_cambiar_estado(db, id_venta, EstadoPedido.CONFIRMADO)
+    return _gv_cambiar_estado(db, id_venta, _destino_al_confirmar(pedido))
+
+
+def _destino_al_confirmar(pedido: Venta) -> int:
+    """A dónde va un pedido normal cuando el panel lo acepta.
+
+    Es la decisión que antes tomaba el checkout al crear la venta: si queda
+    plata por respaldar con un comprobante, el pedido espera ese pago; si se
+    paga en efectivo o ya quedó saldado, entra confirmado y sigue su curso.
+
+    Vive acá porque es el momento en que corresponde: antes de que el panel
+    acepte el pedido no hay nada que cobrar.
+    """
+    from src.shared.services.pagos_utils import COMPROBANTE_APROBADO
+
+    estado_pago = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
+    # Lo que ya está cobrado o aprobado no espera nada.
+    if getattr(pedido, "Pago_Final_Registrado", 0):
+        return EstadoPedido.CONFIRMADO
+    if estado_pago in COMPROBANTE_APROBADO or estado_pago == "efectivo_recibido":
+        return EstadoPedido.CONFIRMADO
+    if getattr(pedido, "Requiere_Anticipo", 0):
+        return EstadoPedido.ESPERANDO_PAGO
+    if _lleva_transferencia(pedido.Metodo_Pago) and Decimal(str(pedido.Total or 0)) > 0:
+        return EstadoPedido.ESPERANDO_PAGO
+    return EstadoPedido.CONFIRMADO
 
 
 def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
@@ -614,6 +639,16 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                 detail=(
                     "Este pedido necesita un anticipo del 50% por transferencia, "
                     "así que no puede pagarse con ese método."
+                ),
+            )
+        # Mismo motivo que al crearlo: lo que hay que hornear se respalda
+        # antes de encender el horno, y eso solo lo hace la transferencia.
+        if getattr(pedido, "Necesita_Produccion", 0) and not _lleva_transferencia(nuevo_metodo):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Este pedido tiene productos por encargo: se paga por "
+                    "transferencia."
                 ),
             )
         pedido.Metodo_Pago = nuevo_metodo
@@ -1031,6 +1066,10 @@ def _saldo_por_transferencia_aplica(pedido: Venta) -> str | None:
     corresponde, devuelve el motivo (para el 400)."""
     if not getattr(pedido, "Requiere_Anticipo", 0):
         return "Este pedido no tiene anticipo, no aplica un segundo comprobante"
+    # El saldo es lo que queda DESPUÉS del anticipo: sin anticipo pagado no
+    # hay resto que deber, y el primer comprobante es el que está pendiente.
+    if not getattr(pedido, "Anticipo_Registrado", 0):
+        return "Primero hay que pagar el anticipo de este pedido"
     if not _lleva_transferencia(pedido.Metodo_Pago):
         return "El saldo de este pedido se cobra en efectivo, no por transferencia"
     if getattr(pedido, "Pago_Final_Registrado", 0):

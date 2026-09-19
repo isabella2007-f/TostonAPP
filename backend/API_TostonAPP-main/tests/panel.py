@@ -491,6 +491,27 @@ class PanelBase(unittest.TestCase):
         pedido = self.pedido_con_faltante(cantidad=cantidad, **kw)
         return self.afirmar_ok(self.patch(f"/ventas/{pedido['ID_Venta']}/aprobar-fecha", self.admin))
 
+    def pedido_esperando_pago(self, **kw):
+        """Un pedido normal listo para que el cliente lo pague.
+
+        El camino completo: nace PENDIENTE, pasan los 10 minutos del cliente
+        y el panel lo acepta. Recién ahí queda "Esperando pago", que es la
+        única etapa en la que se acepta un comprobante.
+        """
+        from datetime import timedelta
+        from src.features.ventas.gestion_ventas.services.service import _now
+
+        cuerpo = dict(Metodo_Pago="Transferencia")
+        cuerpo.update(kw)
+        id_venta = self.crear_pedido(**cuerpo)["ID_Venta"]
+
+        venta = self.venta(id_venta)
+        venta.Fecha_Venta = _now() - timedelta(minutes=30)
+        self.db.commit()
+
+        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+        return id_venta
+
     def confirmar_si_pendiente(self, id_venta):
         """La producción de una orden ligada a un pedido solo se gestiona a mano
         cuando el pedido ya salió de «Pendiente»: se aprueba/confirma primero.

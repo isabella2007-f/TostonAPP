@@ -104,6 +104,9 @@ class CrearPedidoTests(PanelBase):
     def test_el_faltante_chico_entra_sin_pedir_anticipo(self):
         """3 tortas = $30.000: una por hornear, por debajo del umbral."""
         pedido = self.crear_pedido(
+            # Por encargo: solo por transferencia. Acá el tema es el umbral
+            # del anticipo, no el método.
+            Metodo_Pago="Transferencia",
             productos=[{"ID_Producto": ID_TORTA, "Cantidad": 3}],
         )
         venta = self.venta(pedido["ID_Venta"])
@@ -335,10 +338,19 @@ class PanelAdminTests(PanelBase):
         self.assertEqual(self.stock(ID_TOSTON), STOCK_TOSTON - 2)
 
     def test_no_confirma_con_el_comprobante_sin_revisar(self):
+        from datetime import timedelta
+        from src.features.ventas.gestion_ventas.services.service import _now
+
         pedido = self.crear_pedido(
             Metodo_Pago="Transferencia",
             comprobante_pago="https://cloudinary.test/comp.jpg",
         )
+        # Pasados los 10 minutos del cliente, que es cuando el panel puede
+        # tocarlo.
+        venta = self.venta(pedido["ID_Venta"])
+        venta.Fecha_Venta = _now() - timedelta(minutes=30)
+        self.db.commit()
+
         # El pedido queda esperando que alguien mire el comprobante: pedir
         # que se confirme no lo mueve de ahí.
         self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin)
