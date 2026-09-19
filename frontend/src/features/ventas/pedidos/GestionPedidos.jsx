@@ -16,6 +16,7 @@ import CrearPedido from "./CrearPedido.jsx";
 import EditarPedido from "./EditarPedido.jsx";
 import FilasRelleno from "../../../shared/components/FilasRelleno";
 import { puedeEditarsePedido } from "./permisosEdicion.js";
+import { puedeEnviarADomicilio } from "./accionesRetenido.js";
 import { esPagoEfectivo, esPagoMixto, esPagoTransferencia, montoACobrar, montoTransferido } from "../../../utils/metodosPago.js";
 import SearchableSelect from "../../../shared/components/SearchableSelect.jsx";
 import ImageLightbox from "../../../shared/components/ImageLightbox.jsx";
@@ -1438,6 +1439,12 @@ function ModalRetenidoEnTienda({ pedido, saving, onClose, onReintentar, onCambia
   const horas = horasDesde(pedido.fecha_retenido_en_tienda);
   const dentroDeReintento = horas === null || horas < _VENTANA_REINTENTO_H;
   const fueraDePlazo      = horas !== null && horas >= _VENTANA_LIMITE_H;
+  // Mandarlo a domicilio CREA el domicilio y le suma el costo al total; no
+  // cambia el repartidor de uno que ya existe. El servidor rechaza de plano
+  // el pedido que ya tiene uno —«Este pedido ya tiene un domicilio
+  // asociado»—, así que el pedido que volvió de la calle solo puede
+  // reintentar el cobro o cancelarse.
+  const mostrarDomicilio = puedeEnviarADomicilio(pedido, horas);
   const horasRestantesReintento = horas === null ? null : Math.max(0, Math.ceil(_VENTANA_REINTENTO_H - horas));
   const horasRestantesLimite    = horas === null ? null : Math.max(0, Math.ceil(_VENTANA_LIMITE_H - horas));
 
@@ -1484,12 +1491,17 @@ function ModalRetenidoEnTienda({ pedido, saving, onClose, onReintentar, onCambia
                 className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
                 style={{ background: (fueraDePlazo || !dentroDeReintento) ? "#c5c5c5" : "linear-gradient(135deg, #2e7d32, #388e3c)", cursor: (fueraDePlazo || !dentroDeReintento) ? "not-allowed" : "pointer" }}
               >Reintentar cobro / retiro</button>
-              <button
-                disabled={saving || fueraDePlazo}
-                onClick={() => setVista("domicilio")}
-                className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
-                style={{ background: fueraDePlazo ? "#c5c5c5" : "linear-gradient(135deg, #1565c0, #1976d2)", cursor: fueraDePlazo ? "not-allowed" : "pointer" }}
-              >Cambiar a domicilio</button>
+              {mostrarDomicilio && (
+                <button
+                  disabled={saving}
+                  onClick={() => setVista("domicilio")}
+                  className="w-full py-3 rounded-2xl text-white"
+                  style={{ background: "linear-gradient(135deg, #1565c0, #1976d2)", cursor: "pointer" }}
+                >
+                  <span className="block text-xs font-black uppercase tracking-widest">Enviárselo a domicilio</span>
+                  <span className="block text-[10px] font-semibold text-white/70 mt-0.5 normal-case tracking-normal">Se cobra el envío y vuelve a despacho</span>
+                </button>
+              )}
               <button
                 disabled={saving}
                 onClick={() => onCancelar(pedido.id)}
@@ -1538,7 +1550,7 @@ function ModalRetenidoEnTienda({ pedido, saving, onClose, onReintentar, onCambia
                 onClick={handleDomicilio}
                 className="w-full py-3 text-xs font-black uppercase tracking-widest rounded-2xl text-white"
                 style={{ background: "linear-gradient(135deg, #1565c0, #1976d2)", cursor: saving ? "not-allowed" : "pointer" }}
-              >{saving ? "Guardando…" : "Confirmar cambio a domicilio"}</button>
+              >{saving ? "Guardando…" : "Confirmar el envío a domicilio"}</button>
               <button onClick={() => setVista("menu")} className="w-full py-2 text-[10px] font-black text-gray-400 hover:text-gray-600 uppercase tracking-widest">Volver</button>
             </div>
           )}

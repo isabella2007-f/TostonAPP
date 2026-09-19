@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build --logLevel info",
-    "lint": "eslint . && node scripts/revisar-jsx.mjs && node scripts/revisar-reglas-edicion.mjs",
-    "lint:reglas": "node scripts/revisar-reglas-edicion.mjs",
+    "lint": "eslint . && node scripts/revisar-jsx.mjs && node scripts/revisar-reglas-edicion.mjs && node scripts/revisar-acciones-retenido.mjs",
+    "lint:reglas": "node scripts/revisar-reglas-edicion.mjs && node scripts/revisar-acciones-retenido.mjs",
     "lint:jsx": "node scripts/revisar-jsx.mjs",
     "preview": "vite preview"
   },
