@@ -509,9 +509,6 @@ const PedidosClientePage = () => {
   const [editNotas,            setEditNotas]            = useState('');
   const [editGuardando,        setEditGuardando]        = useState(false);
   const [editError,            setEditError]            = useState('');
-  // Comprobante para Transferencia / Mixto
-  const [editComprobante,      setEditComprobante]      = useState(null);   // File | null
-  const [editComprobantePreview, setEditComprobantePreview] = useState(null); // URL | dataURL | null
   // Monto en efectivo para Mixto
   const [editMontoEfectivo,    setEditMontoEfectivo]    = useState('');
   // Cantidades + fecha al reabrir la negociación desde "Editar pedido"
@@ -646,15 +643,10 @@ const PedidosClientePage = () => {
     setEditDireccion('');
     setEditNotas('');
     setEditError('');
-    setEditComprobante(null);
-    // El comprobante NO se hereda al abrir el modal.
-    //
-    // Antes se pre-cargaba el que ya estaba y se volvia a mandar tal cual al
-    // guardar. Un comprobante respalda una cifra: al pasar de transferir el
-    // total a transferir solo una parte (mixto), esa captura dejaba de
-    // corresponder al monto nuevo y aun asi quedaba como el comprobante
-    // valido del pedido, sin que a nadie se le pidiera uno nuevo.
-    setEditComprobantePreview(null);
+    // El modal de edición ya no toca el comprobante: respaldar el pago es
+    // otra etapa, con su propia sección en el detalle. Antes se pre-cargaba
+    // el que ya estaba y se reenviaba tal cual al guardar, así que una
+    // captura de $20.000 terminaba respaldando una transferencia de $12.000.
     setEditMontoEfectivo(pedido.monto_efectivo != null ? String(pedido.monto_efectivo) : '');
     // Reabrir negociación (Pendiente de Aprobación / Fecha propuesta): cantidades
     // de las líneas ya pedidas + la fecha límite deseada.
@@ -675,14 +667,11 @@ const PedidosClientePage = () => {
 
     const metodoPagoActual = editModal.metodo_pago || editModal.Metodo_Pago || '';
     const cambioMetodo = editMetodoPago !== metodoPagoActual;
-    const requiereComprobante = editMetodoPago === 'Transferencia' || editMetodoPago === 'Mixto';
 
-    // Validar comprobante cuando se cambia a un método con transferencia
-    if (cambioMetodo && requiereComprobante && !editComprobantePreview) {
-      setEditError('Adjunta el comprobante de la transferencia antes de guardar.');
-      setEditGuardando(false);
-      return;
-    }
+    // El comprobante no se pide acá. Editar es definir CÓMO se va a pagar;
+    // el pago llega después, cuando el pedido entra en "Esperando pago" —en
+    // un pedido programado, recién cuando la fecha está acordada—. El
+    // servidor rechaza un comprobante fuera de esa etapa.
 
     // Validar monto efectivo para Mixto, contra el total que va a quedar: si
     // en la misma edición se agrega el domicilio, el total sube y el reparto
@@ -717,16 +706,6 @@ const PedidosClientePage = () => {
 
       if (cambioMetodo) datos.Metodo_Pago = editMetodoPago;
 
-      // Subir comprobante a Cloudinary si es un archivo nuevo
-      if (editComprobante instanceof File) {
-        try {
-          datos.Comprobante_Pago = await subirImagenCloudinary(editComprobante);
-        } catch {
-          setEditError('Error al subir el comprobante. Inténtalo de nuevo.');
-          setEditGuardando(false);
-          return;
-        }
-      }
 
       // Montos para Mixto
       if (editMetodoPago === 'Mixto') {
@@ -1099,6 +1078,15 @@ const PedidosClientePage = () => {
                           Ver detalles
                           <ChevronRight size={12} className="group-hover/btn:translate-x-1 transition-transform" strokeWidth={3} />
                         </button>
+                        {puedeCancelarPedido(pedido, ahora) && (
+                          <button
+                            onClick={() => { setSelectedPedido(pedido); setConfirmCancel(true); }}
+                            className="w-10 h-10 flex items-center justify-center bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition-colors shadow-sm"
+                            title="Cancelar pedido"
+                          >
+                            <Ban size={15} />
+                          </button>
+                        )}
                         {puedeAbrirEdicion(pedido, ahora) && (
                           <button
                             onClick={() => abrirEditModal(pedido)}
@@ -2091,11 +2079,6 @@ const PedidosClientePage = () => {
                   onChange={e => {
                     const m = e.target.value;
                     setEditMetodoPago(m);
-                    // Limpiar comprobante si cambian a Efectivo
-                    if (m === 'Efectivo') {
-                      setEditComprobante(null);
-                      setEditComprobantePreview(null);
-                    }
                     setEditError('');
                   }}
                   style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 13, fontFamily: 'inherit', outline: 'none', background: '#fff' }}
@@ -2163,43 +2146,13 @@ const PedidosClientePage = () => {
                     </div>
                   )}
 
-                  {/* Comprobante de transferencia */}
-                  <label style={{ fontSize: 11, fontWeight: 700, color: '#616161', display: 'block', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Comprobante de {editMetodoPago === 'Mixto' ? 'la transferencia' : 'pago'} <span style={{ color: '#c62828' }}>*</span>
-                  </label>
-                  {editComprobantePreview ? (
-                    <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', marginBottom: 6 }}>
-                      <ImageLightbox
-                        src={editComprobantePreview}
-                        alt="Comprobante"
-                        label="Ver comprobante"
-                        thumbStyle={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block', borderRadius: 10 }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => { setEditComprobante(null); setEditComprobantePreview(null); }}
-                        style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      ><X size={12} /></button>
-                    </div>
-                  ) : (
-                    <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 80, borderRadius: 10, border: '2px dashed #90caf9', background: '#f3f8ff', cursor: 'pointer', gap: 4 }}>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        hidden
-                        onChange={e => {
-                          const f = e.target.files[0];
-                          if (!f) return;
-                          const r = new FileReader();
-                          r.onload = ev => { setEditComprobante(f); setEditComprobantePreview(ev.target.result); };
-                          r.readAsDataURL(f);
-                        }}
-                      />
-                      <Upload size={20} style={{ color: '#1565c0' }} />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#1565c0' }}>Subir comprobante</span>
-                      <span style={{ fontSize: 10, color: '#9e9e9e' }}>JPG, PNG o WEBP</span>
-                    </label>
-                  )}
+                  {/* El comprobante NO va acá. Acá se define cómo se va a
+                      pagar; respaldar el pago es el paso siguiente, y llega
+                      cuando el pedido entra en "Esperando pago". */}
+                  <p style={{ fontSize: 11, color: '#1565c0', background: '#e3f2fd', borderRadius: 8, padding: '8px 10px', margin: 0, lineHeight: 1.45 }}>
+                    Cuando el pedido esté listo para pagarse te avisamos, y ahí
+                    subes el comprobante de la transferencia.
+                  </p>
                 </div>
               )}
 

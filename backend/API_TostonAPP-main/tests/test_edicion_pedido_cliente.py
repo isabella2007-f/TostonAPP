@@ -127,12 +127,14 @@ class MetodoDePagoTest(EdicionBase):
         self.assertIsNone(venta.Monto_Efectivo)
         self.assertIsNone(venta.Monto_Transferencia)
 
-    def test_a_transferencia_con_comprobante_queda_en_revision(self):
+    def test_a_transferencia_el_comprobante_viene_despues(self):
+        # Durante la ventana se elige COMO se paga; el comprobante pertenece
+        # a la etapa de pago (ver test_estado_inicial_y_comprobante.py).
         id_venta = self.crear_pedido()["ID_Venta"]      # nace en efectivo
-        detalle = self.afirmar_ok(self.editar(id_venta, {
-            "Metodo_Pago": "Transferencia", "Comprobante_Pago": URL}))
-        self.assertEqual(detalle["estado_pago"], "pendiente_validacion")
-        self.assertEqual(detalle["comprobante_pago"], URL)
+        detalle = self.afirmar_ok(
+            self.editar(id_venta, {"Metodo_Pago": "Transferencia"}))
+        self.assertEqual(detalle["Metodo_Pago"], "Transferencia")
+        self.assertIsNone(detalle["comprobante_pago"])
 
     def test_a_transferencia_sin_comprobante_queda_pendiente(self):
         id_venta = self.crear_pedido()["ID_Venta"]
@@ -164,8 +166,7 @@ class PagoMixtoTest(EdicionBase):
     def test_reparte_el_total_entre_las_dos_formas(self):
         id_venta = self.crear_pedido()["ID_Venta"]      # $20.000
         detalle = self.afirmar_ok(self.editar(id_venta, {
-            "Metodo_Pago": "Mixto", "Monto_Efectivo": 8000,
-            "Comprobante_Pago": URL}))
+            "Metodo_Pago": "Mixto", "Monto_Efectivo": 8000}))
         self.assertEqual(Decimal(str(detalle["monto_efectivo"])),
                          Decimal("8000"))
         self.assertEqual(
@@ -219,7 +220,6 @@ class PagoMixtoTest(EdicionBase):
         id_venta = self.crear_pedido()["ID_Venta"]
         detalle = self.afirmar_ok(self.editar(id_venta, {
             "Metodo_Pago": "Mixto", "Monto_Efectivo": 8000,
-            "Comprobante_Pago": URL,
             "quiere_domicilio": True, "ID_Barrio": ID_BARRIO}))
         self.assertEqual(
             Decimal(str(detalle["monto_efectivo"]))
@@ -284,11 +284,10 @@ class CasosCombinadosTest(EdicionBase):
     def test_recoger_efectivo_pasa_a_domicilio_transferencia(self):
         id_venta = self.crear_pedido()["ID_Venta"]
         detalle = self.afirmar_ok(self.editar(id_venta, {
-            "Metodo_Pago": "Transferencia", "Comprobante_Pago": URL,
-            "quiere_domicilio": True}))
+            "Metodo_Pago": "Transferencia", "quiere_domicilio": True}))
         self.assertTrue(detalle["tiene_domicilio"])
         self.assertEqual(detalle["Metodo_Pago"], "Transferencia")
-        self.assertEqual(detalle["estado_pago"], "pendiente_validacion")
+        self.assertEqual(detalle["estado_pago"], "pendiente")
         self.assertGreater(detalle["costo_domicilio_total"], 0)
 
     def test_domicilio_transferencia_pasa_a_recoger_efectivo(self):
@@ -311,8 +310,7 @@ class CasosCombinadosTest(EdicionBase):
                      self.cliente))["costo_domicilio_total"]
 
         detalle = self.afirmar_ok(self.editar(id_venta, {
-            "Metodo_Pago": "Mixto", "Monto_Efectivo": 5000,
-            "Comprobante_Pago": URL}))
+            "Metodo_Pago": "Mixto", "Monto_Efectivo": 5000}))
 
         self.assertTrue(detalle["tiene_domicilio"])
         self.assertEqual(detalle["costo_domicilio_total"], envio_antes)

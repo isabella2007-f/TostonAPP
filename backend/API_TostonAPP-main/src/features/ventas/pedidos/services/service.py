@@ -620,6 +620,24 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
 
     comprobante_nuevo = datos.get("Comprobante_Pago")
     if comprobante_nuevo:
+        # El comprobante pertenece a una ETAPA del pedido, no a un método de
+        # pago. Durante la ventana de edición el cliente define CÓMO va a
+        # pagar; el pago en sí viene después, cuando el pedido llega a
+        # 'Esperando pago' —que en un pedido programado es recién cuando la
+        # fecha ya está acordada—.
+        #
+        # `pagar_pedido` ya lo exigía, pero por acá se colaba: un pedido
+        # todavía en negociación terminaba con una captura adjunta y el panel
+        # con un pago que revisar antes de que hubiera algo que cobrar.
+        if pedido.Estado != EstadoPedido.ESPERANDO_PAGO:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Todavía no es el momento de pagar este pedido. Cuando "
+                    "esté listo para el pago te avisamos y ahí subes el "
+                    "comprobante."
+                ),
+            )
         pedido.Comprobante_Pago = comprobante_nuevo
 
     if not _lleva_transferencia(pedido.Metodo_Pago):

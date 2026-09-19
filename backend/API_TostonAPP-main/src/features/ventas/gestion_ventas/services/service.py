@@ -1473,14 +1473,26 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
             elif _es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago):
                 nueva_venta.Estado = EstadoPedido.ESPERANDO_PAGO
             else:
-                nueva_venta.Estado = EstadoPedido.CONFIRMADO
-                # Como al confirmar cualquier pedido sin domicilio: reservar
-                # (descontar) el stock de lo que se recoge en tienda. Sin
-                # déficit alguno (necesita_produccion es False), sale la
-                # línea completa — no hay preorden que esperar.
-                if not datos.domicilio:
-                    _descontar_stock_venta(db, nueva_venta.ID_Venta, PARTE_TODO)
-                    nueva_venta.Stock_Reservado = 1
+                # Efectivo, con stock y sin producción: el pedido más simple
+                # que existe. Se queda en PENDIENTE —el estado con el que
+                # nace toda venta— durante los 10 minutos del cliente, y lo
+                # confirma el panel después.
+                #
+                # Nacía en CONFIRMADO, y eso le quitaba al cliente su propia
+                # ventana: 'Confirmado' no está entre los estados que puede
+                # cancelar, así que el botón no existía desde el primer
+                # segundo. Además dejaba sin uso a las dos piezas que el
+                # sistema ya tiene para esto: la ventana de protección de
+                # `cambiar_estado` (que impide que un empleado procese el
+                # pedido antes de tiempo) y `_evaluar_cierre_ventana` (que
+                # reserva el stock cuando el plazo cierra). Las dos
+                # presuponen un pedido que todavía no está confirmado.
+                #
+                # El stock, por eso mismo, tampoco se aparta acá: lo aparta
+                # el cierre de la ventana, o la confirmación —lo que ocurra
+                # primero—. No tiene sentido apartar mercancía de un pedido
+                # que el cliente todavía puede deshacer con un botón.
+                pass
 
         if sobre_stock:
             detalle_preorden = ", ".join(
