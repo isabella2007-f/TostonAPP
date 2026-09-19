@@ -109,16 +109,17 @@ export const puedeAbrirEdicion = (pedido, ahora = new Date()) =>
 /**
  * ¿Puede cancelar?
  *
- * El reloj solo protege el arrepentimiento inmediato en "Pendiente"; en la
- * negociación de fecha o esperando el pago puede cancelar cuando quiera,
- * porque a esos estados se llega bastante después de los 10 minutos.
+ * Los 10 minutos valen para todos los estados: es el plazo del
+ * arrepentimiento y se acaba igual para cualquier pedido. El servidor es más
+ * permisivo —acepta cancelar mientras se negocia la fecha, sin reloj— pero
+ * acá se ofrece lo más estrecho: nunca un botón que vaya a fallar, y una
+ * sola regla que el cliente pueda entender. Es la misma que aplica la app.
  */
 export const puedeCancelarPedido = (pedido, ahora = new Date()) => {
   if (!pedido) return false;
   if (!ESTADOS_CANCELABLES.includes(pedido.estado)) return false;
   if (pedido.anticipo_registrado) return false;
-  if (pedido.estado === 'Pendiente') return dentroDeLaVentana(pedido, ahora);
-  return true;
+  return dentroDeLaVentana(pedido, ahora);
 };
 
 /** Cuánto hay que transferir según el método: lo que un comprobante respalda. */

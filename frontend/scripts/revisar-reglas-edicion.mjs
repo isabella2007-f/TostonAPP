@@ -59,8 +59,11 @@ comprobar('la negociación de fecha no mira el reloj',
     requiereFechaPropuesta: true,
   })), true);
 
-comprobar('cancelar esperando pago, sin reloj',
-  puedeCancelarPedido(pedido({ fecha_pedido: '2026-09-15T09:00:00' }), AHORA), true);
+comprobar('cancelar esperando pago, dentro del plazo',
+  puedeCancelarPedido(pedido(), AHORA), true);
+
+comprobar('cancelar esperando pago pasado el plazo, no',
+  puedeCancelarPedido(pedido({ fecha_pedido: '2026-09-15T09:00:00' }), AHORA), false);
 
 comprobar('cancelar pendiente pasada la ventana, no',
   puedeCancelarPedido(
