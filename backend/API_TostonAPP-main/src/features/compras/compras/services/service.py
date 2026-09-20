@@ -410,12 +410,13 @@ def crear_compra(db: Session, datos: CompraCreate) -> dict:
                 detail=f"Insumo con ID {item.ID_Insumo} no encontrado"
             )
 
+        cant_base = _cantidad_base(item, insumo, db)
         lote = LoteCompra(
             ID_Insumo         = item.ID_Insumo,
             Fecha_Vencimiento = item.Fecha_Vencimiento,
-            Cantidad_Inicial  = item.Cantidad,
-            Cantidad_Actual   = item.Cantidad,  # FEFO: se actualiza al descontar
-            Estado            = LOTE_PENDIENTE,  # se activa al confirmar llegada
+            Cantidad_Inicial  = cant_base,   # siempre en unidad base (para FEFO y stock)
+            Cantidad_Actual   = cant_base,
+            Estado            = LOTE_PENDIENTE,
         )
         db.add(lote)
         db.flush()
@@ -425,7 +426,7 @@ def crear_compra(db: Session, datos: CompraCreate) -> dict:
             ID_Insumo        = item.ID_Insumo,
             ID_Lote_Compra   = lote.ID_Lote_Compra,
             ID_Unidad_Compra = item.ID_Unidad_Compra,
-            Cantidad         = item.Cantidad,
+            Cantidad         = item.Cantidad,   # valor tal como lo ingresó el usuario
             Precio_Und       = item.Precio_Und,
             Notas            = item.Notas,
         )
@@ -565,15 +566,16 @@ def editar_compra(db: Session, id_compra: int, datos) -> dict:
                        .delete(synchronize_session=False))
 
                 for item in datos.detalles:
-                    insumo = db.query(Insumo).filter(Insumo.ID_Insumo == item.ID_Insumo).first()
-                    if not insumo:
+                    insumo_ed = db.query(Insumo).filter(Insumo.ID_Insumo == item.ID_Insumo).first()
+                    if not insumo_ed:
                         db.rollback()
                         raise HTTPException(status_code=404, detail=f"Insumo con ID {item.ID_Insumo} no encontrado")
+                    cant_base_ed = _cantidad_base(item, insumo_ed, db)
                     lote = LoteCompra(
                         ID_Insumo         = item.ID_Insumo,
                         Fecha_Vencimiento = item.Fecha_Vencimiento,
-                        Cantidad_Inicial  = item.Cantidad,
-                        Cantidad_Actual   = item.Cantidad,
+                        Cantidad_Inicial  = cant_base_ed,
+                        Cantidad_Actual   = cant_base_ed,
                         Estado            = LOTE_PENDIENTE,
                     )
                     db.add(lote)
@@ -651,7 +653,11 @@ def completar_compra(db: Session, id_compra: int, fecha_llegada=None) -> dict:
     for detalle in detalles:
         insumo = insumos_map.get(detalle.ID_Insumo)
         if insumo:
-            insumo.Stock_Actual = (insumo.Stock_Actual or 0) + detalle.Cantidad
+            # Usar la cantidad del lote (siempre en unidad base) para aplicar stock,
+            # porque detalle.Cantidad puede estar en la unidad de compra (ej. kg cuando base es g).
+            lote_stock = lotes_map.get(detalle.ID_Lote_Compra) if detalle.ID_Lote_Compra else None
+            cant_aplicar = lote_stock.Cantidad_Inicial if lote_stock else detalle.Cantidad
+            insumo.Stock_Actual = (insumo.Stock_Actual or 0) + cant_aplicar
             _actualizar_estado_insumo(insumo)
         lote = lotes_map.get(detalle.ID_Lote_Compra) if detalle.ID_Lote_Compra else None
         if lote:
@@ -684,6 +690,45 @@ def completar_compra(db: Session, id_compra: int, fecha_llegada=None) -> dict:
     db.commit()
 
     return _formato_compra(compra, db)
+
+
+# ─────────────────────────────────────────
+# CONVERSIÓN DE UNIDADES
+# ─────────────────────────────────────────
+
+# Factor a unidad mínima del grupo (g para masa, ml para volumen)
+_F_MASA = {"kg": Decimal("1000"), "g": Decimal("1"), "lb": Decimal("453.592")}
+_F_VOL  = {"l":  Decimal("1000"), "ml": Decimal("1")}
+
+
+def _factor_conversion(simbolo_compra: str | None, simbolo_base: str | None) -> Decimal:
+    """Factor para convertir cantidad en unidad de compra → unidad base del insumo."""
+    if not simbolo_compra or not simbolo_base:
+        return Decimal("1")
+    s = simbolo_compra.strip().lower()
+    b = simbolo_base.strip().lower()
+    if s == b:
+        return Decimal("1")
+    if s in _F_MASA and b in _F_MASA:
+        return _F_MASA[s] / _F_MASA[b]
+    if s in _F_VOL and b in _F_VOL:
+        return _F_VOL[s] / _F_VOL[b]
+    return Decimal("1")
+
+
+def _cantidad_base(item, insumo: Insumo, db: Session) -> Decimal:
+    """Devuelve la cantidad del item convertida a la unidad base del insumo."""
+    if not item.ID_Unidad_Compra:
+        return Decimal(str(item.Cantidad))
+    if not insumo.Unidad_Medida or insumo.Unidad_Medida == item.ID_Unidad_Compra:
+        return Decimal(str(item.Cantidad))
+    uc = db.query(UnidadMedida).filter(UnidadMedida.ID_Unidad_Medida == item.ID_Unidad_Compra).first()
+    ub = insumo.unidad_medida  # ya cargado por el select previo (lazy-load OK)
+    factor = _factor_conversion(
+        uc.Simbolo if uc else None,
+        ub.Simbolo if ub else None,
+    )
+    return (Decimal(str(item.Cantidad)) * factor).quantize(Decimal("0.0001"))
 
 
 _TOL = Decimal("0.0001")

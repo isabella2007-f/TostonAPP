@@ -12,7 +12,7 @@ import SearchableSelect from "../../../shared/components/SearchableSelect.jsx";
 import ImageLightbox from "../../../shared/components/ImageLightbox.jsx";
 import { subirImagenCloudinary } from "../../../utils/cloudinary.js";
 import DetalleInsumoFields from "./DetalleInsumoFields.jsx";
-import { GRUPO_UNIDAD, CANT_MAX, convertirABase } from "./compraDetalleUtils.js";
+import { GRUPO_UNIDAD, CANT_MAX } from "./compraDetalleUtils.js";
 import "./compras.css";
 
 const TOTAL_MIN  = 0;
@@ -524,21 +524,14 @@ export default function EditarCompra({ compra, mode, onClose, onSave }) {
     if (editable.proveedor)    payload.idProveedor   = form.idProveedor;
     if (editable.fecha)        payload.fecha         = form.fecha;
     if (editable.lineas) {
-      payload.detalles = detalles.map(d => {
-        const insumo = insumosActivos.find(i => String(i.id) === String(d.idInsumo));
-        const { cantidad, precioUnd } = convertirABase(
-          Number(d.cantidad), Number(d.precioUnd),
-          d.idUnidad, insumo?.idUnidad,
-        );
-        return {
-          idInsumo:  Number(d.idInsumo),
-          idUnidad:  d.idUnidad ? Number(d.idUnidad) : null,
-          cantidad,
-          precioUnd,
-          notas:     d.notas?.trim() || "",
-          fechaVencimiento: d.vencimientoTipo === "dias" ? sumarDias(d.vencimientoValor) : (d.fechaVencimiento || ""),
-        };
-      });
+      payload.detalles = detalles.map(d => ({
+        idInsumo:  Number(d.idInsumo),
+        idUnidad:  d.idUnidad ? Number(d.idUnidad) : null,
+        cantidad:  Number(d.cantidad),
+        precioUnd: Number(d.precioUnd),
+        notas:     d.notas?.trim() || "",
+        fechaVencimiento: d.vencimientoTipo === "dias" ? sumarDias(d.vencimientoValor) : (d.fechaVencimiento || ""),
+      }));
     }
     if (editable.gastos) {
       payload.gastos = { transporte: gTransporte, iva: gIvaPct, descuento: gDescPct, otros: gOtros };
