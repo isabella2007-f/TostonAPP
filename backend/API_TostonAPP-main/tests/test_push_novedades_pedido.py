@@ -49,12 +49,14 @@ class NovedadesDelPedidoTest(PanelBase):
         with patch(
             "src.shared.services.fcm_service.notificar_cambio_pedido_push"
         ) as push:
-            self.afirmar_ok(self.patch(
-                f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+            self.afirmar_ok(self.aprobar_fecha(id_venta))
         push.assert_called_once()
         self.assertEqual(push.call_args.kwargs["id_venta"], id_venta)
+        # Aprobar la fecha ya no manda el encargo al horno: por transferencia
+        # queda esperando el pago, y ese es el aviso que le toca al cliente
+        # —el de producción llega cuando el pago se aprueba—.
         self.assertEqual(
-            push.call_args.kwargs["nuevo_estado"], EstadoPedido.PREPARANDO
+            push.call_args.kwargs["nuevo_estado"], EstadoPedido.ESPERANDO_PAGO
         )
 
     def test_al_quedar_listo_avisa(self):

@@ -2303,6 +2303,48 @@ def _avanzar_tras_fecha_confirmada(db: Session, venta: Venta, fecha_entrega, id_
         )
         return
 
+    # Sin anticipo, pero por transferencia y sin pagar: tampoco se enciende
+    # el horno todavía. Un encargo se respalda con plata antes de gastar
+    # insumos, y eso vale para los de $60.000 igual que para los de
+    # $200.000 —solo cambia cuánto se pide: el 50% arriba del umbral, el
+    # total por debajo—.
+    #
+    # Antes solo esperaba pago el que superaba el umbral. El resto se iba
+    # derecho a producción con la fecha recién acordada, y a nadie se le
+    # llegaba a pedir el comprobante.
+    if (_es_transferencia(venta.Metodo_Pago) or _es_mixto(venta.Metodo_Pago)
+            and not getattr(venta, "Pago_Final_Registrado", 0)
+            and Decimal(str(venta.Total or 0)) > 0):
+        venta.Estado = EstadoPedido.ESPERANDO_PAGO
+        notificar(
+            db, "fecha_propuesta", "Fecha aprobada — falta tu pago",
+            f"Tu pedido #{venta.ID_Venta} ya tiene fecha de entrega. Sube el comprobante "
+            f"de tu transferencia para que empecemos a prepararlo.",
+            venta.ID_Venta, "/ventas/pedidos",
+        )
+        return
+
+    # Sin anticipo, pero por transferencia y sin pagar: tampoco se enciende
+    # el horno todavía. Un encargo se respalda con plata antes de gastar
+    # insumos, y eso vale para los de $60.000 igual que para los de
+    # $200.000 —solo cambia cuánto se pide: el 50% arriba del umbral, el
+    # total por debajo—.
+    #
+    # Antes solo esperaba pago el que superaba el umbral. El resto se iba
+    # derecho a producción con la fecha recién acordada, y a nadie se le
+    # llegaba a pedir el comprobante.
+    if ((_es_transferencia(venta.Metodo_Pago) or _es_mixto(venta.Metodo_Pago))
+            and not getattr(venta, "Pago_Final_Registrado", 0)
+            and Decimal(str(venta.Total or 0)) > 0):
+        venta.Estado = EstadoPedido.ESPERANDO_PAGO
+        notificar(
+            db, "fecha_propuesta", "Fecha aprobada — falta tu pago",
+            f"Tu pedido #{venta.ID_Venta} ya tiene fecha de entrega. Sube el comprobante "
+            f"de tu transferencia para que empecemos a prepararlo.",
+            venta.ID_Venta, "/ventas/pedidos",
+        )
+        return
+
     _iniciar_produccion_o_despachar(db, venta, fecha_entrega)
 
 
@@ -2399,6 +2441,27 @@ def aprobar_fecha_directa(db: Session, id_venta: int, actual: dict) -> dict:
         raise HTTPException(status_code=400, detail="Este pedido no requiere aprobación de fecha")
     if not venta.Fecha_entrega_esperada:
         raise HTTPException(status_code=400, detail="El pedido no tiene una fecha para aprobar")
+
+    # Aprobar la fecha abre la orden de producción y reserva insumos contra
+    # unas cantidades y un día concretos. Hacerlo mientras el cliente todavía
+    # puede editar su pedido deja las dos cosas peleadas: agrega una torta o
+    # pide otro día y la orden ya está abierta para lo anterior.
+    #
+    # Es la misma espera que exige `confirmar_pedido`, y el mismo motivo por
+    # el que `cambiar_estado` tiene su ventana de protección — este camino no
+    # pasaba por ahí porque asigna el estado directo.
+    if venta.Fecha_Venta and (_now() - venta.Fecha_Venta) < _VENTANA_PROTECCION:
+        minutos = int(
+            (_VENTANA_PROTECCION - (_now() - venta.Fecha_Venta)).total_seconds() / 60
+        ) + 1
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Este pedido está en período de edición del cliente "
+                f"({minutos} min restantes). Espera antes de aprobar la fecha: "
+                f"la orden de producción se abre con esta aprobación."
+            ),
+        )
 
     id_admin = getattr(actual.get("registro"), "ID_Usuario", None)
     descartar_notificacion(db, "produccion_requerida", id_venta)

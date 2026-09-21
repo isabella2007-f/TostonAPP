@@ -271,7 +271,7 @@ class DetalleDelPedidoTests(PanelBase):
         idv = creado["ID_Venta"]
         self.proponer(idv, "20")
         self.rechazar(idv, "21")
-        self.afirmar_ok(self.patch(f"/ventas/{idv}/aprobar-fecha", self.admin))
+        self.afirmar_ok(self.aprobar_fecha(idv))
 
         v = self.afirmar_ok(self.get(f"/ventas/{idv}", self.admin))
         self.assertEqual(v["intentos_rechazo"], 0)

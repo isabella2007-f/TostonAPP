@@ -161,8 +161,7 @@ class ComprobanteSegunLaEtapaTest(Base):
         # 11 tortas = $110.000: pasa el umbral, así que al aprobar la fecha
         # el pedido queda 'Esperando pago' pidiendo el anticipo.
         id_venta = self.pedido_con_faltante(cantidad=11)["ID_Venta"]
-        self.afirmar_ok(self.patch(
-            f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        self.afirmar_ok(self.aprobar_fecha(id_venta))
         self.assertEqual(self.venta(id_venta).Estado, ESPERANDO_PAGO)
 
         venta = self.venta(id_venta)

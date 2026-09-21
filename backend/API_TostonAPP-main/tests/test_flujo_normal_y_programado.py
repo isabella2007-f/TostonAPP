@@ -143,8 +143,7 @@ class PedidoProgramadoTest(Base):
 
     def test_acordada_la_fecha_se_habilita_el_pago(self):
         id_venta = self.programado()
-        self.afirmar_ok(self.patch(
-            f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        self.afirmar_ok(self.aprobar_fecha(id_venta))
         venta = self.venta(id_venta)
         self.assertEqual(venta.Estado, ESPERANDO_PAGO)
         self.assertTrue(venta.Requiere_Anticipo)
@@ -157,8 +156,7 @@ class PedidoProgramadoTest(Base):
 class AnticipoOTotalTest(Base):
     def listo_para_pagar(self):
         id_venta = self.programado()
-        self.afirmar_ok(self.patch(
-            f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        self.afirmar_ok(self.aprobar_fecha(id_venta))
         return id_venta, self.venta(id_venta)
 
     def test_el_anticipo_es_la_mitad_del_total(self):
@@ -247,8 +245,7 @@ class ConAnticipoPeroSinPagarTest(Base):
 
     def test_con_el_anticipo_ya_pagado_ya_no(self):
         id_venta = self.programado()
-        self.afirmar_ok(self.patch(
-            f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        self.afirmar_ok(self.aprobar_fecha(id_venta))
         venta = self.venta(id_venta)
         self.afirmar_ok(self.patch(
             f"/pedidos/{id_venta}/pagar", self.cliente,

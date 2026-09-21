@@ -24,8 +24,10 @@ class EntregaConAnticipoTests(PanelBase):
         # no lo pide y la prueba no ejercería nada. Y aprobado por el admin,
         # que es cuando se exige el anticipo en el flujo nuevo: al crearlo
         # todavía no existe.
+        # `pagar=False`: el pago es justamente lo que prueba este archivo.
         pedido = self.pedido_con_faltante_aprobado(
-            cantidad=12, domicilio=self.direccion(), metodo_pago=metodo)
+            cantidad=12, domicilio=self.direccion(), metodo_pago=metodo,
+            pagar=False)
         id_venta = pedido["ID_Venta"]
         venta = self.venta(id_venta)
         self.assertTrue(
@@ -105,8 +107,10 @@ class AprobarComprobanteAnticipoTests(PanelBase):
     """Aprobar el comprobante de un anticipo no marca el pedido como pagado."""
 
     def _pedido_con_anticipo_esperando(self, metodo="Transferencia"):
+        # `pagar=False`: el pago es justamente lo que prueba este archivo.
         pedido = self.pedido_con_faltante_aprobado(
-            cantidad=12, domicilio=self.direccion(), metodo_pago=metodo)
+            cantidad=12, domicilio=self.direccion(), metodo_pago=metodo,
+            pagar=False)
         id_venta = pedido["ID_Venta"]
         venta = self.venta(id_venta)
         anticipo = float(venta.Anticipo_Requerido or 0)

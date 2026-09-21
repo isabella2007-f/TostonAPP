@@ -251,9 +251,12 @@ class PanelClienteTests(PanelBase):
         ))
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_FECHA_PROPUESTA)
 
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aceptar-fecha", self.cliente))
+        self.aceptar_fecha(id_venta)
+        # Acordada la fecha, lo que falta es la plata: un encargo por
+        # transferencia no entra al horno sin respaldo.
         self.assertIn(
-            self.venta(id_venta).Estado, (PEDIDO_CONFIRMADO, PEDIDO_EN_PRODUCCION)
+            self.venta(id_venta).Estado,
+            (PEDIDO_CONFIRMADO, PEDIDO_EN_PRODUCCION, PEDIDO_ESPERANDO_PAGO)
         )
 
     def test_rechazar_la_fecha_propone_una_final_que_el_admin_puede_aceptar(self):
@@ -278,9 +281,11 @@ class PanelClienteTests(PanelBase):
         self.assertEqual(venta.Estado, PEDIDO_FECHA_PROPUESTA_FINAL)
         self.assertEqual(venta.intentos_rechazo, 1)
 
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        self.afirmar_ok(self.aprobar_fecha(id_venta))
+        # Acordada la fecha, falta la plata.
         self.assertIn(
-            self.venta(id_venta).Estado, (PEDIDO_CONFIRMADO, PEDIDO_EN_PRODUCCION)
+            self.venta(id_venta).Estado,
+            (PEDIDO_CONFIRMADO, PEDIDO_EN_PRODUCCION, PEDIDO_ESPERANDO_PAGO)
         )
 
     def test_rechazo_final_del_admin_escala_el_pedido(self):
@@ -1523,13 +1528,13 @@ class FechaPropuestaTests(PanelBase):
     def test_aceptar_con_la_produccion_a_medias_lo_manda_a_producir(self):
         id_venta = self.esperando_respuesta()
 
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aceptar-fecha", self.cliente))
+        self.aceptar_fecha(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_EN_PRODUCCION)
 
     def test_terminada_despues_de_aceptar_el_pedido_queda_listo(self):
         """El camino de siempre: se acepta, se hornea, queda listo."""
         id_venta = self.esperando_respuesta()
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aceptar-fecha", self.cliente))
+        self.aceptar_fecha(id_venta)
         self.hornear(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_LISTO)
 
@@ -1562,7 +1567,7 @@ class FechaPropuestaTests(PanelBase):
         self.afirmar_ok(self.patch(
             f"/ventas/{id_venta}/proponer-fecha", self.admin, {"fecha_entrega": fecha}
         ))
-        self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aceptar-fecha", self.cliente))
+        self.aceptar_fecha(id_venta)
         self.assertEqual(self.venta(id_venta).Estado, PEDIDO_CONFIRMADO)
 
         # Y sigue sin poder darse por Listo: la mercancía no existe.

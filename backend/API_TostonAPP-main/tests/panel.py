@@ -484,12 +484,73 @@ class PanelBase(unittest.TestCase):
         cuerpo.update(kw)
         return self.crear_pedido(**cuerpo)
 
-    def pedido_con_faltante_aprobado(self, cantidad=6, **kw):
-        """Igual que `pedido_con_faltante`, pero con el admin aprobando de una
-        (Camino A) la fecha que trajo el pedido: la orden de producción ya
-        queda abierta, lista para `hornear`."""
+    def pedido_con_faltante_aprobado(self, cantidad=6, pagar=True, **kw):
+        """El encargo con su fecha acordada Y su pago respaldado: la orden de
+        producción ya queda abierta, lista para `hornear`.
+
+        Son tres pasos, no uno. El plazo del cliente tiene que cerrar antes
+        de que el panel apruebe la fecha —la aprobación abre la orden— y
+        después falta el pago: un encargo por transferencia no entra al horno
+        sin respaldo. Acá se recorren los tres de una vez, que es lo que
+        necesitan las pruebas de producción.
+        """
+        from datetime import timedelta
+        from src.features.ventas.gestion_ventas.services.service import _now
+
         pedido = self.pedido_con_faltante(cantidad=cantidad, **kw)
-        return self.afirmar_ok(self.patch(f"/ventas/{pedido['ID_Venta']}/aprobar-fecha", self.admin))
+        id_venta = pedido["ID_Venta"]
+
+        venta = self.venta(id_venta)
+        venta.Fecha_Venta = _now() - timedelta(minutes=30)
+        self.db.commit()
+
+        aprobado = self.afirmar_ok(
+            self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
+        if not pagar or aprobado.get("Estado") != PEDIDO_ESPERANDO_PAGO:
+            return aprobado
+        return self.pagar_y_aprobar(id_venta)
+
+    def aprobar_fecha(self, id_venta, quien=None):
+        """El panel aprueba la fecha, con el plazo del cliente ya cerrado.
+
+        Aprobar abre la orden de producción, así que el servidor lo rechaza
+        mientras el cliente todavía puede cambiar cantidades o día. Las
+        pruebas que no están mirando ESA regla pasan por acá.
+        """
+        from datetime import timedelta
+        from src.features.ventas.gestion_ventas.services.service import _now
+
+        venta = self.venta(id_venta)
+        if venta.Fecha_Venta and (_now() - venta.Fecha_Venta) < timedelta(minutes=10):
+            venta.Fecha_Venta = _now() - timedelta(minutes=30)
+            self.db.commit()
+        return self.patch(f"/ventas/{id_venta}/aprobar-fecha", quien or self.admin)
+
+    def aceptar_fecha(self, id_venta, quien=None):
+        """El cliente acepta la fecha propuesta, y paga si eso es lo que falta.
+
+        Acordar la fecha ya no manda el encargo al horno: por transferencia
+        queda esperando el pago. Las pruebas que solo quieren "la fecha ya
+        acordada y el pedido andando" pasan por acá.
+        """
+        r = self.patch(f"/ventas/{id_venta}/aceptar-fecha", quien or self.cliente)
+        self.afirmar_ok(r)
+        if self.venta(id_venta).Estado == PEDIDO_ESPERANDO_PAGO:
+            return self.pagar_y_aprobar(id_venta)
+        return r.json()
+
+    def pagar_y_aprobar(self, id_venta, monto=None):
+        """El cliente sube su comprobante y el panel lo aprueba."""
+        cuerpo = {"comprobante_url": "https://ejemplo/comprobante.jpg"}
+        if monto is None:
+            venta = self.venta(id_venta)
+            if getattr(venta, "Requiere_Anticipo", 0):
+                monto = float(venta.Anticipo_Requerido or 0)
+        if monto is not None:
+            cuerpo["monto"] = monto
+        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/pagar", self.cliente, cuerpo))
+        return self.afirmar_ok(self.patch(
+            f"/pedidos/{id_venta}/aprobar-comprobante", self.admin))
 
     def pedido_esperando_pago(self, **kw):
         """Un pedido normal listo para que el cliente lo pague.
@@ -533,6 +594,13 @@ class PanelBase(unittest.TestCase):
             self.afirmar_ok(self.patch(f"/ventas/{id_venta}/aprobar-fecha", self.admin))
         else:
             self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/confirmar", self.admin))
+
+        # Y si quedó esperando el pago, se paga: un pedido por transferencia
+        # no entra a producción ni a despacho sin respaldo, así que las
+        # pruebas que solo quieren "el pedido ya aceptado" tienen que pasar
+        # por ahí igual que el cliente real.
+        if self.venta(id_venta).Estado == PEDIDO_ESPERANDO_PAGO:
+            self.pagar_y_aprobar(id_venta)
 
     def _saltar_ventana(self, id_venta):
         """Adelanta Fecha_Venta para que la ventana de protección de 10 min
