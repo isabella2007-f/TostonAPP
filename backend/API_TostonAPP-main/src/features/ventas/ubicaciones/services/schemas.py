@@ -11,6 +11,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.shared.services.enums import TipoOfertaDomicilio
+
 # ─────────────────────────────────────────
 # Validadores compartidos
 # ─────────────────────────────────────────
@@ -154,7 +156,7 @@ class AccionMasivaInput(BaseModel):
 
 class OfertaCreate(BaseModel):
     Nombre: str
-    Tipo: str = "descuento"                       # 'descuento' | 'recargo'
+    Tipo: str = TipoOfertaDomicilio.DESCUENTO      # 'descuento' | 'recargo'
     Monto_Pesos: Optional[int] = Field(None, ge=0, le=PRECIO_MAX)
     Porcentaje: Optional[int] = Field(None, ge=0, le=100)
     Dias_Semana: list[int] = []                   # 1..7 ISO (Lunes=1 … Domingo=7)
@@ -169,7 +171,7 @@ class OfertaCreate(BaseModel):
     @field_validator("Tipo")
     @classmethod
     def _tipo(cls, v):
-        if v not in ("descuento", "recargo"):
+        if v not in TipoOfertaDomicilio.TODOS:
             raise ValueError("Tipo debe ser 'descuento' o 'recargo'")
         return v
 
@@ -225,7 +227,7 @@ class OfertaUpdate(BaseModel):
     @field_validator("Tipo")
     @classmethod
     def _tipo(cls, v):
-        if v is not None and v not in ("descuento", "recargo"):
+        if v is not None and v not in TipoOfertaDomicilio.TODOS:
             raise ValueError("Tipo debe ser 'descuento' o 'recargo'")
         return v
 

@@ -7,6 +7,7 @@ from src.shared.services.models import (
     Descuento, DescuentoXUsuario, MovimientoCredito,
     CreditoCliente, Usuario, Estado
 )
+from src.shared.services.enums import TipoDescuento
 from .schemas import DescuentoCreate, DescuentoUpdate, FiltroCreditos
 
 
@@ -80,14 +81,14 @@ def obtener_descuento(db: Session, id_descuento: int) -> dict:
 
 def crear_descuento(db: Session, datos: DescuentoCreate) -> dict:
     # Valida código único si es cupón
-    if datos.Tipo == "cupon" and datos.Codigo:
+    if datos.Tipo == TipoDescuento.CUPON and datos.Codigo:
         if db.query(Descuento).filter(Descuento.Codigo == datos.Codigo).first():
             raise HTTPException(status_code=400, detail="Ya existe un cupón con ese código")
 
     # Valida campos requeridos por tipo
-    if datos.Tipo == "cupon" and not datos.Codigo:
+    if datos.Tipo == TipoDescuento.CUPON and not datos.Codigo:
         raise HTTPException(status_code=400, detail="Los cupones requieren un código")
-    if datos.Tipo == "antiguedad" and not datos.Meses_Minimos:
+    if datos.Tipo == TipoDescuento.ANTIGUEDAD and not datos.Meses_Minimos:
         raise HTTPException(status_code=400, detail="Los descuentos por antigüedad requieren Meses_Minimos")
 
     nuevo = Descuento(
@@ -156,7 +157,7 @@ def asignar_a_usuarios(db: Session, id_descuento: int, usuarios_ids: list[int]) 
     desc = db.query(Descuento).filter(Descuento.ID_Descuento == id_descuento).first()
     if not desc:
         raise HTTPException(status_code=404, detail="Descuento no encontrado")
-    if desc.Tipo != "emision":
+    if desc.Tipo != TipoDescuento.EMISION:
         raise HTTPException(status_code=400, detail="Solo los descuentos de emisión se asignan manualmente")
 
     asignados   = 0

@@ -384,10 +384,16 @@ def _detalle(db: Session, inicio: datetime, fin: datetime, excluidas: set[int],
         lineas_venta = []
         for l in lineas_por_venta.get(v.ID_Venta, []):
             p = prod_map.get(l.ID_Producto)
+            # Precio al momento de la venta (snapshot). Fallback al precio
+            # actual solo para líneas creadas antes de Precio_Unitario.
+            if l.Precio_Unitario is not None:
+                precio_linea = l.Precio_Unitario
+            else:
+                precio_linea = Decimal(str(p.Precio_venta or 0)) if p else Decimal(0)
             lineas_venta.append({
                 "nombre": p.nombre if p else f"Producto {l.ID_Producto}",
                 "cantidad": int(l.Cantidad or 0),
-                "precio_unitario": Decimal(str(p.Precio_venta or 0)) if p else Decimal(0),
+                "precio_unitario": precio_linea,
             })
         ventas_detalle.append({
             "ID_Venta": v.ID_Venta,

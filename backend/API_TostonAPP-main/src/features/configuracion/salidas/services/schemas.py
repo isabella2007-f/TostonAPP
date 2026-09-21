@@ -2,8 +2,13 @@ from pydantic import BaseModel, model_validator, ConfigDict
 from typing import Optional, Literal
 from datetime import datetime
 
+from src.shared.services.enums import TipoSalida
+
 class SalidaCreate(BaseModel):
-    Tipo:        Literal["vencimiento", "daño", "ajuste", "consumo", "devolución"]
+    Tipo:        Literal[
+        TipoSalida.VENCIMIENTO, TipoSalida.DANO, TipoSalida.AJUSTE,
+        TipoSalida.CONSUMO, TipoSalida.DEVOLUCION,
+    ]
     ID_Insumo:   Optional[int] = None
     ID_Producto: Optional[int] = None
     Cantidad:    int

@@ -76,9 +76,6 @@ def migrate_db():
             "ALTER TABLE Compras ADD COLUMN IVA_Porcentaje DECIMAL(5,2) NULL",
             "ALTER TABLE Compras ADD COLUMN Descuento_Porcentaje DECIMAL(5,2) NULL",
             "ALTER TABLE Compras ADD COLUMN Otros_Costos DECIMAL(30,2) NULL",
-            # Pago mixto: cuánto del pedido va en efectivo y cuánto por transferencia
-            "ALTER TABLE Ventas ADD COLUMN Monto_Efectivo DECIMAL(30,2) NULL",
-            "ALTER TABLE Ventas ADD COLUMN Monto_Transferencia DECIMAL(30,2) NULL",
             # La auditoría del cobro en efectivo se escribía dentro de
             # Domicilios.Observaciones, que es texto que lee el cliente: las
             # indicaciones de entrega terminaban mezcladas con líneas
@@ -126,22 +123,14 @@ def migrate_db():
             "ALTER TABLE Usuarios ADD COLUMN Indicaciones VARCHAR(255) NULL",
             # FCM tokens persistidos en BD para sobrevivir reinicios de Render
             "ALTER TABLE Usuarios ADD COLUMN FCM_Token VARCHAR(300) NULL",
-            # Código de entrega, ya fuera de uso. Las columnas se siguen creando
-            # para que una base nueva calce con el modelo.
-            "ALTER TABLE Domicilios ADD COLUMN OTP VARCHAR(10) NULL",
-            "ALTER TABLE Domicilios ADD COLUMN OTP_Expira DATETIME NULL",
-            # Pedidos por encima del stock (preorden): marca, anticipo del 50%
-            # exigido y anticipo efectivamente cubierto. Los calcula el backend.
+            # Pedidos por encima del stock (preorden): marca + mínimo de anticipo
+            # exigido (regla de negocio, recalculada en varios puntos del ciclo de
+            # vida del pedido). El monto/método/comprobante realmente pagado vive
+            # en `Pagos` (migración `add_pagos_tabla.sql`), no acá.
             "ALTER TABLE Ventas ADD COLUMN Sobre_Stock TINYINT(1) NOT NULL DEFAULT 0",
             "ALTER TABLE Ventas ADD COLUMN Anticipo_Requerido DECIMAL(30,2) NULL",
-            "ALTER TABLE Ventas ADD COLUMN Anticipo_Pagado DECIMAL(30,2) NULL",
             # Anticipo del 50% por total > $50.000 (regla general de negocio)
             "ALTER TABLE Ventas ADD COLUMN Requiere_Anticipo TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE Ventas ADD COLUMN Anticipo_Monto DECIMAL(30,2) NULL",
-            "ALTER TABLE Ventas ADD COLUMN Anticipo_Metodo_Pago VARCHAR(30) NULL",
-            "ALTER TABLE Ventas ADD COLUMN Anticipo_Comprobante_Url VARCHAR(500) NULL",
-            "ALTER TABLE Ventas ADD COLUMN Anticipo_Registrado TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE Ventas ADD COLUMN Pago_Final_Registrado TINYINT(1) NOT NULL DEFAULT 0",
             "ALTER TABLE Ventas ADD COLUMN Estado_Pago VARCHAR(30) NULL DEFAULT 'pendiente'",
             # Unidades de cada línea que van por encima del stock (preorden)
             "ALTER TABLE Venta_x_Producto ADD COLUMN Cantidad_Preorden INT NOT NULL DEFAULT 0",
@@ -186,44 +175,15 @@ def migrate_db():
             # Unidad con la que se registró la compra (puede diferir de la unidad base
             # del insumo cuando el proveedor vende por kg y el insumo se lleva en g).
             "ALTER TABLE Detalle_Compra ADD COLUMN ID_Unidad_Compra INT NULL REFERENCES Unidad_Medida(ID_Unidad_Medida)",
+            # Precio del Producto al momento de crear la línea (snapshot). NULL en
+            # filas viejas: el código hace fallback al precio actual del producto.
+            "ALTER TABLE Venta_x_Producto ADD COLUMN Precio_Unitario DECIMAL(30,2) NULL",
         ]:
             try:
                 conn.execute(text(stmt))
                 conn.commit()
             except Exception as exc:
                 _log.debug("migrate skip (ya existe): %.80s", exc)
-
-    # ── Pago_Final: columnas para registrar el cobro del saldo al entregar ──────
-    # Se verifica columna a columna en information_schema antes de alterar;
-    # así el ALTER siempre es válido y los errores reales se logean — no se silencian.
-    _PAGO_FINAL_COLS = [
-        ("Pago_Final_Monto",           "DECIMAL(30,2) NULL"),
-        ("Pago_Final_Metodo_Pago",     "VARCHAR(30)   NULL"),
-        ("Pago_Final_Comprobante_Url", "VARCHAR(500)  NULL"),
-        ("Pago_Final_Fecha",           "DATETIME      NULL"),
-    ]
-    with engine.connect() as conn:
-        faltan = []
-        for col_name, col_def in _PAGO_FINAL_COLS:
-            existe = conn.execute(text(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS "
-                "WHERE TABLE_SCHEMA = DATABASE() "
-                "  AND TABLE_NAME   = 'Ventas' "
-                "  AND COLUMN_NAME  = :col"
-            ), {"col": col_name}).scalar()
-            if not existe:
-                faltan.append(f"ADD COLUMN {col_name} {col_def}")
-        if not faltan:
-            _log.info("migración pago_final: ya aplicada, sin cambios")
-        else:
-            alter_sql = "ALTER TABLE Ventas\n  " + ",\n  ".join(faltan)
-            try:
-                conn.execute(text(alter_sql))
-                conn.commit()
-                _log.info("migración pago_final: %d columna(s) creada(s): %s",
-                          len(faltan), [f.split()[2] for f in faltan])
-            except Exception as exc:
-                _log.error("migración pago_final FALLÓ — %s", exc, exc_info=True)
 
     # ── Necesita_Produccion: flag guardado al crear la venta (stock snapshot) ───
     # Evita que el cálculo dinámico de requiere_fecha_propuesta sea incorrecto
@@ -278,19 +238,6 @@ def migrate_db():
             conn.commit()
         except Exception:
             pass  # la columna ya existe; no re-hacer el backfill
-
-    # Comprobante_Pago: LONGTEXT para soportar imágenes en base64
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE Ventas ADD COLUMN Comprobante_Pago LONGTEXT NULL"))
-            conn.commit()
-        except Exception:
-            try:
-                conn.rollback()
-                conn.execute(text("ALTER TABLE Ventas MODIFY COLUMN Comprobante_Pago LONGTEXT NULL"))
-                conn.commit()
-            except Exception:
-                pass
 
     # Ventas.Fecha_entrega: timestamp real de entrega (fuente para el plazo de
     # devoluciones de 36h, también en pedidos de recoger en tienda). No se
@@ -686,16 +633,6 @@ def migrate_db():
                 conn.commit()
             except Exception:
                 pass  # columna ya existe
-
-    # ── Comprobante rechazado: guardar motivo visible al cliente ──────────────
-    with engine.connect() as conn:
-        try:
-            conn.execute(text(
-                "ALTER TABLE Ventas ADD COLUMN Motivo_Rechazo_Comprobante TEXT NULL"
-            ))
-            conn.commit()
-        except Exception:
-            pass  # columna ya existe
 
     # ── Nuevas columnas PUNTO 1-7 (flujo completo de pagos y negociación) ─────
     with engine.connect() as conn:

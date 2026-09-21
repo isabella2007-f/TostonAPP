@@ -1,6 +1,12 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Numeric, Boolean, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Numeric, Boolean, Text, JSON, CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .database import Base
+from .enums import TipoAccionFecha, TipoSalida, TipoDescuento, TipoOfertaDomicilio, TipoRemitenteChat
+
+
+def _check_in(valores):
+    lista = ", ".join(f"'{v}'" for v in valores)
+    return f"IN ({lista})"
 
 
 # ─────────────────────────────────────────
@@ -24,7 +30,7 @@ class Rol(Base):
 
     ID_Rol = Column(Integer, primary_key=True, index=True)
     Rol    = Column(String(25))
-    Estado = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Icono = Column(String(500), nullable=True)
 
     permisos  = relationship("RolXPermiso", back_populates="rol")
@@ -45,8 +51,8 @@ class Permiso(Base):
 class RolXPermiso(Base):
     __tablename__ = "Rol_x_Permiso"
 
-    ID_Rol     = Column(Integer, ForeignKey("Roles.ID_Rol"), primary_key=True)
-    ID_Permiso = Column(Integer, ForeignKey("Permisos.ID_Permiso"), primary_key=True)
+    ID_Rol     = Column(Integer, ForeignKey("Roles.ID_Rol", ondelete="RESTRICT"), primary_key=True)
+    ID_Permiso = Column(Integer, ForeignKey("Permisos.ID_Permiso", ondelete="RESTRICT"), primary_key=True)
 
     rol     = relationship("Rol", back_populates="permisos")
     permiso = relationship("Permiso", back_populates="roles")
@@ -62,7 +68,7 @@ class Usuario(Base):
     ID_Usuario     = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Cedula         = Column(String(20), nullable=True)
     Tipo_Documento = Column(String(5), nullable=True)
-    ID_Rol         = Column(Integer, ForeignKey("Roles.ID_Rol"), nullable=True)
+    ID_Rol         = Column(Integer, ForeignKey("Roles.ID_Rol", ondelete="RESTRICT"), nullable=True)
     Nombre         = Column(String(50))
     Apellidos      = Column(String(50))
     Correo         = Column(String(255), unique=True, index=True)
@@ -74,10 +80,10 @@ class Usuario(Base):
     Foto_perfil    = Column(String(500), nullable=True)
     Fecha_creacion = Column(DateTime)
     Contrasena     = Column(String(255))
-    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     # 1 = el correo fue verificado mediante el enlace; 0 = pendiente de verificar.
     # Es independiente de Estado (que indica si la cuenta está activa/desactivada).
-    Correo_Verificado = Column(Integer, default=0)
+    Correo_Verificado = Column(Integer, default=0)  # CHECK Correo_Verificado IN (0,1)
     # Token FCM para push notifications. Se persiste en BD para sobrevivir reinicios del servidor.
     FCM_Token      = Column(String(300), nullable=True)
     # Rate limiting de login persistido en BD para sobrevivir cold starts de Render.
@@ -87,11 +93,19 @@ class Usuario(Base):
     Bloqueado_Hasta = Column(DateTime, nullable=True)
     # 1 = la propia persona eliminó su cuenta (borrado lógico). Distingue este
     # caso de una cuenta desactivada por un admin, para poder recuperarla.
-    Auto_Eliminado = Column(Integer, default=0, nullable=True)
+    Auto_Eliminado = Column(Integer, default=0, nullable=True)  # CHECK Auto_Eliminado IN (0,1)
     # Barrio de referencia del cliente (módulo Ubicaciones). Es SOLO dato guía:
     # no condiciona el domicilio, que se elige y confirma en el checkout.
     # Migración: ALTER TABLE Usuarios ADD COLUMN ID_Barrio INT NULL;
+    # NOTA (verificado 2026-09-16): esta FK está declarada aquí pero NUNCA se creó
+    # en la BD real (no aparece en information_schema). Fuera de alcance de la
+    # migración add_indices_fk_ondelete_checks.sql — reportado como hallazgo aparte.
     ID_Barrio      = Column(Integer, ForeignKey("Barrios.ID_Barrio"), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("Correo_Verificado IN (0,1)", name="chk_usuarios_correo_verificado"),
+        CheckConstraint("Auto_Eliminado IN (0,1)", name="chk_usuarios_auto_eliminado"),
+    )
 
     rol          = relationship("Rol", foreign_keys=[ID_Rol])
     barrio       = relationship("Barrio", foreign_keys=[ID_Barrio])
@@ -103,7 +117,7 @@ class VerificacionEmail(Base):
     __tablename__ = "Verificaciones_Email"
 
     ID_Verificacion = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Usuario      = Column(Integer, ForeignKey("Usuarios.ID_Usuario"))
+    ID_Usuario      = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="RESTRICT"))
     Token           = Column(String(36), unique=True, index=True)
     Expira_En       = Column(DateTime)
     Usado           = Column(Boolean, default=False)
@@ -121,7 +135,7 @@ class CategoriaProducto(Base):
     ID_Categoria     = Column(Integer, primary_key=True, index=True)
     Nombre_Categoria = Column(String(100))
     Descripcion      = Column(Text)
-    Estado           = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado           = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Icono            = Column(String(500), nullable=True)
     Fecha_Creacion   = Column(DateTime, nullable=True)
 
@@ -135,7 +149,7 @@ class CategoriaInsumo(Base):
     ID_Categoria     = Column(Integer, primary_key=True, index=True)
     Nombre_Categoria = Column(String(100))
     Descripcion      = Column(Text)
-    Estado           = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado           = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Icono            = Column(String(500), nullable=True)
     Fecha_Creacion   = Column(DateTime)
 
@@ -160,13 +174,13 @@ class Insumo(Base):
     __tablename__ = "Insumos"
 
     ID_Insumo      = Column(Integer, primary_key=True, index=True)
-    ID_Categoria   = Column(Integer, ForeignKey("Categoria_Insumos.ID_Categoria"))
-    ID_Lote_Compra = Column(Integer, ForeignKey("Lote_Compra.ID_Lote_Compra"))
+    ID_Categoria   = Column(Integer, ForeignKey("Categoria_Insumos.ID_Categoria", ondelete="RESTRICT"))
+    ID_Lote_Compra = Column(Integer, ForeignKey("Lote_Compra.ID_Lote_Compra", ondelete="RESTRICT"))
     Nombre         = Column(String(100))
-    Unidad_Medida  = Column(Integer, ForeignKey("Unidad_Medida.ID_Unidad_Medida"))
+    Unidad_Medida  = Column(Integer, ForeignKey("Unidad_Medida.ID_Unidad_Medida", ondelete="RESTRICT"))
     Stock_Actual   = Column(Numeric(10, 4))
     Stock_Minimo   = Column(Integer)
-    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
 
     categoria       = relationship("CategoriaInsumo", back_populates="insumos")
     unidad_medida   = relationship("UnidadMedida", back_populates="insumos")
@@ -187,11 +201,11 @@ class LoteCompra(Base):
     __tablename__ = "Lote_Compra"
 
     ID_Lote_Compra    = Column(Integer, primary_key=True, index=True)
-    ID_Insumo         = Column(Integer, ForeignKey("Insumos.ID_Insumo"))
+    ID_Insumo         = Column(Integer, ForeignKey("Insumos.ID_Insumo", ondelete="RESTRICT"))
     Fecha_Vencimiento = Column(DateTime)
     Cantidad_Inicial  = Column(Numeric(10, 4))
     Cantidad_Actual   = Column(Numeric(10, 4), nullable=True)
-    Estado            = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado            = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
 
     insumo          = relationship("Insumo", back_populates="lotes_compra", foreign_keys="[LoteCompra.ID_Insumo]")
     detalle_compras = relationship("DetalleCompra", back_populates="lote_compra")
@@ -214,7 +228,7 @@ class Proveedor(Base):
     __tablename__ = "Proveedores"
 
     ID_Proveedor   = Column(Integer, primary_key=True, index=True)
-    Sujeto_Derecho = Column(Integer, ForeignKey("Sujeto_Derecho.ID_Sujeto_Derecho"))
+    Sujeto_Derecho = Column(Integer, ForeignKey("Sujeto_Derecho.ID_Sujeto_Derecho", ondelete="RESTRICT"))
     NIT            = Column(String(20), nullable=True)
     Cedula         = Column(String(20), nullable=True)
     Responsable    = Column(String(100))
@@ -232,12 +246,12 @@ class Compra(Base):
     __tablename__ = "Compras"
 
     ID_Compra            = Column(Integer, primary_key=True, index=True)
-    ID_Proveedor         = Column(Integer, ForeignKey("Proveedores.ID_Proveedor"))
+    ID_Proveedor         = Column(Integer, ForeignKey("Proveedores.ID_Proveedor", ondelete="RESTRICT"))
     Total_Pago           = Column(Numeric(30, 2))
     Fecha_Compra         = Column(DateTime)
     Fecha_Llegada        = Column(DateTime, nullable=True)  # fecha en que se completó la compra
     Fecha_Anulada        = Column(DateTime, nullable=True)  # fecha en que se anuló la compra
-    Estado               = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado               = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Metodo_Pago          = Column(String(20))
     Notas                = Column(Text, nullable=True)
     Comprobante          = Column(String(500), nullable=True)  # URL Cloudinary del comprobante (pago por transferencia)
@@ -254,9 +268,9 @@ class DetalleCompra(Base):
     __tablename__ = "Detalle_Compra"
 
     ID_Detalle_Compra = Column(Integer, primary_key=True, index=True)
-    ID_Compra         = Column(Integer, ForeignKey("Compras.ID_Compra"))
-    ID_Insumo         = Column(Integer, ForeignKey("Insumos.ID_Insumo"))
-    ID_Lote_Compra    = Column(Integer, ForeignKey("Lote_Compra.ID_Lote_Compra"))
+    ID_Compra         = Column(Integer, ForeignKey("Compras.ID_Compra", ondelete="RESTRICT"))
+    ID_Insumo         = Column(Integer, ForeignKey("Insumos.ID_Insumo", ondelete="RESTRICT"))
+    ID_Lote_Compra    = Column(Integer, ForeignKey("Lote_Compra.ID_Lote_Compra", ondelete="RESTRICT"))
     ID_Unidad_Compra  = Column(Integer, ForeignKey("Unidad_Medida.ID_Unidad_Medida"), nullable=True)
     Notas             = Column(Text)
     Cantidad          = Column(Numeric(10, 4))   # Numeric para soportar kg, g, L, mL
@@ -276,7 +290,7 @@ class ProductoImagen(Base):
     __tablename__ = "Producto_Imagenes"
 
     ID_Producto_Img = Column(Integer, primary_key=True, index=True)
-    ID_Producto     = Column(Integer, ForeignKey("Productos.ID_Producto"))
+    ID_Producto     = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"))
     imagen          = Column(String(500), nullable=True)
 
     producto = relationship("Producto", back_populates="imagenes", foreign_keys=[ID_Producto])
@@ -287,18 +301,23 @@ class Producto(Base):
 
     ID_Producto         = Column(Integer, primary_key=True, index=True)
     nombre              = Column(String(255))
-    ID_Categoria        = Column(Integer, ForeignKey("Categoria_Producto.ID_Categoria"))
+    ID_Categoria        = Column(Integer, ForeignKey("Categoria_Producto.ID_Categoria", ondelete="RESTRICT"))
     Precio_venta        = Column(Numeric(30, 2))
     Stock               = Column(Integer)
     Stock_Minimo        = Column(Integer)
-    Requiere_Produccion = Column(Integer, default=0, nullable=False)
-    Estado              = Column(Integer, ForeignKey("Estados.ID_Estados"))
-    ID_Orden_Produccion = Column(Integer, ForeignKey("Orden_Produccion.ID_Orden_Produccion"))
-    Imagen              = Column(Integer, ForeignKey("Producto_Imagenes.ID_Producto_Img"))
-    Publicado           = Column(Integer, default=0, nullable=True)
+    Requiere_Produccion = Column(Integer, default=0, nullable=False)  # CHECK IN (0,1)
+    Estado              = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
+    ID_Orden_Produccion = Column(Integer, ForeignKey("Orden_Produccion.ID_Orden_Produccion", ondelete="RESTRICT"))
+    Imagen              = Column(Integer, ForeignKey("Producto_Imagenes.ID_Producto_Img", ondelete="SET NULL"))
+    Publicado           = Column(Integer, default=0, nullable=True)  # CHECK IN (0,1)
     Descripcion_Corta   = Column(String(255), nullable=True)
     Descripcion_Larga   = Column(String(2000), nullable=True)
     Fecha_Creacion      = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("Requiere_Produccion IN (0,1)", name="chk_productos_requiere_prod"),
+        CheckConstraint("Publicado IN (0,1)", name="chk_productos_publicado"),
+    )
 
     categoria       = relationship("CategoriaProducto", back_populates="productos")
     fichas_tecnicas = relationship("FichaTecnica", back_populates="producto")
@@ -316,10 +335,10 @@ class FichaTecnica(Base):
     __tablename__ = "Ficha_Tecnica"
 
     ID_Ficha        = Column(Integer, primary_key=True, index=True)
-    ID_Producto     = Column(Integer, ForeignKey("Productos.ID_Producto"))
+    ID_Producto     = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"))
     Version         = Column(String(25))
-    ID_Categoria    = Column(Integer, ForeignKey("Categoria_Producto.ID_Categoria"))
-    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    ID_Categoria    = Column(Integer, ForeignKey("Categoria_Producto.ID_Categoria", ondelete="RESTRICT"))
+    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Observaciones   = Column(Text)
     Procedimiento   = Column(Text)
     Fecha_Creacion  = Column(DateTime)
@@ -336,8 +355,8 @@ class FichaTecnicaInsumo(Base):
     __tablename__ = "Ficha_Tecnica_Insumo"
 
     ID_Ficha_Insumo = Column(Integer, primary_key=True, autoincrement=True)
-    ID_Ficha        = Column(Integer, ForeignKey("Ficha_Tecnica.ID_Ficha"), nullable=False)
-    ID_Insumo       = Column(Integer, ForeignKey("Insumos.ID_Insumo"), nullable=False)
+    ID_Ficha        = Column(Integer, ForeignKey("Ficha_Tecnica.ID_Ficha", ondelete="RESTRICT"), nullable=False)
+    ID_Insumo       = Column(Integer, ForeignKey("Insumos.ID_Insumo", ondelete="RESTRICT"), nullable=False)
     Cantidad        = Column(Numeric(10, 2), nullable=True)
     Unidad          = Column(String(50), nullable=True)
 
@@ -349,16 +368,19 @@ class OrdenProduccion(Base):
     __tablename__ = "Orden_Produccion"
 
     ID_Orden_Produccion = Column(Integer, primary_key=True, index=True)
+    # NOTA (verificado 2026-09-16): esta FK está declarada aquí pero NUNCA se creó en
+    # la BD real (no aparece en information_schema). Fuera de alcance de la migración
+    # add_indices_fk_ondelete_checks.sql — reportado como hallazgo aparte.
     ID_Venta            = Column(Integer, ForeignKey("Ventas.ID_Venta"), nullable=True)
-    ID_Producto         = Column(Integer, ForeignKey("Productos.ID_Producto"))
-    ID_Insumo           = Column(Integer, ForeignKey("Insumos.ID_Insumo"), nullable=True)
-    ID_Ficha            = Column(Integer, ForeignKey("Ficha_Tecnica.ID_Ficha"), nullable=True)
+    ID_Producto         = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"))
+    ID_Insumo           = Column(Integer, ForeignKey("Insumos.ID_Insumo", ondelete="SET NULL"), nullable=True)
+    ID_Ficha            = Column(Integer, ForeignKey("Ficha_Tecnica.ID_Ficha", ondelete="RESTRICT"), nullable=True)
     Cantidad            = Column(Integer)
     Fecha_Creacion      = Column(DateTime, nullable=True)   # cuándo se registró la orden (automático)
     Fecha_inicio        = Column(DateTime)
     Fecha_Entrega       = Column(DateTime)
     Fecha_fin           = Column(DateTime, nullable=True)   # cuándo pasó a Completada (automático)
-    Estado              = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado              = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Costo               = Column(Numeric(30, 2))
 
     producto = relationship("Producto", foreign_keys=[ID_Producto])
@@ -372,13 +394,13 @@ class LoteProducto(Base):
     __tablename__ = "Lote_Producto"
 
     ID_Lote_Producto    = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Orden_Produccion = Column(Integer, ForeignKey("Orden_Produccion.ID_Orden_Produccion"))
-    ID_Producto         = Column(Integer, ForeignKey("Productos.ID_Producto"))
+    ID_Orden_Produccion = Column(Integer, ForeignKey("Orden_Produccion.ID_Orden_Produccion", ondelete="RESTRICT"))
+    ID_Producto         = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"))
     Numero_Lote         = Column(String(50))
     Fecha_Produccion    = Column(DateTime)
     Fecha_Vencimiento   = Column(DateTime, nullable=True)
     Cantidad            = Column(Integer)
-    Estado              = Column(Integer, ForeignKey("Estados.ID_Estados"), default=1)
+    Estado              = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"), default=1)
 
     orden    = relationship("OrdenProduccion", back_populates="lote")
     producto = relationship("Producto", back_populates="lotes_producto")
@@ -392,41 +414,43 @@ class Venta(Base):
     __tablename__ = "Ventas"
 
     ID_Venta               = Column(Integer, primary_key=True, index=True)
-    ID_Usuario             = Column(Integer, ForeignKey("Usuarios.ID_Usuario"))
+    ID_Usuario             = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="RESTRICT"), index=True)
     Total                  = Column(Numeric(30, 2))
-    Estado                 = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado                 = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"), index=True)
+    # Método elegido por el cliente al hacer el pedido ("¿cómo vas a pagar?").
+    # Es un atributo del PEDIDO, no una transacción: por eso se queda acá y no
+    # se movió a `Pagos` con el resto de las columnas de pago/comprobante
+    # (migración `add_pagos_tabla.sql`, ver Pagos más abajo). Gatilla
+    # `_es_mixto`/`_es_transferencia` en todo el módulo de ventas/pedidos.
     Metodo_Pago            = Column(String(20))
-    Fecha_Venta            = Column(DateTime)
-    Fecha_pedido           = Column(DateTime)
+    Fecha_Venta            = Column(DateTime, index=True)
+    Fecha_pedido           = Column(DateTime, index=True)
     Fecha_entrega          = Column(DateTime, nullable=True)   # timestamp real de entrega
     Fecha_entrega_esperada = Column(DateTime, nullable=True)
-    Comprobante_Pago       = Column(Text, nullable=True)
     # Pedido especial: alguna línea supera el stock disponible. Lo calcula el
     # backend al crear la venta; el cliente no puede enviarlo.
     Sobre_Stock            = Column(Integer, default=0, nullable=True)
-    # Anticipo del 50% exigido por superar el stock y lo efectivamente cubierto
-    # (créditos verificados en el libro mayor + transferencia con comprobante).
-    Anticipo_Requerido     = Column(Numeric(30, 2), nullable=True)
-    Anticipo_Pagado        = Column(Numeric(30, 2), nullable=True)
-    # Anticipo del 50% por total > $50.000 (regla general de negocio)
-    Requiere_Anticipo        = Column(Integer,      default=0,           nullable=True)
-    Anticipo_Monto           = Column(Numeric(30, 2),                    nullable=True)
-    Anticipo_Metodo_Pago     = Column(String(30),                        nullable=True)
-    Anticipo_Comprobante_Url = Column(String(500),                       nullable=True)
-    Anticipo_Registrado      = Column(Integer,      default=0,           nullable=True)
-    Pago_Final_Registrado    = Column(Integer,      default=0,           nullable=True)
-    Pago_Final_Monto         = Column(Numeric(30, 2),                    nullable=True)
-    Pago_Final_Metodo_Pago   = Column(String(30),                        nullable=True)
-    Pago_Final_Comprobante_Url = Column(String(500),                     nullable=True)
-    Pago_Final_Fecha         = Column(DateTime,                          nullable=True)
-    # Pago mixto (Metodo_Pago = "Mixto"): el pedido se reparte entre las dos
-    # formas. La transferencia se paga al hacer el pedido y lleva comprobante;
-    # el efectivo se cobra en mano al entregar. Los dos montos los calcula el
-    # backend sobre el total real, el cliente solo propone la proporción.
-    Monto_Efectivo           = Column(Numeric(30, 2),                    nullable=True)
-    Monto_Transferencia      = Column(Numeric(30, 2),                    nullable=True)
+    # Regla de negocio calculada (no una transacción): si el pedido exige
+    # anticipo y cuánto es el mínimo exigido (50% del total, o del subtotal en
+    # preorden con crédito ya descontado — ver `_calcular_anticipo`). Se
+    # recalcula en varios puntos del ciclo de vida del pedido (creación,
+    # aprobación de fecha, edición) y `pagar_pedido` lo usa como umbral contra
+    # `Pagos.Monto` de la fila `tipo='anticipo'`. El monto/método/comprobante
+    # realmente pagado vive en `Pagos`.
+    Requiere_Anticipo   = Column(Integer,       default=0, nullable=True)
+    Anticipo_Requerido  = Column(Numeric(30, 2),           nullable=True)
+    # Estado agregado de pago del pedido, CACHEADO (mismo patrón que
+    # `Credito_Cliente.Saldo` respecto de `Movimiento_Credito`): se recalcula
+    # con `pagos_service.recalcular_estado_pago(db, venta)` a partir de las
+    # filas de `Pagos` de esta venta + `Metodo_Pago`, nunca se escribe a mano.
+    # Valores posibles (idénticos a los de antes de la migración): pendiente,
+    # pendiente_validacion, anticipo_pagado, pagado_completo,
+    # comprobante_rechazado, saldo_pendiente_validacion,
+    # saldo_comprobante_rechazado, efectivo_recibido, no_recibido.
     Estado_Pago              = Column(String(30),   default="pendiente", nullable=True)
-    Motivo_Rechazo_Comprobante = Column(Text,                           nullable=True)
+    # Fecha en que el cliente rechazó una fecha de entrega propuesta (negociación
+    # de fecha, no de pago — ver `rechazar_fecha`). No forma parte de la
+    # migración de Pagos.
     Fecha_Rechazada          = Column(DateTime,                          nullable=True)
     # Guardado al crear la venta: True si algún producto de producción no tenía stock suficiente.
     # Usar este valor (snapshot) evita que el botón "proponer fecha" aparezca incorrectamente
@@ -439,19 +463,6 @@ class Venta(Base):
     # escala nada por sí solo; a partir de LIMITE_INTENTOS_RECHAZO el frontend
     # resalta con más énfasis el canal de excepción (hablar con el admin).
     intentos_rechazo         = Column(Integer,      default=0,           nullable=True)
-    # Rechazos del PRIMER comprobante (el que da paso a producción/despacho:
-    # el anticipo de un pedido con producción, o el total de uno sin ella). Al
-    # llegar a 3 el pedido se cancela solo. Contador separado del de abajo
-    # porque son dos validaciones independientes en momentos distintos del
-    # ciclo de vida del pedido.
-    Intentos_Rechazo_Comprobante_Anticipo = Column(Integer, default=0, nullable=True)
-    # Rechazos del SEGUNDO comprobante (el saldo restante tras el anticipo,
-    # antes de despachar/entregar). Mismo límite de 3, contador propio.
-    Intentos_Rechazo_Comprobante_Saldo    = Column(Integer, default=0, nullable=True)
-    # Comprobante del saldo restante, subido por el cliente mientras se
-    # valida (separado de Pago_Final_Comprobante_Url, que solo se llena
-    # cuando el pago final YA quedó registrado/aprobado).
-    Saldo_Comprobante_Url                 = Column(String(500), nullable=True)
     # Cuándo se marcó "Retenido en tienda" por una entrega/cobro en efectivo
     # fallido (excepción de pago, ver EstadoPedido.RETENIDO_EN_TIENDA). Sirve
     # para evaluar perezosamente la ventana de reintento (24h) y el plazo de
@@ -475,17 +486,74 @@ class Venta(Base):
     domicilios         = relationship("Domicilio", back_populates="venta")
     devoluciones       = relationship("Devolucion", back_populates="venta")
     ordenes_produccion = relationship("OrdenProduccion", back_populates="venta")
+    pagos              = relationship("Pago", back_populates="venta")
+
+
+class Pago(Base):
+    """Una fila por cada 'pata' de pago de una venta (ver CLAUDE.md, sección
+    Pagos): como mucho dos por venta — `anticipo` (lo que se paga/valida por
+    adelantado: el anticipo del 50%, el total completo si no hay anticipo, o
+    la mitad transferida de un pedido mixto) y `saldo` (lo que queda: el resto
+    tras el anticipo, o la mitad en efectivo de un mixto). Reemplaza las ~24
+    columnas de pago/comprobante que antes vivían sueltas en `Ventas`
+    (migración `add_pagos_tabla.sql`).
+
+    `Monto` es siempre lo declarado/pagado (o, para un mixto, el reparto fijo
+    calculado al crear la venta), nunca "lo requerido" — eso vive en
+    `Venta.Anticipo_Requerido`, que es una regla de negocio, no una
+    transacción.
+    """
+    __tablename__ = "Pagos"
+
+    ID_Pago           = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    ID_Venta          = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="RESTRICT"), nullable=False, index=True)
+    Tipo              = Column(String(20), nullable=False)   # 'anticipo' | 'saldo'
+    Metodo_Pago       = Column(String(30), nullable=False)   # 'Efectivo' | 'Transferencia'
+    Monto             = Column(Numeric(30, 2), nullable=True)
+    Comprobante_Url   = Column(String(500), nullable=True)   # NULL si Efectivo
+    Estado            = Column(String(30), nullable=False, default="pendiente", index=True)
+    # 'pendiente' | 'pendiente_validacion' | 'aprobado' | 'rechazado' | 'recibido' | 'no_recibido'
+    Motivo_Rechazo    = Column(Text, nullable=True)
+    Intentos_Rechazo  = Column(Integer, default=0, nullable=True)
+    Fecha_Registro    = Column(DateTime, nullable=True)   # cuándo se declaró/subió
+    Fecha_Resolucion  = Column(DateTime, nullable=True)   # cuándo se aprobó/rechazó/cobró
+    # Quién lo registró si fue personal (cobro en efectivo, pago final directo).
+    # NULL cuando es self-service del cliente (sube su propio comprobante).
+    ID_Registrado_Por = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="SET NULL"), nullable=True)
+    # Solo para la fila `anticipo` del flujo admin/mostrador ("pedido sobre
+    # stock"): cuánto del anticipo exigido quedó verificado (crédito aplicado)
+    # en el momento de crear la venta. Es un dato de auditoría puntual del
+    # chequeo de `crear_venta` — ninguna otra función lo vuelve a leer.
+    Monto_Verificado_Creacion = Column(Numeric(30, 2), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("Tipo IN ('anticipo','saldo')", name="chk_pagos_tipo"),
+        CheckConstraint("Metodo_Pago IN ('Efectivo','Transferencia')", name="chk_pagos_metodo"),
+        CheckConstraint(
+            "Estado IN ('pendiente','pendiente_validacion','aprobado','rechazado','recibido','no_recibido')",
+            name="chk_pagos_estado",
+        ),
+        UniqueConstraint("ID_Venta", "Tipo", name="uq_pagos_venta_tipo"),
+    )
+
+    venta            = relationship("Venta", back_populates="pagos")
+    registrado_por   = relationship("Usuario", foreign_keys=[ID_Registrado_Por])
 
 
 class VentaXProducto(Base):
     __tablename__ = "Venta_x_Producto"
 
-    ID_Venta    = Column(Integer, ForeignKey("Ventas.ID_Venta"), primary_key=True)
-    ID_Producto = Column(Integer, ForeignKey("Productos.ID_Producto"), primary_key=True)
+    ID_Venta    = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="RESTRICT"), primary_key=True)
+    ID_Producto = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"), primary_key=True)
     Cantidad    = Column(Integer)
     # Unidades pedidas por encima del stock disponible al crear la venta
     # (preorden). No altera el stock real: solo identifica la parte especial.
     Cantidad_Preorden = Column(Integer, default=0, nullable=True)
+    # Precio del Producto en el momento en que se creó esta línea (snapshot).
+    # NULL en filas creadas antes de esta columna: el dato histórico ya se
+    # perdió y no se puede reconstruir, el código hace fallback al precio
+    # actual del producto solo en ese caso.
+    Precio_Unitario = Column(Numeric(30, 2), nullable=True)
 
     venta    = relationship("Venta", back_populates="productos")
     producto = relationship("Producto", back_populates="ventas")
@@ -495,19 +563,26 @@ class HistorialFechasPropuestas(Base):
     __tablename__ = "Historial_Fechas_Propuestas"
 
     ID_Historial   = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Venta       = Column(Integer, ForeignKey("Ventas.ID_Venta"), nullable=False)
-    ID_Usuario     = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
+    ID_Venta       = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="RESTRICT"), nullable=False)
+    ID_Usuario     = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="SET NULL"), nullable=True)
     Fecha_Propuesta = Column(DateTime, nullable=True)   # la fecha de entrega propuesta/aceptada
     Fecha_Accion   = Column(DateTime, nullable=False)   # cuándo ocurrió la acción
-    Tipo_Accion    = Column(String(20), nullable=False)  # 'propuesta' | 'aceptada' | 'rechazada'
+    Tipo_Accion    = Column(String(20), nullable=False)  # ver TipoAccionFecha
     Motivo_Rechazo = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "Tipo_Accion " + _check_in(TipoAccionFecha.TODOS),
+            name="chk_historial_fechas_tipo_accion",
+        ),
+    )
 
 
 class DetalleVenta(Base):
     __tablename__ = "Detalle_Venta"
 
     ID_DetalleVenta = Column(Integer, primary_key=True, index=True)
-    ID_Venta        = Column(Integer, ForeignKey("Ventas.ID_Venta"))
+    ID_Venta        = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="RESTRICT"), unique=True)
     A_Nombre_De     = Column(String(100))
     IVA             = Column(Numeric(30, 2))
     Descuento       = Column(Numeric(30, 2))
@@ -525,8 +600,11 @@ class Domicilio(Base):
     __tablename__ = "Domicilios"
 
     ID_Domicilio         = Column(Integer, primary_key=True, index=True)
-    ID_Venta             = Column(Integer, ForeignKey("Ventas.ID_Venta"))
-    ID_Empleado          = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
+    ID_Venta             = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="RESTRICT"), unique=True)
+    # ondelete SET NULL: es un dato de asignación/auditoría, no invalida el domicilio
+    # si el empleado se borra. En la práctica los usuarios nunca se borran físicamente
+    # (solo Estado=2), así que esta rama casi nunca se dispara.
+    ID_Empleado          = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="SET NULL"), nullable=True, index=True)
     Fecha_asignacion     = Column(DateTime)
     Fecha_entrega        = Column(DateTime)
     # Lo que dejó escrito EL CLIENTE al pedir: el complemento de la dirección
@@ -545,22 +623,19 @@ class Domicilio(Base):
     # Quién registró el cobro en efectivo, cuándo y por cuánto. Vive aparte de
     # Observaciones porque eso es texto que el cliente escribe y lee.
     Cobro_Auditoria      = Column(Text, nullable=True)
-    Estado               = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado               = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     Direccion_entrega    = Column(String(50))
     Municipio_entrega    = Column(String(25))
     Departamento_entrega = Column(String(60))
-    # Código de entrega que se le pedía al cliente al recibir. Se quitó del
-    # flujo: entregar ya no depende de dictar un número. Las columnas quedan por
-    # los domicilios viejos que lo tienen guardado; nadie las lee ni las escribe.
-    OTP        = Column(String(10), nullable=True)
-    OTP_Expira = Column(DateTime, nullable=True)
-
     # ── Snapshot del precio del domicilio (módulo Ubicaciones) ──────────────
     # Se congela al CREAR el domicilio y no se recalcula nunca, aunque después
     # cambie el precio del barrio o una oferta. Reemplaza la antigua constante
     # COSTO_DOMICILIO = Decimal("5000"). Desglose_Ofertas guarda el JSON
     # congelado {base, pesos_total, ofertas:[{id,nombre,tipo,valor,efecto}],
     # final, techo_aplicado?}. Migración: ver src/main.py.
+    # NOTA (verificado 2026-09-16): esta FK está declarada aquí pero NUNCA se creó en
+    # la BD real (no aparece en information_schema). Fuera de alcance de la migración
+    # add_indices_fk_ondelete_checks.sql — reportado como hallazgo aparte.
     ID_Barrio              = Column(Integer, ForeignKey("Barrios.ID_Barrio"), nullable=True)
     Precio_Domicilio_Base  = Column(Integer, nullable=True)
     Precio_Domicilio_Final = Column(Integer, nullable=True)
@@ -571,7 +646,11 @@ class Domicilio(Base):
     # y el admin registra aquí que esa plata ya fue entregada a la empresa.
     Efectivo_Liquidado  = Column(Integer, default=0, nullable=True)   # 0 = pendiente, 1 = liquidado
     Fecha_Liquidacion   = Column(DateTime, nullable=True)
-    ID_Liquidado_Por    = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
+    ID_Liquidado_Por    = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("Efectivo_Liquidado IN (0,1)", name="chk_domicilios_efectivo_liq"),
+    )
 
     venta          = relationship("Venta", back_populates="domicilios")
     empleado       = relationship("Usuario", foreign_keys=[ID_Empleado])
@@ -583,12 +662,12 @@ class Devolucion(Base):
     __tablename__ = "Devoluciones"
 
     ID_Devolucion   = Column(Integer, primary_key=True, index=True)
-    ID_Venta        = Column(Integer, ForeignKey("Ventas.ID_Venta"))
-    ID_Usuario      = Column(Integer, ForeignKey("Usuarios.ID_Usuario"))            # ← actualizado
-    ID_DetalleVenta = Column(Integer, ForeignKey("Detalle_Venta.ID_DetalleVenta"))
+    ID_Venta        = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="RESTRICT"))
+    ID_Usuario      = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="RESTRICT"))            # ← actualizado
+    ID_DetalleVenta = Column(Integer, ForeignKey("Detalle_Venta.ID_DetalleVenta", ondelete="RESTRICT"))
     FechaDevolucion = Column(DateTime)
     Motivo          = Column(Text)
-    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados"))
+    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
     TotalDevuelto   = Column(Numeric(30, 2))
     FechaAprobacion = Column(DateTime)
     FechaReembolso  = Column(DateTime)
@@ -606,8 +685,8 @@ class DevolucionDetalle(Base):
     __tablename__ = "Devolucion_Detalle"
 
     ID_Devolucion_Detalle = Column(Integer, primary_key=True, index=True)
-    ID_Devolucion         = Column(Integer, ForeignKey("Devoluciones.ID_Devolucion"))
-    ID_Producto           = Column(Integer, ForeignKey("Productos.ID_Producto"))
+    ID_Devolucion         = Column(Integer, ForeignKey("Devoluciones.ID_Devolucion", ondelete="RESTRICT"))
+    ID_Producto           = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"))
     Cantidad              = Column(Integer)
     PrecioUnitario        = Column(Numeric(30, 2))
     Subtotal              = Column(Numeric(30, 2))
@@ -620,12 +699,19 @@ class MensajeChat(Base):
     __tablename__ = "MensajesChat"
 
     ID_Mensaje       = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Domicilio     = Column(Integer, ForeignKey("Domicilios.ID_Domicilio"))
-    Tipo_Remitente   = Column(String(20))
+    ID_Domicilio     = Column(Integer, ForeignKey("Domicilios.ID_Domicilio", ondelete="RESTRICT"))
+    Tipo_Remitente   = Column(String(20))          # ver TipoRemitenteChat
     ID_Remitente     = Column(Integer)
     Nombre_Remitente = Column(String(100), nullable=True)
     Contenido        = Column(Text)
     Fecha            = Column(DateTime)
+
+    __table_args__ = (
+        CheckConstraint(
+            "Tipo_Remitente " + _check_in(TipoRemitenteChat.TODOS),
+            name="chk_mensajeschat_tipo_remitente",
+        ),
+    )
 
 
 # ─────────────────────────────────────────
@@ -636,7 +722,7 @@ class CreditoCliente(Base):
     __tablename__ = "Credito_Cliente"
 
     ID_Credito   = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Usuario   = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), unique=True)
+    ID_Usuario   = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="RESTRICT"), unique=True)
     Saldo        = Column(Numeric(30, 2), default=0)
     Fecha_Update = Column(DateTime)
 
@@ -648,9 +734,12 @@ class MovimientoCredito(Base):
     __tablename__ = "Movimiento_Credito"
 
     ID_Movimiento = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Credito    = Column(Integer, ForeignKey("Credito_Cliente.ID_Credito"))
-    ID_Devolucion = Column(Integer, ForeignKey("Devoluciones.ID_Devolucion"), nullable=True)
-    ID_Venta      = Column(Integer, ForeignKey("Ventas.ID_Venta"), nullable=True)
+    ID_Credito    = Column(Integer, ForeignKey("Credito_Cliente.ID_Credito", ondelete="RESTRICT"))
+    # ondelete SET NULL: el libro mayor (MovimientoCredito) es append-only y debe
+    # sobrevivir aunque se borre la devolución/venta de origen (ver CLAUDE.md,
+    # "Cálculo de créditos del cliente" — el ledger es la fuente de verdad).
+    ID_Devolucion = Column(Integer, ForeignKey("Devoluciones.ID_Devolucion", ondelete="SET NULL"), nullable=True)
+    ID_Venta      = Column(Integer, ForeignKey("Ventas.ID_Venta", ondelete="SET NULL"), nullable=True)
     Tipo          = Column(String(20))      # "recarga" o "uso"
     Monto         = Column(Numeric(30, 2))
     Fecha         = Column(DateTime)
@@ -702,21 +791,25 @@ class Salida(Base):
     __tablename__ = "Salidas"
 
     ID_Salida      = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    Tipo           = Column(String(20))          # 'vencimiento','daño','ajuste','consumo','devolución'
-    ID_Insumo      = Column(Integer, ForeignKey("Insumos.ID_Insumo"),    nullable=True)
-    ID_Producto    = Column(Integer, ForeignKey("Productos.ID_Producto"), nullable=True)
+    Tipo           = Column(String(20))          # ver TipoSalida
+    ID_Insumo      = Column(Integer, ForeignKey("Insumos.ID_Insumo", ondelete="RESTRICT"),    nullable=True, index=True)
+    ID_Producto    = Column(Integer, ForeignKey("Productos.ID_Producto", ondelete="RESTRICT"), nullable=True, index=True)
     Cantidad       = Column(Integer)
     Motivo         = Column(Text, nullable=True)
-    ID_Empleado    = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
+    ID_Empleado    = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="SET NULL"), nullable=True)
     Fecha          = Column(DateTime)
-    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados"))
-    ID_Anulado_Por = Column(Integer, ForeignKey("Usuarios.ID_Usuario"), nullable=True)
+    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"))
+    ID_Anulado_Por = Column(Integer, ForeignKey("Usuarios.ID_Usuario", ondelete="SET NULL"), nullable=True)
     Fecha_Anulacion = Column(DateTime, nullable=True)
 
     insumo      = relationship("Insumo",   foreign_keys=[ID_Insumo])
     producto    = relationship("Producto", foreign_keys=[ID_Producto])
     empleado    = relationship("Usuario",  foreign_keys=[ID_Empleado])
     anulado_por = relationship("Usuario",  foreign_keys=[ID_Anulado_Por])
+
+    __table_args__ = (
+        CheckConstraint("Tipo " + _check_in(TipoSalida.TODOS), name="chk_salidas_tipo"),
+    )
 
 
 # ─────────────────────────────────────────
@@ -748,7 +841,7 @@ class Descuento(Base):
 
     ID_Descuento   = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Nombre         = Column(String(100))
-    Tipo           = Column(String(20))         # "cupon", "antiguedad", "emision"
+    Tipo           = Column(String(20))         # ver TipoDescuento
     Codigo         = Column(String(50), nullable=True, unique=True)  # solo cupones
     Porcentaje     = Column(Numeric(5, 2))
     Meses_Minimos  = Column(Integer, nullable=True)     # solo antigüedad
@@ -760,6 +853,10 @@ class Descuento(Base):
 
     asignaciones   = relationship("DescuentoXUsuario", back_populates="descuento")
     ventas         = relationship("DescuentoXVenta", back_populates="descuento")
+
+    __table_args__ = (
+        CheckConstraint("Tipo " + _check_in(TipoDescuento.TODOS), name="chk_descuentos_tipo"),
+    )
 
 
 class DescuentoXUsuario(Base):
@@ -803,7 +900,7 @@ class Departamento(Base):
 
     ID_Departamento = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Nombre          = Column(String(80), nullable=False)
-    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados"), nullable=False, default=1)
+    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"), nullable=False, default=1)
 
     ciudades = relationship("Ciudad", back_populates="departamento")
 
@@ -812,9 +909,9 @@ class Ciudad(Base):
     __tablename__ = "Ciudades"
 
     ID_Ciudad       = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Departamento = Column(Integer, ForeignKey("Departamentos.ID_Departamento"), nullable=False)
+    ID_Departamento = Column(Integer, ForeignKey("Departamentos.ID_Departamento", ondelete="RESTRICT"), nullable=False)
     Nombre          = Column(String(120), nullable=False)
-    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados"), nullable=False, default=1)
+    Estado          = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"), nullable=False, default=1)
 
     departamento = relationship("Departamento", back_populates="ciudades")
     barrios      = relationship("Barrio", back_populates="ciudad")
@@ -824,13 +921,13 @@ class Barrio(Base):
     __tablename__ = "Barrios"
 
     ID_Barrio = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    ID_Ciudad = Column(Integer, ForeignKey("Ciudades.ID_Ciudad"), nullable=False)
+    ID_Ciudad = Column(Integer, ForeignKey("Ciudades.ID_Ciudad", ondelete="RESTRICT"), nullable=False)
     Nombre    = Column(String(35), nullable=False)
     Precio    = Column(Integer, nullable=False, default=0)     # entero COP, >= 0, <= 9_999_999
     # 1 = sembrado (quemado): inmutable salvo Precio y Estado, no se puede eliminar.
     # 0 = creado desde el módulo: nombre y precio editables, eliminable si no lo referencia nada.
     Es_Base   = Column(Boolean, nullable=False, default=False)
-    Estado    = Column(Integer, ForeignKey("Estados.ID_Estados"), nullable=False, default=1)
+    Estado    = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"), nullable=False, default=1)
 
     ciudad  = relationship("Ciudad", back_populates="barrios")
     ofertas = relationship("OfertaXBarrio", back_populates="barrio")
@@ -850,17 +947,24 @@ class OfertaDomicilio(Base):
     # Si hay ambos, la oferta aplica cuando coincide CUALQUIERA (OR).
     Dias_Semana    = Column(String(20), nullable=True)
     Dias_Mes       = Column(String(120), nullable=True)
-    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados"), nullable=False, default=1)
+    Estado         = Column(Integer, ForeignKey("Estados.ID_Estados", ondelete="RESTRICT"), nullable=False, default=1)
     Fecha_Creacion = Column(DateTime, nullable=True)
 
     barrios = relationship("OfertaXBarrio", back_populates="oferta", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint(
+            "Tipo " + _check_in(TipoOfertaDomicilio.TODOS),
+            name="chk_ofertas_domicilio_tipo",
+        ),
+    )
 
 
 class OfertaXBarrio(Base):
     __tablename__ = "Oferta_x_Barrio"
 
-    ID_Oferta = Column(Integer, ForeignKey("Ofertas_Domicilio.ID_Oferta"), primary_key=True)
-    ID_Barrio = Column(Integer, ForeignKey("Barrios.ID_Barrio"), primary_key=True)
+    ID_Oferta = Column(Integer, ForeignKey("Ofertas_Domicilio.ID_Oferta", ondelete="RESTRICT"), primary_key=True)
+    ID_Barrio = Column(Integer, ForeignKey("Barrios.ID_Barrio", ondelete="RESTRICT"), primary_key=True)
 
     oferta = relationship("OfertaDomicilio", back_populates="barrios")
     barrio = relationship("Barrio", back_populates="ofertas")

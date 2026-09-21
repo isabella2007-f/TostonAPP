@@ -67,12 +67,12 @@ class ColumnasMigradasTest(unittest.TestCase):
         )
 
     def test_las_columnas_del_ultimo_cambio_estan(self):
-        # Las cinco que rompieron la app, fijadas por nombre para que no se
-        # pierdan en un merge.
+        # Las que rompieron la app, fijadas por nombre para que no se pierdan
+        # en un merge. Intentos_Rechazo_Comprobante_Anticipo/Saldo y
+        # Saldo_Comprobante_Url ya NO viven en Ventas: la migración
+        # add_pagos_tabla.sql las extrajo a la tabla `Pago` (Intentos_Rechazo,
+        # Comprobante_Url) — ver models.py, clase Pago.
         for col in (
-            "Intentos_Rechazo_Comprobante_Anticipo",
-            "Intentos_Rechazo_Comprobante_Saldo",
-            "Saldo_Comprobante_Url",
             "Fecha_Retenido_En_Tienda",
             "Stock_Reservado",
         ):

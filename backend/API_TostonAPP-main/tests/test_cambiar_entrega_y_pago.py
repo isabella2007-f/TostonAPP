@@ -36,10 +36,9 @@ class CambiarPagoTest(PanelBase):
             f"/pedidos/{id_venta}/editar-mi-pedido", self.cliente,
             {"Metodo_Pago": "Efectivo"}))
 
-        venta = self.venta(id_venta)
-        self.db.refresh(venta)
+        pago = self.pago(id_venta, "anticipo")
         self.assertIsNone(
-            venta.Comprobante_Pago,
+            pago.Comprobante_Url if pago else None,
             "el comprobante respalda un pago que ya no existe",
         )
 
@@ -48,18 +47,16 @@ class CambiarPagoTest(PanelBase):
         self.afirmar_ok(self.put(
             f"/pedidos/{id_venta}", self.admin, {"Metodo_Pago": "Efectivo"}))
 
-        venta = self.venta(id_venta)
-        self.db.refresh(venta)
-        self.assertIsNone(venta.Comprobante_Pago)
+        pago = self.pago(id_venta, "anticipo")
+        self.assertIsNone(pago.Comprobante_Url if pago else None)
 
     def test_seguir_en_transferencia_lo_conserva(self):
         # Cambiar otra cosa no puede llevarse el comprobante por delante.
         id_venta = self._pedido_por_transferencia()
         self.afirmar_ok(self.put(
             f"/pedidos/{id_venta}", self.admin, {"Notas": "Llamar antes"}))
-        venta = self.venta(id_venta)
-        self.db.refresh(venta)
-        self.assertIsNotNone(venta.Comprobante_Pago)
+        pago = self.pago(id_venta, "anticipo")
+        self.assertIsNotNone(pago.Comprobante_Url if pago else None)
 
 
 class CambiarEntregaTest(PanelBase):

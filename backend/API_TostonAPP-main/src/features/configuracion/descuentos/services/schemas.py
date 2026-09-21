@@ -3,13 +3,15 @@ from typing import Optional, Literal
 from datetime import datetime
 from decimal import Decimal
 
-TIPOS_DESCUENTO = {"cupon", "antiguedad", "emision"}
+from src.shared.services.enums import TipoDescuento
+
+TIPOS_DESCUENTO = set(TipoDescuento.TODOS)
 
 
 # ── Crear descuento ──
 class DescuentoCreate(BaseModel):
     Nombre:        str
-    Tipo:          str                                               # "cupon", "antiguedad", "emision"
+    Tipo:          str                                               # ver TipoDescuento
     Codigo:        Optional[str]       = None                       # solo cupones
     Porcentaje:    Decimal             = Field(gt=0, le=100)        # 0 < x <= 100
     Meses_Minimos: Optional[int]       = None                       # solo antigüedad
@@ -23,9 +25,9 @@ class DescuentoCreate(BaseModel):
             raise ValueError(f"Tipo de descuento inválido. Opciones: {', '.join(sorted(TIPOS_DESCUENTO))}")
         if self.Fecha_Fin is not None and self.Fecha_Fin <= self.Fecha_Inicio:
             raise ValueError("Fecha_Fin debe ser posterior a Fecha_Inicio")
-        if self.Tipo == "cupon" and not self.Codigo:
+        if self.Tipo == TipoDescuento.CUPON and not self.Codigo:
             raise ValueError("Los cupones deben tener un Codigo")
-        if self.Tipo == "antiguedad" and not self.Meses_Minimos:
+        if self.Tipo == TipoDescuento.ANTIGUEDAD and not self.Meses_Minimos:
             raise ValueError("Los descuentos por antigüedad deben tener Meses_Minimos")
         return self
 

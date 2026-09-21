@@ -97,9 +97,9 @@ Contiene: `obtener_usuario_actual`, `requiere_permiso()`, `solo_empleados()`.
 | 4 | Domiciliario | 3 permisos |
 
 ### Cómo se asigna el rol
-- **Empleados**: campo `ID_Rol` directo en tabla `Empleados`
-- **Clientes**: tabla `Usuario_x_Rol`
-- Al registrarse un nuevo usuario → rol Cliente asignado automáticamente en `Usuario_x_Rol`
+- **CORREGIDO (verificado 2026-09-16 contra `models.py`): NO existen las tablas `Empleados` ni `Usuario_x_Rol`.** Todos los usuarios (empleados, admin, clientes, domiciliarios) viven en la **única** tabla `Usuarios` (clase `Usuario` en `models.py`, línea 59), con la columna **`ID_Rol`** (FK directa a `Roles.ID_Rol`) determinando el rol de cada uno. No hay tabla intermedia ni separación física entre "empleados" y "clientes" — la diferencia es puramente el valor de `ID_Rol`.
+- Al registrarse un nuevo usuario → se crea una fila en `Usuarios` con `ID_Rol = 3` (Cliente) directamente, no hay tabla puente que poblar.
+- Cualquier referencia previa a `Empleados`/`Usuario_x_Rol` en este archivo o en otros CLAUDE.md del repo estaba **desactualizada/incorrecta** y fue reemplazada por esta descripción.
 
 ### Admin siempre tiene acceso total
 ```python
@@ -206,7 +206,7 @@ Los insumos y productos pueden deteriorarse, vencerse o sufrir daños que obligu
 ### Ventas y domicilios
 Una vez el cliente confirma su pedido cumpliendo los requisitos (cuenta activa con rol Cliente, teléfono registrado en su perfil si el pedido incluye domicilio, y productos disponibles), se genera la **venta** y el stock de los productos se descuenta automáticamente respetando FEFO por lotes.
 
-El cliente puede optar por recibir su pedido como **domicilio**. Un empleado o admin con permisos asigna ese domicilio a un **domiciliario** (empleado con rol Domiciliario, `ID_Rol=4`). `Domicilios.ID_Empleado` apunta a `Empleados`, nunca a `Usuarios`.
+El cliente puede optar por recibir su pedido como **domicilio**. Un empleado o admin con permisos asigna ese domicilio a un **domiciliario** (usuario con rol Domiciliario, `ID_Rol=4`). **CORREGIDO (verificado 2026-09-16): `Domicilios.ID_Empleado` es FK a `Usuarios.ID_Usuario`** (`models.py` línea 521) — no existe tabla `Empleados`, así que no puede apuntar ahí. Lo mismo aplica a `Domicilios.ID_Liquidado_Por` (línea 554), también FK a `Usuarios.ID_Usuario`.
 
 ### Módulo Ubicaciones y precio del domicilio (reemplaza `COSTO_DOMICILIO`)
 Jerarquía `Departamentos` → `Ciudades` → `Barrios` (modelos en `models.py`, migraciones en `src/main.py`, seed en `seed_ubicaciones.py` + `data/*.json`). Cada barrio tiene un **`Precio` entero (COP)** que es el costo del domicilio de un pedido cuya entrega cae en ese barrio.
@@ -247,19 +247,31 @@ Una vez el pedido es entregado (`Estado=8`), el cliente puede solicitar una **de
 
 ---
 
-## Endpoints de Auth (todos implementados) (pueden estar incompletos)
+## Endpoints de Auth
+
+**CORREGIDO (verificado 2026-09-16 contra `src/features/auth/services/router.py`): la lista estaba incompleta, faltaban 8 endpoints.** Lista completa (18 endpoints):
 
 ```
-POST /api/auth/login                 Login unificado empleados y clientes
-POST /api/auth/registro              Crea cliente (Nombre, Apellidos, Correo, Contrasena, Confirmar_contrasena, Numero_documento?). Rechaza correo o Numero_documento ya registrados.
-POST /api/auth/verificar-correo      409 si el correo ya existe (chequeo en vivo del registro)
-POST /api/auth/verificar-documento   409 si el Numero_documento ya existe (chequeo en vivo del registro)
-POST /api/auth/recuperar-contrasena  Genera código 6 dígitos y lo envía al correo (Resend SMTP)
-POST /api/auth/verificar-codigo      Valida código, retorna reset_token (10 min)
-POST /api/auth/resetear-contrasena   Valida reset_token tipo="reset", actualiza contraseña
-GET  /api/auth/me                    Perfil básico del usuario autenticado
-GET  /api/auth/perfil                Perfil completo del cliente (incluye ID_Barrio + bloque Barrio legible)
-PUT  /api/auth/perfil                Edita Telefono, Direccion, Municipio, Departamento, ID_Barrio (0 = quitar)
+POST   /api/auth/login                 Login unificado empleados y clientes
+POST   /api/auth/registro              Crea cliente (Nombre, Apellidos, Correo, Contrasena, Confirmar_contrasena, Numero_documento?). Rechaza correo o Numero_documento ya registrados.
+GET    /api/auth/verificar-empleado
+GET    /api/auth/verificar-email
+POST   /api/auth/reenviar-verificacion
+POST   /api/auth/verificar-correo      409 si el correo ya existe (chequeo en vivo del registro)
+POST   /api/auth/verificar-documento   409 si el Numero_documento ya existe (chequeo en vivo del registro)
+POST   /api/auth/recuperar-contrasena  Genera código 6 dígitos y lo envía al correo (Resend SMTP)
+POST   /api/auth/verificar-codigo      Valida código, retorna reset_token (10 min)
+POST   /api/auth/resetear-contrasena   Valida reset_token tipo="reset", actualiza contraseña
+GET    /api/auth/me                    Perfil básico del usuario autenticado
+GET    /api/auth/perfil                Perfil completo del cliente (incluye ID_Barrio + bloque Barrio legible)
+PUT    /api/auth/perfil                Edita Telefono, Direccion, Municipio, Departamento, ID_Barrio (0 = quitar)
+POST   /api/auth/cambiar-contrasena
+POST   /api/auth/foto-perfil
+DELETE /api/auth/foto-perfil
+GET    /api/auth/mis-permisos          Lista de nombres de permisos del usuario actual (ya existe, no hace falta crearlo — ver sección "Contexto del frontend" más abajo, desactualizada en ese punto)
+DELETE /api/auth/mi-cuenta             Borrado lógico de la propia cuenta (ver Reglas de negocio)
+POST   /api/auth/fcm-token
+DELETE /api/auth/fcm-token
 ```
 
 ---
@@ -284,10 +296,7 @@ El frontend es React + Vite, desplegado en https://tostonapp.vercel.app/ La API 
 - Admin (ID=1) ve todo sin restricción
 
 ### Endpoint de permisos necesario para el sidebar
-El frontend necesita saber qué permisos tiene el usuario autenticado. Verificar si existe un endpoint que los devuelva; si no existe, hay que crearlo:
-```
-GET /api/auth/mis-permisos   → retorna lista de nombres de permisos del usuario actual
-```
+**CORREGIDO (verificado 2026-09-16): el endpoint ya existe**, no hay que crearlo — `GET /api/auth/mis-permisos` retorna la lista de nombres de permisos del usuario actual (ver "Endpoints de Auth" arriba).
 
 ---
 
@@ -299,6 +308,35 @@ GET /api/auth/mis-permisos   → retorna lista de nombres de permisos del usuari
 - Imports de DB siempre desde `src.shared.services.database`
 - Contraseña universal de prueba: `Admin123@` (seed.py la aplica en cada deploy)
 - Los errores de negocio van como `HTTPException`, no como excepciones genéricas
+
+---
+
+## ZONAS DE PELIGRO
+
+No tocar, o tocar solo con confirmación explícita del usuario antes de escribir código (agregado/verificado 2026-09-16):
+
+### a. Módulo de Pagos — `Ventas` ya NO tiene las columnas de pago/comprobante
+
+**MIGRADO (2026-09-18): las ~17 columnas de pago/comprobante que antes vivían en `Ventas` se movieron a una tabla `Pagos` separada** (migración `migrations/add_pagos_tabla.sql`, ejecutada contra producción tras confirmación explícita). No tocar `Pagos` directamente desde un módulo nuevo sin pasar por `src/shared/services/pagos_utils.py` — es el único punto de acceso (helpers `obtener_pago`, `pago_o_nuevo`, más los predicados `cobro_efectivo_pendiente`/`saldo_final_pendiente`/`comprobante_sin_aprobar`, que ahora reciben `db` como primer argumento).
+
+**Modelo (`models.py`, clase `Pago`):** una fila por "pata" de pago de una venta, como mucho dos por venta:
+- `Tipo`: `'anticipo'` (lo que se paga/valida por adelantado — el anticipo del 50%, el total completo si no hay anticipo, o la mitad transferida de un pedido mixto) | `'saldo'` (lo que queda: el resto tras el anticipo, o la mitad en efectivo de un mixto).
+- `Metodo_Pago` (`'Efectivo'|'Transferencia'`), `Monto` (declarado/pagado, nunca "lo requerido"), `Comprobante_Url` (NULL si Efectivo), `Estado` (`pendiente|pendiente_validacion|aprobado|rechazado|recibido|no_recibido`), `Motivo_Rechazo`, `Intentos_Rechazo`, `Fecha_Registro`, `Fecha_Resolucion`, `ID_Registrado_Por` (quién lo registró si fue personal; NULL = self-service del cliente), `Monto_Verificado_Creacion` (solo fila `anticipo` del flujo admin/mostrador, dato de auditoría puntual).
+- `UNIQUE(ID_Venta, Tipo)`: nunca hay más de una fila `anticipo` o `saldo` por venta — se actualiza in-place (`pago_o_nuevo`), no es un ledger de intentos históricos.
+
+**Se queda en `Ventas`** (no son transacciones de pago, son reglas de negocio o atributos del pedido): `Metodo_Pago` (elección del cliente al pedir, gatilla `_es_mixto`/`_es_transferencia`), `Requiere_Anticipo` (bool), `Anticipo_Requerido` (el mínimo exigido, recalculado en varios puntos — **no confundir con `Pago.Monto`, que es lo realmente pagado**), `Estado_Pago` (agregado de 9 valores, sigue escribiéndose a mano en cada función que muta un `Pago`, igual que antes — **no** es una columna derivada automáticamente), `Fecha_Rechazada`/`intentos_rechazo` (negociación de fecha, no de pago), `Fecha_Retenido_En_Tienda`, `Stock_Reservado`, `Sobre_Stock`, `Necesita_Produccion`, `Envio_Completo_Domingo`.
+
+**Contrato de `VentaResponse`/`PedidoResponse` sin cambios**: `_formato_venta` sigue devolviendo los mismos nombres de campo (`anticipo_monto`, `comprobante_pago`, `pago_final_registrado`, etc.), ahora calculados desde `venta.pagos` en vez de columnas propias. El frontend no necesita cambios salvo que quiera consumir detalle nuevo que no existía antes (`Fecha_Registro`/`Fecha_Resolucion`/`ID_Registrado_Por` por pata, no expuesto aún en el schema).
+
+**No hay dos sistemas de anticipo "activo vs deprecado"** — siguen siendo dos cosas distintas, ambas vigentes:
+- **`Anticipo_Requerido`** (Venta, Numeric): el mínimo exigido, activo en TODO el flujo (creación admin/cliente, aprobación de fecha, edición) — es lo que valida `pagar_pedido` contra `Pago(tipo='anticipo').Monto`. **Corrige una imprecisión anterior de este archivo**: no es exclusivo del flujo "sobre stock", se usa en ambos.
+- **`Pago.Monto_Verificado_Creacion`** (antes `Venta.Anticipo_Pagado`): solo se escribe una vez, dentro de `crear_venta` (rama admin/mostrador); ninguna otra función lo vuelve a leer — es auditoría puntual de ese chequeo, no un segundo flujo con efecto duradero.
+
+### b. Otras zonas sensibles encontradas explorando el código
+
+- **Anulación de Compras** (`src/features/compras/compras/services/service.py`, función `anular_compra`, línea 680). Usa `with_for_update()` sobre `Compra`, `Insumo` y `LoteCompra` (bloqueo de fila, orden determinista por ID para evitar deadlocks) porque debe verificar de forma atómica que **ningún lote de insumo generado por la compra tuvo consumo** antes de permitir anularla desde estado Completada; si algo se consumió, bloquea la anulación por completo. Es lógica transaccional crítica de inventario — no tocar el orden de bloqueo ni la verificación de consumo sin entender el flujo completo.
+- **Aprobación de planta / fecha de entrega** (`src/features/ventas/gestion_ventas/services/service.py`): `aprobar_fecha_directa` (línea 2288) es el "1 clic" con el que el admin aprueba, sin cambiar, la fecha que el cliente puso al pedir (o la contraoferta final del cliente tras rechazar la fecha del admin). Solo aplica desde los estados `PENDIENTE` o `FECHA_PROPUESTA_FINAL`, y solo si `requiere_fecha_propuesta(db, venta)` es verdadero. `proponer_fecha` (línea 2108) es el otro lado: el admin propone una fecha distinta a la pedida por el cliente. Ambas rutas terminan escribiendo en `HistorialFechasPropuestas` (`_guardar_historial_fecha`) para dejar rastro de cada oferta/rechazo. Es lógica de negocio central del rediseño de checkout de 2026-09-12 — cambiarla sin entender los estados de `EstadoPedido` puede romper el flujo de aprobación completo.
+- **Cálculo de créditos del cliente** (`src/features/ventas/gestion_ventas/services/service.py`, `obtener_mi_credito`, línea 2017; y `_abonar_credito`/`_aplicar_credito`, líneas 356/612). El **libro mayor de `MovimientoCredito` (append-only, tipos `"recarga"`/`"uso"`) es la fuente de verdad**, no el campo `CreditoCliente.Saldo`, que es una caché: `obtener_mi_credito` recalcula el balance sumando/restando movimientos y **autocorrige y persiste** `Saldo` si detecta desfase (>0.01) contra el balance real. `devoluciones/service.py` (`_recargar_credito`, línea 144) también escribe en este libro mayor cuando se aprueba una devolución. No asumas que `CreditoCliente.Saldo` es confiable de leer directamente en código nuevo — siempre recalcular o reusar `obtener_mi_credito`.
 
 ---
 

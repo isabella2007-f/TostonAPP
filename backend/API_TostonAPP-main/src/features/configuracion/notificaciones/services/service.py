@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from datetime import datetime
 
 from src.shared.services.models import Notificacion, Venta, Devolucion
+from src.shared.services.pagos_utils import obtener_pago, TIPO_ANTICIPO
 
 
 def _sincronizar_stock(db: Session) -> None:
@@ -318,7 +319,8 @@ def obtener_notificaciones_cliente(db: Session, id_usuario: int) -> dict:
         .all()
     )
     for v in ventas_rechazadas:
-        motivo = getattr(v, "Motivo_Rechazo_Comprobante", None) or ""
+        _pago_ant_notif = obtener_pago(db, v.ID_Venta, TIPO_ANTICIPO)
+        motivo = (_pago_ant_notif.Motivo_Rechazo if _pago_ant_notif else None) or ""
         mensaje = (
             f"Motivo: {motivo}"
             if motivo

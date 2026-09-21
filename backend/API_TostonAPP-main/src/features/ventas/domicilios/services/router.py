@@ -6,6 +6,7 @@ from datetime import datetime
 from src.shared.services.database import get_db
 from src.shared.services.roles_utils import es_repartidor
 from src.shared.services.models import Domicilio, Venta  # Venta para validar acceso de cliente al chat
+from src.shared.services.enums import TipoRemitenteChat
 from src.features.auth.services.dependencies import requiere_permiso, obtener_usuario_actual
 from .schemas import (
     DomicilioCreate, DomicilioUpdate, DomicilioEstado,
@@ -166,17 +167,16 @@ def enviar_mensaje_chat(
     tipo = actual["tipo"]
 
     if tipo == "cliente":
-        tipo_rem    = "cliente"
-        id_rem      = registro.ID_Usuario
-        nombre_rem  = f"{registro.Nombre} {registro.Apellidos}"
-    elif registro.ID_Rol == 1:
-        tipo_rem    = "admin"
-        id_rem      = registro.ID_Usuario
-        nombre_rem  = f"{registro.Nombre} {registro.Apellidos}"
+        tipo_rem = TipoRemitenteChat.CLIENTE
+    elif _es_repartidor(actual):
+        tipo_rem = TipoRemitenteChat.DOMICILIARIO
     else:
-        tipo_rem    = "domiciliario"
-        id_rem      = registro.ID_Usuario
-        nombre_rem  = f"{registro.Nombre} {registro.Apellidos}"
+        # Admin y Empleado son "la gestión" para efectos del chat (ver
+        # _verificar_acceso_chat): ambos entran a cualquier domicilio,
+        # a diferencia del repartidor que solo entra al suyo.
+        tipo_rem = TipoRemitenteChat.ADMIN
+    id_rem     = registro.ID_Usuario
+    nombre_rem = f"{registro.Nombre} {registro.Apellidos}"
 
     return enviar_mensaje(db, id_domicilio, datos.Contenido, tipo_rem, id_rem, nombre_rem)
 

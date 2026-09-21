@@ -22,6 +22,7 @@ from src.shared.services.models import (
     Usuario, Domicilio,
 )
 from .schemas import normalizar_nombre, validar_nombre_barrio
+from src.shared.services.enums import TipoOfertaDomicilio
 
 _BOGOTA = ZoneInfo("America/Bogota")
 
@@ -155,8 +156,8 @@ def precio_domicilio_final(db: Session, id_barrio: int, fecha: datetime | None =
     disponible, _ = estado_efectivo_barrio(db, barrio)
 
     ofertas = _ofertas_aplicables(db, id_barrio, fecha) if disponible else []
-    recargos = [o for o in ofertas if o.Tipo == "recargo"]
-    descuentos = [o for o in ofertas if o.Tipo != "recargo"]
+    recargos = [o for o in ofertas if o.Tipo == TipoOfertaDomicilio.RECARGO]
+    descuentos = [o for o in ofertas if o.Tipo != TipoOfertaDomicilio.RECARGO]
 
     precio = Decimal(base)
     desglose: list[dict] = []

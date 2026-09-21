@@ -17,6 +17,11 @@ from src.features.ventas.gestion_ventas.services.service import (
 from src.features.ventas.ubicaciones.services.service import resolver_domicilio
 from src.features.ventas.domicilios.services.estados import EstadoDomicilio
 from src.features.ventas.pedidos.services.estados import EstadoPedido, ESTADOS_ACTIVOS
+from src.shared.services.enums import TipoAccionFecha
+from src.shared.services.pagos_utils import (
+    obtener_pago, pago_o_nuevo, tipo_cobro_efectivo, es_pago_mixto,
+    ESTADOS_RESUELTOS_OK, TIPO_ANTICIPO, TIPO_SALDO,
+)
 
 
 def obtener_pedidos(
@@ -142,20 +147,29 @@ def editar_pedido(db: Session, id_venta: int, datos: dict) -> dict:
         # imagen respalda una transferencia que ya no existe. Si se queda, el
         # panel la sigue mostrando como si hubiera un pago que aprobar.
         if not _lleva_transferencia(pedido.Metodo_Pago):
-            pedido.Comprobante_Pago = None
-            pedido.Monto_Efectivo = None
-            pedido.Monto_Transferencia = None
+            _pago_ant_reset = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+            if _pago_ant_reset:
+                _pago_ant_reset.Comprobante_Url = None
+                _pago_ant_reset.Monto = None
+            _pago_saldo_reset = obtener_pago(db, id_venta, TIPO_SALDO)
+            if _pago_saldo_reset:
+                _pago_saldo_reset.Monto = None
 
     if datos.get("Comprobante_Pago") is not None:
-        pedido.Comprobante_Pago = datos["Comprobante_Pago"]
+        _metodo_actual = (pedido.Metodo_Pago or datos.get("Metodo_Pago") or "").strip().lower()
+        _pago_ant_ep = pago_o_nuevo(
+            db, id_venta, TIPO_ANTICIPO, "Transferencia" if "transfer" in _metodo_actual else "Efectivo",
+        )
+        _pago_ant_ep.Comprobante_Url = datos["Comprobante_Pago"]
+        _pago_ant_ep.Fecha_Registro  = _now()
         # Si cambia a Transferencia con comprobante y el pago no está ya confirmado,
         # marcar como pendiente de validación para que el admin lo apruebe.
-        _metodo_actual = (pedido.Metodo_Pago or datos.get("Metodo_Pago") or "").strip().lower()
         _estado_pago_no_final = (getattr(pedido, "Estado_Pago", None) or "pendiente") not in (
             "pagado_completo", "efectivo_recibido", "anticipo_pagado",
         )
         if "transfer" in _metodo_actual and datos["Comprobante_Pago"] and _estado_pago_no_final:
             pedido.Estado_Pago = "pendiente_validacion"
+            _pago_ant_ep.Estado = "pendiente_validacion"
 
     # El total NO se acepta del formulario. Sale de las líneas del pedido, del
     # domicilio y de lo que ya se descontó, y acá solo cambia por el
@@ -171,13 +185,17 @@ def editar_pedido(db: Session, id_venta: int, datos: dict) -> dict:
 
     # Registrar anticipo (cuando el admin confirma que ya recibió el 50%)
     if datos.get("Anticipo_Registrado"):
-        pedido.Anticipo_Registrado = 1
+        _pago_ant_reg = pago_o_nuevo(db, id_venta, TIPO_ANTICIPO, "Transferencia")
+        _pago_ant_reg.Estado           = "aprobado"
+        _pago_ant_reg.Fecha_Resolucion = _now()
         if datos.get("Anticipo_Monto") is not None:
-            pedido.Anticipo_Monto = datos["Anticipo_Monto"]
+            _pago_ant_reg.Monto = datos["Anticipo_Monto"]
         if datos.get("Anticipo_Metodo_Pago"):
-            pedido.Anticipo_Metodo_Pago = datos["Anticipo_Metodo_Pago"]
+            _pago_ant_reg.Metodo_Pago = (
+                "Transferencia" if "transfer" in (datos["Anticipo_Metodo_Pago"] or "").lower() else "Efectivo"
+            )
         if datos.get("Anticipo_Comprobante_Url"):
-            pedido.Anticipo_Comprobante_Url = datos["Anticipo_Comprobante_Url"]
+            _pago_ant_reg.Comprobante_Url = datos["Anticipo_Comprobante_Url"]
         _ep = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
         if _ep not in ("pagado_completo", "efectivo_recibido"):
             pedido.Estado_Pago = "anticipo_pagado"
@@ -304,7 +322,7 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
             _avanzar_tras_fecha_confirmada, _guardar_historial_fecha,
         )
         _avanzar_tras_fecha_confirmada(db, pedido, pedido.Fecha_entrega_esperada)
-        _guardar_historial_fecha(db, id_venta, "aceptada", pedido.Fecha_entrega_esperada)
+        _guardar_historial_fecha(db, id_venta, TipoAccionFecha.ACEPTADA, pedido.Fecha_entrega_esperada)
         db.commit()
         db.refresh(pedido)
         return _formato_venta(pedido, db)
@@ -339,9 +357,8 @@ def _destino_al_confirmar(pedido: Venta) -> int:
 
     estado_pago = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
     # Lo que ya está cobrado o aprobado no espera nada.
-    if getattr(pedido, "Pago_Final_Registrado", 0):
-        return EstadoPedido.CONFIRMADO
-    if estado_pago in COMPROBANTE_APROBADO or estado_pago == "efectivo_recibido":
+    if estado_pago in COMPROBANTE_APROBADO or estado_pago in (
+            "efectivo_recibido", "pagado_completo"):
         return EstadoPedido.CONFIRMADO
     if getattr(pedido, "Requiere_Anticipo", 0):
         return EstadoPedido.ESPERANDO_PAGO
@@ -384,7 +401,8 @@ def cancelar_pedido(db: Session, id_venta: int, actual: dict = None) -> dict:
         # Bloquea por lo PAGADO, no por lo exigido (prompt-pedidos-2, 3.4): con
         # el chequeo viejo (Requiere_Anticipo) ningún pedido que superara el
         # umbral podía cancelarse jamás, así hubiera pagado o no.
-        if getattr(pedido, "Anticipo_Registrado", None):
+        _pago_ant_cancel = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+        if _pago_ant_cancel and _pago_ant_cancel.Monto:
             raise HTTPException(
                 status_code=400,
                 detail="Este pedido no puede cancelarse porque ya se registró el anticipo. Si necesitas cancelarlo, escríbenos.",
@@ -598,7 +616,8 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
         # (Requiere_Anticipo) ningún pedido que superara el umbral podía
         # editarse jamás, ni siquiera para recalcular ese mismo umbral tras
         # ajustar cantidades dentro de la ventana (3.6).
-        if getattr(pedido, "Anticipo_Registrado", None):
+        _pago_ant_edit_gate = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+        if _pago_ant_edit_gate and _pago_ant_edit_gate.Monto:
             raise HTTPException(
                 status_code=400,
                 detail="Este pedido no puede editarse porque ya se registró el anticipo. Si necesitas un cambio, escríbenos.",
@@ -638,7 +657,7 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
 
     # Cuánto se iba a transferir ANTES de tocar nada: si esa cifra cambia, el
     # comprobante que ya estaba deja de respaldarla (más abajo).
-    transferencia_antes = _monto_a_transferir(pedido)
+    transferencia_antes = _monto_a_transferir(db, pedido)
 
     if datos.get("Metodo_Pago"):
         nuevo_metodo = datos["Metodo_Pago"].strip()
@@ -669,6 +688,11 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
         pedido.Metodo_Pago = nuevo_metodo
 
     comprobante_nuevo = datos.get("Comprobante_Pago")
+    _metodo_final_emp = (pedido.Metodo_Pago or "").strip()
+    _pago_ant_emp = pago_o_nuevo(
+        db, id_venta, TIPO_ANTICIPO,
+        "Transferencia" if _lleva_transferencia(_metodo_final_emp) else "Efectivo",
+    )
     if comprobante_nuevo:
         # El comprobante pertenece a una ETAPA del pedido, no a un método de
         # pago. Durante la ventana de edición el cliente define CÓMO va a
@@ -688,7 +712,18 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                     "comprobante."
                 ),
             )
-        pedido.Comprobante_Pago = comprobante_nuevo
+        _pago_ant_emp.Comprobante_Url = comprobante_nuevo
+        _pago_ant_emp.Fecha_Registro  = _now()
+        # Si no viene cambio de método, actualizar Estado_Pago aquí para que
+        # el admin pueda ver y aprobar el comprobante. El bloque de Metodo_Pago
+        # lo sobreescribiría si ambos llegan juntos, por lo que solo corre cuando
+        # Metodo_Pago no está en el request.
+        if not datos.get("Metodo_Pago"):
+            _ep_actual = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
+            _estados_finales_pago = {"pagado_completo", "efectivo_recibido", "anticipo_pagado"}
+            if _lleva_transferencia(_metodo_final_emp) and _ep_actual not in _estados_finales_pago:
+                pedido.Estado_Pago = "pendiente_validacion"
+                _pago_ant_emp.Estado = "pendiente_validacion"
 
     if not _lleva_transferencia(pedido.Metodo_Pago):
         # Efectivo puro: no hay nada que transferir ni que revisar. El
@@ -696,20 +731,54 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
         # no existe, y si se queda el panel lo sigue mostrando como un pago
         # por aprobar y la factura sale con la captura de algo que se paga en
         # mano.
-        pedido.Comprobante_Pago    = None
-        pedido.Monto_Efectivo      = None
-        pedido.Monto_Transferencia = None
+        _pago_ant_emp.Comprobante_Url = None
+        _pago_ant_emp.Monto = None
+        _pago_saldo_prev_emp = obtener_pago(db, id_venta, TIPO_SALDO)
+        if _pago_saldo_prev_emp:
+            _pago_saldo_prev_emp.Monto = None
+
+    # Actualizar Estado_Pago y montos según el método de pago resultante
+    if datos.get("Metodo_Pago"):
+        metodo_resultante = _metodo_final_emp
+        estado_pago_actual = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
+        if _lleva_transferencia(metodo_resultante):
+            if comprobante_nuevo or _pago_ant_emp.Comprobante_Url:
+                pedido.Estado_Pago = "pendiente_validacion"
+                _pago_ant_emp.Estado = "pendiente_validacion"
+            else:
+                pedido.Estado_Pago = "pendiente"
+        else:
+            # Cambio a Efectivo puro: resetear estado y limpiar montos mixto
+            if estado_pago_actual not in _ESTADOS_PAGO_BLOQUEADO_EDICION:
+                pedido.Estado_Pago = "pendiente"
+            _pago_ant_emp.Metodo_Pago = "Efectivo"
+            _pago_ant_emp.Monto = None
+            _pago_saldo_prev_emp = obtener_pago(db, id_venta, TIPO_SALDO)
+            if _pago_saldo_prev_emp:
+                _pago_saldo_prev_emp.Monto = None
 
     # Mixto: el reparto se valida y se calcula acá, no se acepta del cliente.
     # El monto a transferir se resuelve después del domicilio, porque el
     # domicilio cambia el total.
     monto_efectivo_pedido = datos.get("Monto_Efectivo")
     if _es_mixto(pedido.Metodo_Pago):
-        if monto_efectivo_pedido is None and pedido.Monto_Efectivo is None:
+        _pago_saldo_existente = obtener_pago(db, id_venta, TIPO_SALDO)
+        if monto_efectivo_pedido is None and (
+                not _pago_saldo_existente or _pago_saldo_existente.Monto is None):
             raise HTTPException(
                 status_code=400,
                 detail="Indica cuánto vas a pagar en efectivo para el pago mixto.",
             )
+
+    # Repartir montos cuando el método es Mixto
+    if es_pago_mixto(pedido.Metodo_Pago) and datos.get("Monto_Efectivo") is not None:
+        total_actual = pedido.Total or Decimal(0)
+        monto_ef = Decimal(str(datos["Monto_Efectivo"] or 0))
+        efectivo = max(Decimal("0"), min(monto_ef, total_actual))
+        _pago_saldo_emp = pago_o_nuevo(db, id_venta, TIPO_SALDO, "Efectivo")
+        _pago_saldo_emp.Monto = efectivo
+        _pago_ant_emp.Metodo_Pago = "Transferencia"
+        _pago_ant_emp.Monto = total_actual - efectivo
 
     quiere_domicilio = datos.get("quiere_domicilio")  # True | False | None
     domicilio = db.query(Domicilio).filter(Domicilio.ID_Venta == id_venta).first()
@@ -759,7 +828,8 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
             )
         costo_dom = Decimal(domicilio.Precio_Domicilio_Final or 0)
         nuevo_total = max(Decimal(0), (pedido.Total or Decimal(0)) - costo_dom)
-        anticipo = Decimal(pedido.Anticipo_Monto or 0)
+        _pago_ant_dom = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+        anticipo = Decimal(str(_pago_ant_dom.Monto or 0)) if _pago_ant_dom else Decimal("0")
         if anticipo > nuevo_total > 0:
             exceso = anticipo - nuevo_total
             _abonar_credito(db, pedido.ID_Usuario, exceso, id_venta)
@@ -775,10 +845,11 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
     # queda por revisar ───────────────────────────────────────────────────
     if _es_mixto(pedido.Metodo_Pago):
         total = Decimal(str(pedido.Total or 0))
+        _pago_saldo_final_emp = obtener_pago(db, id_venta, TIPO_SALDO)
         efectivo = Decimal(str(
             monto_efectivo_pedido
             if monto_efectivo_pedido is not None
-            else pedido.Monto_Efectivo or 0
+            else (_pago_saldo_final_emp.Monto if _pago_saldo_final_emp else 0) or 0
         ))
         # Ni cero ni el total entero: eso no es mixto, es uno de los otros dos
         # métodos. Antes se recortaba en silencio contra [0, total] y el
@@ -791,22 +862,24 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
                     f"(${total:,.0f})."
                 ),
             )
-        pedido.Monto_Efectivo      = efectivo
-        pedido.Monto_Transferencia = total - efectivo
+        _pago_saldo_emp = pago_o_nuevo(db, id_venta, TIPO_SALDO, "Efectivo")
+        _pago_saldo_emp.Monto = efectivo
+        _pago_ant_emp.Metodo_Pago = "Transferencia"
+        _pago_ant_emp.Monto = total - efectivo
 
     if _lleva_transferencia(pedido.Metodo_Pago):
-        transferencia_ahora = _monto_a_transferir(pedido)
+        transferencia_ahora = _monto_a_transferir(db, pedido)
         estado_pago_actual = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
         # Un comprobante respalda una cifra. Si esa cifra cambió —pasó de
         # transferir el total a transferir solo una parte, cambió el reparto
         # del mixto, o el domicilio movió el total— el que estaba ya no
         # respalda nada y no puede quedar como válido.
-        if (pedido.Comprobante_Pago and not comprobante_nuevo
+        if (_pago_ant_emp.Comprobante_Url and not comprobante_nuevo
                 and transferencia_ahora != transferencia_antes):
-            pedido.Comprobante_Pago = None
+            _pago_ant_emp.Comprobante_Url = None
         if estado_pago_actual not in _ESTADOS_PAGO_YA_COBRADO:
             pedido.Estado_Pago = (
-                "pendiente_validacion" if pedido.Comprobante_Pago else "pendiente"
+                "pendiente_validacion" if _pago_ant_emp.Comprobante_Url else "pendiente"
             )
     elif (getattr(pedido, "Estado_Pago", None) or "pendiente").strip() \
             not in _ESTADOS_PAGO_BLOQUEADO_EDICION:
@@ -828,7 +901,7 @@ def editar_mi_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> d
     return _formato_venta(pedido, db)
 
 
-def _monto_a_transferir(pedido) -> Decimal:
+def _monto_a_transferir(db, pedido) -> Decimal:
     """Lo que este pedido paga por transferencia, según su método.
 
     Es la cifra que un comprobante tiene que respaldar: el total si se paga
@@ -837,8 +910,9 @@ def _monto_a_transferir(pedido) -> Decimal:
     if not _lleva_transferencia(pedido.Metodo_Pago):
         return Decimal("0")
     if _es_mixto(pedido.Metodo_Pago):
-        return (Decimal(str(pedido.Total or 0))
-                - Decimal(str(pedido.Monto_Efectivo or 0)))
+        _pago_saldo_mt = obtener_pago(db, pedido.ID_Venta, TIPO_SALDO)
+        efectivo_mt = Decimal(str(_pago_saldo_mt.Monto or 0)) if _pago_saldo_mt else Decimal("0")
+        return Decimal(str(pedido.Total or 0)) - efectivo_mt
     return Decimal(str(pedido.Total or 0))
 
 
@@ -875,38 +949,42 @@ def registrar_cobro_pedido(db: Session, id_venta: int, datos, id_usuario_actual:
 
     estado_pago = (getattr(venta, "Estado_Pago", None) or "pendiente").strip()
     mixto       = _es_mixto(venta.Metodo_Pago)
+    # A qué fila de Pagos apunta este cobro: 'saldo' si ya hay una pata previa
+    # por transferencia (anticipo exigido, o mixto); 'anticipo' si el efectivo
+    # es el único pago del pedido (pedido simple en efectivo).
+    _pago_cobro = pago_o_nuevo(db, id_venta, tipo_cobro_efectivo(venta), "Efectivo")
     # En un mixto, "anticipo_pagado" solo dice que UNA de las dos mitades entró.
     # El efectivo se puede seguir cobrando mientras no esté marcado su registro.
-    efectivo_ya_registrado = bool(getattr(venta, "Pago_Final_Registrado", 0))
+    efectivo_ya_registrado = _pago_cobro.Estado in ESTADOS_RESUELTOS_OK
     if estado_pago in _ESTADOS_PAGO_YA_COBRADO and not (mixto and not efectivo_ya_registrado):
         raise HTTPException(status_code=409, detail="El cobro ya fue registrado para este pedido")
 
     if not datos.recibido:
         venta.Estado_Pago = "no_recibido"
+        _pago_cobro.Estado = "no_recibido"
+        _pago_cobro.Fecha_Resolucion = datetime.now(timezone.utc).replace(tzinfo=None)
     elif mixto:
-        # La plata en mano se marca en su propio registro, para saber cuál de
-        # las dos mitades entró y no tener que adivinarlo desde el estado.
-        venta.Pago_Final_Registrado  = 1
-        venta.Pago_Final_Monto       = venta.Monto_Efectivo
-        venta.Pago_Final_Metodo_Pago = "Efectivo"
-        venta.Pago_Final_Fecha       = datetime.now(timezone.utc).replace(tzinfo=None)
+        # La plata en mano se marca en su propia fila (tipo='saldo'), para
+        # saber cuál de las dos mitades entró y no tener que adivinarlo desde
+        # el estado agregado.
+        _pago_cobro.Metodo_Pago      = "Efectivo"
+        _pago_cobro.Estado           = "recibido"
+        _pago_cobro.Fecha_Resolucion = datetime.now(timezone.utc).replace(tzinfo=None)
         # Queda saldado solo si el comprobante de la transferencia ya se aprobó.
         venta.Estado_Pago = (
             "anticipo_pagado" if estado_pago in _ESTADOS_MIXTO_A_MEDIAS
             else "pagado_completo"
         )
     else:
-        # Mismo registro que en el mixto: sin esto, un pedido con anticipo
-        # cuyo saldo se cobra 100% en efectivo quedaba con Estado_Pago =
-        # 'efectivo_recibido' pero Pago_Final_Registrado en 0, y el gate de
-        # `cambiar_estado` hacia ENTREGADO (que exige Pago_Final_Registrado
-        # en todo pedido con anticipo) lo bloqueaba para siempre.
+        # Mismo registro sin importar si el pedido tenía anticipo o era en
+        # efectivo simple: Pagos queda como fuente única de "cómo se pagó esta
+        # venta" en los dos casos (antes, el pedido simple no dejaba ningún
+        # rastro de monto/método, solo el Estado_Pago agregado).
         venta.Estado_Pago = "efectivo_recibido"
-        if getattr(venta, "Requiere_Anticipo", 0):
-            venta.Pago_Final_Registrado  = 1
-            venta.Pago_Final_Monto       = datos.monto if datos.monto is not None else venta.Total
-            venta.Pago_Final_Metodo_Pago = "Efectivo"
-            venta.Pago_Final_Fecha       = datetime.now(timezone.utc).replace(tzinfo=None)
+        _pago_cobro.Metodo_Pago      = "Efectivo"
+        _pago_cobro.Monto            = datos.monto if datos.monto is not None else venta.Total
+        _pago_cobro.Estado           = "recibido"
+        _pago_cobro.Fecha_Resolucion = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(venta)
     return _formato_venta(venta, db)
@@ -928,20 +1006,26 @@ def aprobar_comprobante(db: Session, id_venta: int) -> dict:
     if not _lleva_transferencia(pedido.Metodo_Pago):
         raise HTTPException(status_code=400, detail="Este pedido no tiene pago por transferencia")
 
-    if not pedido.Comprobante_Pago:
+    _pago_ant_apr = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+    if not _pago_ant_apr or not _pago_ant_apr.Comprobante_Url:
         raise HTTPException(status_code=400, detail="El pedido no tiene comprobante adjunto")
 
     estado_pago = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
     if estado_pago == "pagado_completo":
         raise HTTPException(status_code=409, detail="El comprobante ya fue aprobado")
 
+    _pago_ant_apr.Estado           = "aprobado"
+    _pago_ant_apr.Fecha_Resolucion = _now()
+
     # En un mixto aprobar el comprobante salda solo la mitad transferida: falta
     # el efectivo, salvo que ya lo hayan cobrado.
     # En un pedido con anticipo, aprobar el comprobante confirma solo el anticipo
     # si aún no se registró el pago final completo.
+    _pago_saldo_apr = obtener_pago(db, id_venta, TIPO_SALDO)
+    _saldo_resuelto = bool(_pago_saldo_apr and _pago_saldo_apr.Estado in ESTADOS_RESUELTOS_OK)
     if _es_mixto(pedido.Metodo_Pago) and estado_pago in _ESTADOS_MIXTO_A_MEDIAS:
         pedido.Estado_Pago = "anticipo_pagado"
-    elif getattr(pedido, "Requiere_Anticipo", 0) and not getattr(pedido, "Pago_Final_Registrado", 0):
+    elif getattr(pedido, "Requiere_Anticipo", 0) and not _saldo_resuelto:
         pedido.Estado_Pago = "anticipo_pagado"
     else:
         pedido.Estado_Pago = "pagado_completo"
@@ -981,6 +1065,7 @@ def pagar_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> dict:
     if not comprobante_url:
         raise HTTPException(status_code=400, detail="Adjunta el comprobante de la transferencia")
 
+    _pago_ant_pp = pago_o_nuevo(db, id_venta, TIPO_ANTICIPO, "Transferencia")
     if getattr(pedido, "Requiere_Anticipo", 0):
         minimo = Decimal(str(pedido.Anticipo_Requerido or 0))
         monto  = Decimal(str(datos.get("monto") or 0))
@@ -989,15 +1074,20 @@ def pagar_pedido(db: Session, id_venta: int, datos: dict, actual: dict) -> dict:
                 status_code=400,
                 detail=f"El anticipo mínimo es ${minimo:,.0f} (50% del pedido).",
             )
-        pedido.Anticipo_Monto           = monto
-        pedido.Anticipo_Metodo_Pago     = "Transferencia"
-        pedido.Anticipo_Comprobante_Url = comprobante_url
-        pedido.Anticipo_Registrado      = 1
+        _pago_ant_pp.Monto           = monto
+        _pago_ant_pp.Metodo_Pago     = "Transferencia"
+        _pago_ant_pp.Comprobante_Url = comprobante_url
+        _pago_ant_pp.Fecha_Registro  = _now()
         if monto >= Decimal(str(pedido.Total or 0)):
-            pedido.Pago_Final_Registrado = 1
+            _pago_saldo_pp = pago_o_nuevo(db, id_venta, TIPO_SALDO, "Transferencia")
+            _pago_saldo_pp.Monto            = Decimal("0")
+            _pago_saldo_pp.Estado           = "aprobado"
+            _pago_saldo_pp.Fecha_Resolucion = _now()
 
-    pedido.Comprobante_Pago = comprobante_url
-    pedido.Estado_Pago      = "pendiente_validacion"
+    _pago_ant_pp.Comprobante_Url = comprobante_url
+    _pago_ant_pp.Fecha_Registro  = _now()
+    _pago_ant_pp.Estado          = "pendiente_validacion"
+    pedido.Estado_Pago           = "pendiente_validacion"
 
     db.commit()
     db.refresh(pedido)
@@ -1024,7 +1114,8 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
     if not _lleva_transferencia(pedido.Metodo_Pago):
         raise HTTPException(status_code=400, detail="Este pedido no tiene pago por transferencia")
 
-    if not pedido.Comprobante_Pago:
+    _pago_ant_rc = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+    if not _pago_ant_rc or not _pago_ant_rc.Comprobante_Url:
         raise HTTPException(status_code=400, detail="El pedido no tiene comprobante adjunto")
 
     estado_pago = (getattr(pedido, "Estado_Pago", None) or "pendiente").strip()
@@ -1032,13 +1123,13 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
         raise HTTPException(status_code=409, detail="El comprobante ya fue rechazado")
 
     pedido.Estado_Pago = "comprobante_rechazado"
-    pedido.Motivo_Rechazo_Comprobante = motivo.strip()
-    pedido.Intentos_Rechazo_Comprobante_Anticipo = (
-        int(getattr(pedido, "Intentos_Rechazo_Comprobante_Anticipo", 0) or 0) + 1
-    )
+    _pago_ant_rc.Estado           = "rechazado"
+    _pago_ant_rc.Motivo_Rechazo   = motivo.strip()
+    _pago_ant_rc.Fecha_Resolucion = _now()
+    _pago_ant_rc.Intentos_Rechazo = int(_pago_ant_rc.Intentos_Rechazo or 0) + 1
 
-    if pedido.Intentos_Rechazo_Comprobante_Anticipo >= LIMITE_INTENTOS_COMPROBANTE:
-        pedido.Motivo_Rechazo_Comprobante = (
+    if _pago_ant_rc.Intentos_Rechazo >= LIMITE_INTENTOS_COMPROBANTE:
+        _pago_ant_rc.Motivo_Rechazo = (
             f"Cancelado automáticamente: comprobante rechazado "
             f"{LIMITE_INTENTOS_COMPROBANTE} veces. Último motivo: {motivo.strip()}"
         )
@@ -1046,7 +1137,7 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
             db,
             "comprobante_rechazado",
             f"Pedido cancelado — Pedido #{id_venta}",
-            pedido.Motivo_Rechazo_Comprobante,
+            _pago_ant_rc.Motivo_Rechazo,
             id_venta,
             "/ventas/pedidos",
         )
@@ -1056,7 +1147,7 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
         db,
         "comprobante_rechazado",
         f"Comprobante rechazado — Pedido #{id_venta}",
-        f"Motivo: {motivo}. Intento {pedido.Intentos_Rechazo_Comprobante_Anticipo}/{LIMITE_INTENTOS_COMPROBANTE}.",
+        f"Motivo: {motivo}. Intento {_pago_ant_rc.Intentos_Rechazo}/{LIMITE_INTENTOS_COMPROBANTE}.",
         id_venta,
         "/ventas/pedidos",
     )
@@ -1076,7 +1167,7 @@ def rechazar_comprobante(db: Session, id_venta: int, motivo: str, id_usuario_act
 # validaciones independientes en momentos distintos del pedido.
 
 
-def _saldo_por_transferencia_aplica(pedido: Venta) -> str | None:
+def _saldo_por_transferencia_aplica(db: Session, pedido: Venta) -> str | None:
     """Si corresponde pedir el segundo comprobante, devuelve None. Si no
     corresponde, devuelve el motivo (para el 400)."""
     if not getattr(pedido, "Requiere_Anticipo", 0):
@@ -1087,7 +1178,8 @@ def _saldo_por_transferencia_aplica(pedido: Venta) -> str | None:
         return "Primero hay que pagar el anticipo de este pedido"
     if not _lleva_transferencia(pedido.Metodo_Pago):
         return "El saldo de este pedido se cobra en efectivo, no por transferencia"
-    if getattr(pedido, "Pago_Final_Registrado", 0):
+    _pago_saldo = obtener_pago(db, pedido.ID_Venta, TIPO_SALDO)
+    if _pago_saldo and _pago_saldo.Estado in ESTADOS_RESUELTOS_OK:
         return "El saldo de este pedido ya fue registrado"
     return None
 
@@ -1108,7 +1200,7 @@ def pagar_saldo_pedido(db: Session, id_venta: int, datos: dict, actual: dict) ->
     if pedido.Estado in _ESTADOS_FINALES:
         raise HTTPException(status_code=400, detail="Este pedido ya fue completado")
 
-    motivo_no_aplica = _saldo_por_transferencia_aplica(pedido)
+    motivo_no_aplica = _saldo_por_transferencia_aplica(db, pedido)
     if motivo_no_aplica:
         raise HTTPException(status_code=400, detail=motivo_no_aplica)
 
@@ -1116,8 +1208,12 @@ def pagar_saldo_pedido(db: Session, id_venta: int, datos: dict, actual: dict) ->
     if not comprobante_url:
         raise HTTPException(status_code=400, detail="Adjunta el comprobante de la transferencia")
 
-    pedido.Saldo_Comprobante_Url = comprobante_url
-    pedido.Estado_Pago           = "saldo_pendiente_validacion"
+    _pago_saldo_pp = pago_o_nuevo(db, id_venta, TIPO_SALDO, "Transferencia")
+    _pago_saldo_pp.Comprobante_Url = comprobante_url
+    _pago_saldo_pp.Metodo_Pago     = "Transferencia"
+    _pago_saldo_pp.Estado          = "pendiente_validacion"
+    _pago_saldo_pp.Fecha_Registro  = _now()
+    pedido.Estado_Pago             = "saldo_pendiente_validacion"
 
     db.commit()
     db.refresh(pedido)
@@ -1136,13 +1232,17 @@ def aprobar_comprobante_saldo(db: Session, id_venta: int) -> dict:
     if estado_pago != "saldo_pendiente_validacion":
         raise HTTPException(status_code=400, detail="Este pedido no tiene un comprobante de saldo por aprobar")
 
-    monto_adeudado = Decimal(str(pedido.Total or 0)) - Decimal(str(pedido.Anticipo_Monto or 0))
-    pedido.Pago_Final_Monto           = max(Decimal("0"), monto_adeudado)
-    pedido.Pago_Final_Metodo_Pago     = "Transferencia"
-    pedido.Pago_Final_Comprobante_Url = pedido.Saldo_Comprobante_Url
-    pedido.Pago_Final_Fecha           = _now()
-    pedido.Pago_Final_Registrado      = 1
-    pedido.Estado_Pago                = "pagado_completo"
+    _pago_ant_acs   = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+    _anticipo_monto = Decimal(str(_pago_ant_acs.Monto or 0)) if _pago_ant_acs else Decimal("0")
+    monto_adeudado  = Decimal(str(pedido.Total or 0)) - _anticipo_monto
+    _pago_saldo_acs = obtener_pago(db, id_venta, TIPO_SALDO)
+    _pago_saldo_acs.Monto            = max(Decimal("0"), monto_adeudado)
+    _pago_saldo_acs.Metodo_Pago      = "Transferencia"
+    # Comprobante_Url ya lo trae de `pagar_saldo_pedido` — misma fila, no se
+    # duplica el dato en un campo aparte.
+    _pago_saldo_acs.Fecha_Resolucion = _now()
+    _pago_saldo_acs.Estado           = "aprobado"
+    pedido.Estado_Pago               = "pagado_completo"
 
     db.commit()
     db.refresh(pedido)
@@ -1166,13 +1266,14 @@ def rechazar_comprobante_saldo(db: Session, id_venta: int, motivo: str, id_usuar
         raise HTTPException(status_code=400, detail="Este pedido no tiene un comprobante de saldo por aprobar")
 
     pedido.Estado_Pago = "saldo_comprobante_rechazado"
-    pedido.Motivo_Rechazo_Comprobante = motivo.strip()
-    pedido.Intentos_Rechazo_Comprobante_Saldo = (
-        int(getattr(pedido, "Intentos_Rechazo_Comprobante_Saldo", 0) or 0) + 1
-    )
+    _pago_saldo_rcs = obtener_pago(db, id_venta, TIPO_SALDO)
+    _pago_saldo_rcs.Estado           = "rechazado"
+    _pago_saldo_rcs.Motivo_Rechazo   = motivo.strip()
+    _pago_saldo_rcs.Fecha_Resolucion = _now()
+    _pago_saldo_rcs.Intentos_Rechazo = int(_pago_saldo_rcs.Intentos_Rechazo or 0) + 1
 
-    if pedido.Intentos_Rechazo_Comprobante_Saldo >= LIMITE_INTENTOS_COMPROBANTE:
-        pedido.Motivo_Rechazo_Comprobante = (
+    if _pago_saldo_rcs.Intentos_Rechazo >= LIMITE_INTENTOS_COMPROBANTE:
+        _pago_saldo_rcs.Motivo_Rechazo = (
             f"Cancelado automáticamente: comprobante de saldo rechazado "
             f"{LIMITE_INTENTOS_COMPROBANTE} veces. Último motivo: {motivo.strip()}"
         )
@@ -1180,7 +1281,7 @@ def rechazar_comprobante_saldo(db: Session, id_venta: int, motivo: str, id_usuar
             db,
             "comprobante_rechazado",
             f"Pedido cancelado — Pedido #{id_venta}",
-            pedido.Motivo_Rechazo_Comprobante,
+            _pago_saldo_rcs.Motivo_Rechazo,
             id_venta,
             "/ventas/pedidos",
         )

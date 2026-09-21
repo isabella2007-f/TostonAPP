@@ -60,6 +60,7 @@ from src.shared.services.models import (
     FichaTecnica,
     FichaTecnicaInsumo,
     OrdenProduccion,
+    Pago,
     Producto,
     Usuario,
     Venta,
@@ -157,6 +158,14 @@ class CrearVentaBase(unittest.TestCase):
         u.Telefono = None
         self.db.commit()
 
+    def pago(self, v, tipo="anticipo"):
+        """Fila de Pagos de la venta (anticipo o saldo) — reemplaza las
+        columnas viejas de Venta.Anticipo_*/Pago_Final_*/Comprobante_Pago/
+        Monto_Efectivo/Monto_Transferencia, movidas a `Pagos` en la migración."""
+        return self.db.query(Pago).filter(
+            Pago.ID_Venta == v.ID_Venta, Pago.Tipo == tipo
+        ).first()
+
     # ── Ayudas ───────────────────────────────────────────────────────────
     def pedido(self, **kwargs):
         """VentaCreate con lo mínimo, y lo que cada caso quiera cambiar."""
@@ -243,13 +252,13 @@ class PedidoNormalTests(CrearVentaBase):
         ))
         v = self.venta_creada()
         self.assertEqual(v.Estado_Pago, "pendiente_validacion")
-        self.assertEqual(v.Comprobante_Pago, "https://cloudinary.test/comp.jpg")
+        self.assertEqual(self.pago(v).Comprobante_Url, "https://cloudinary.test/comp.jpg")
 
     def test_transferencia_sin_comprobante_queda_pendiente(self):
         self.crear(self.pedido(Metodo_Pago="Transferencia"))
         v = self.venta_creada()
         self.assertEqual(v.Estado_Pago, "pendiente")
-        self.assertIsNone(v.Comprobante_Pago)
+        self.assertIsNone(self.pago(v).Comprobante_Url)
 
     def test_el_cliente_no_descuenta_stock_al_pedir(self):
         """El stock se descuenta al entregar, no al crear el pedido."""
@@ -750,9 +759,9 @@ class PagoMixtoTests(CrearVentaBase):
             comprobante_pago="https://cloudinary.test/comp.jpg",
         ))
         v = self.venta_creada()
-        self.assertEqual(v.Monto_Efectivo, Decimal("3500.00"))
-        self.assertEqual(v.Monto_Transferencia, Decimal("16500.00"))
-        self.assertEqual(v.Monto_Efectivo + v.Monto_Transferencia, v.Total)
+        self.assertEqual(self.pago(v, "saldo").Monto, Decimal("3500.00"))
+        self.assertEqual(self.pago(v, "anticipo").Monto, Decimal("16500.00"))
+        self.assertEqual(self.pago(v, "saldo").Monto + self.pago(v, "anticipo").Monto, v.Total)
 
     def test_el_reparto_se_hace_sobre_el_total_con_saldo_y_domicilio(self):
         self.dar_saldo(5000)
@@ -766,8 +775,8 @@ class PagoMixtoTests(CrearVentaBase):
         ))
         v = self.venta_creada()
         self.assertEqual(v.Total, Decimal("15000") + COSTO_DOMICILIO)
-        self.assertEqual(v.Monto_Efectivo, Decimal("4000.00"))
-        self.assertEqual(v.Monto_Efectivo + v.Monto_Transferencia, v.Total)
+        self.assertEqual(self.pago(v, "saldo").Monto, Decimal("4000.00"))
+        self.assertEqual(self.pago(v, "saldo").Monto + self.pago(v, "anticipo").Monto, v.Total)
 
     def test_pedir_mas_efectivo_que_el_total_se_recorta(self):
         self.crear(self.pedido(
@@ -776,8 +785,8 @@ class PagoMixtoTests(CrearVentaBase):
             comprobante_pago="https://cloudinary.test/comp.jpg",
         ))
         v = self.venta_creada()
-        self.assertEqual(v.Monto_Efectivo, v.Total)
-        self.assertEqual(v.Monto_Transferencia, Decimal("0.00"))
+        self.assertEqual(self.pago(v, "saldo").Monto, v.Total)
+        self.assertEqual(self.pago(v, "anticipo").Monto, Decimal("0.00"))
 
     def test_mixto_con_anticipo_se_rechaza(self):
         """El mixto no respalda un anticipo: su efectivo se cobra al entregar."""
@@ -806,8 +815,8 @@ class PagoMixtoTests(CrearVentaBase):
         ))
         v = self.venta_creada()
         self.assertEqual(v.Sobre_Stock, 1)
-        self.assertEqual(v.Monto_Efectivo, Decimal("5000.00"))
-        self.assertEqual(v.Monto_Efectivo + v.Monto_Transferencia, v.Total)
+        self.assertEqual(self.pago(v, "saldo").Monto, Decimal("5000.00"))
+        self.assertEqual(self.pago(v, "saldo").Monto + self.pago(v, "anticipo").Monto, v.Total)
 
     def test_el_flag_declarado_ya_no_cierra_el_mixto(self):
         """La obligación la decide el servidor, no el flag que manda el cliente."""
@@ -818,7 +827,7 @@ class PagoMixtoTests(CrearVentaBase):
             anticipo_monto=10000.0,
             anticipo_registrado=True,
         ))
-        self.assertEqual(self.venta_creada().Monto_Efectivo, Decimal("5000.00"))
+        self.assertEqual(self.pago(self.venta_creada(), "saldo").Monto, Decimal("5000.00"))
 
 
 # ══════════════════════════════════════════════════════════════════════════

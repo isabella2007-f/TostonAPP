@@ -70,9 +70,11 @@ class CrearPedidoTests(PanelBase):
             comprobante_pago="https://cloudinary.test/comp.jpg",
         )
         venta = self.venta(pedido["ID_Venta"])
-        self.assertEqual(Decimal(str(venta.Monto_Efectivo)), Decimal("7000.00"))
+        saldo_mixto = self.pago(pedido["ID_Venta"], "saldo")
+        anticipo_mixto = self.pago(pedido["ID_Venta"], "anticipo")
+        self.assertEqual(Decimal(str(saldo_mixto.Monto)), Decimal("7000.00"))
         self.assertEqual(
-            Decimal(str(venta.Monto_Efectivo)) + Decimal(str(venta.Monto_Transferencia)),
+            Decimal(str(saldo_mixto.Monto)) + Decimal(str(anticipo_mixto.Monto)),
             Decimal(str(venta.Total)),
         )
 
@@ -750,7 +752,6 @@ class PanelDomiciliarioTests(PanelBase):
             with self.subTest(ruta=ruta):
                 respuesta = self.post(ruta, self.repartidor, {"codigo": "123456"})
                 self.assertEqual(respuesta.status_code, 404)
-        self.assertIsNone(self.domicilio().OTP)
 
     def test_el_chat_lo_ven_el_cliente_y_su_repartidor(self):
         _, id_dom = self.preparar_domicilio()

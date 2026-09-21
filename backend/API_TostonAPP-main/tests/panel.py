@@ -57,6 +57,7 @@ from src.shared.services.models import (
     LoteCompra,
     LoteProducto,
     OrdenProduccion,
+    Pago,
     Permiso,
     Producto,
     Rol,
@@ -415,6 +416,15 @@ class PanelBase(unittest.TestCase):
     def venta(self, id_venta):
         self.db.expire_all()
         return self.db.query(Venta).filter(Venta.ID_Venta == id_venta).first()
+
+    def pago(self, id_venta, tipo="anticipo"):
+        """Fila de Pagos de esa venta (anticipo o saldo) — reemplaza las
+        columnas viejas de Venta.Anticipo_*/Pago_Final_*/Comprobante_Pago/
+        Monto_Efectivo/Monto_Transferencia, movidas a `Pagos`."""
+        self.db.expire_all()
+        return self.db.query(Pago).filter(
+            Pago.ID_Venta == id_venta, Pago.Tipo == tipo
+        ).first()
 
     def domicilio(self, id_venta=None):
         self.db.expire_all()

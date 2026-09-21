@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from src.shared.services.models import Salida, Insumo, Producto, Usuario, Estado, CategoriaInsumo, CategoriaProducto, LoteCompra, LoteProducto, UnidadMedida
 from src.shared.services.notificaciones_utils import notificar_stock_insumo, notificar_stock_producto
+from src.shared.services.enums import TipoSalida
 from .schemas import SalidaCreate
 
 _BOGOTA = ZoneInfo("America/Bogota")
@@ -395,7 +396,7 @@ def anular_salida(db: Session, id_salida: int, id_anulado_por: int = None) -> di
     if salida.Estado == ESTADO_ANULADA:
         raise HTTPException(status_code=400, detail="Esta salida ya fue anulada")
 
-    es_devolucion = (salida.Tipo or "").lower() == "devolución"
+    es_devolucion = (salida.Tipo or "").lower() == TipoSalida.DEVOLUCION
 
     if not es_devolucion:
         if salida.ID_Insumo:
@@ -472,7 +473,7 @@ def procesar_lotes_vencidos(db: Session) -> dict:
             insumo.Stock_Actual -= cantidad
             _actualizar_estado_insumo(insumo)
             db.add(Salida(
-                Tipo        = "vencimiento",
+                Tipo        = TipoSalida.VENCIMIENTO,
                 ID_Insumo   = insumo.ID_Insumo,
                 ID_Producto = None,
                 Cantidad    = cantidad,
@@ -514,7 +515,7 @@ def procesar_lotes_vencidos(db: Session) -> dict:
         producto.Stock = max(0, (producto.Stock or 0) - cantidad)
         _actualizar_estado_producto(producto)
         db.add(Salida(
-            Tipo        = "vencimiento",
+            Tipo        = TipoSalida.VENCIMIENTO,
             ID_Insumo   = None,
             ID_Producto = producto.ID_Producto,
             Cantidad    = cantidad,

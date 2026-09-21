@@ -21,7 +21,8 @@ from src.features.ventas.gestion_ventas.services.service import (
 from src.shared.services.observaciones_utils import observaciones_limpias
 from src.shared.services.pagos_utils import (
     cobro_efectivo_pendiente, es_pago_efectivo, es_pago_mixto,
-    saldo_final_pendiente,
+    saldo_final_pendiente, obtener_pago, pago_o_nuevo, tipo_cobro_efectivo,
+    ESTADOS_RESUELTOS_OK, TIPO_ANTICIPO, TIPO_SALDO,
 )
 from .estados import (
     EstadoDomicilio, ESTADO_DOM_A_VENTA, normalizar_estado, puede_reasignarse,
@@ -69,10 +70,13 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
     # Datos de la venta: total, metodo_pago y productos
     total       = float(venta.Total) if venta and venta.Total else 0.0
     metodo_pago = venta.Metodo_Pago or "" if venta else ""
+    _pago_saldo_dom = obtener_pago(db, venta.ID_Venta, TIPO_SALDO) if venta else None
+    _pago_ant_dom   = obtener_pago(db, venta.ID_Venta, TIPO_ANTICIPO) if venta else None
     # Pago mixto: lo que hay que cobrar en mano no es el total.
     monto_efectivo = (
-        float(venta.Monto_Efectivo)
-        if venta and venta.Monto_Efectivo is not None else None
+        float(_pago_saldo_dom.Monto)
+        if venta and es_pago_mixto(metodo_pago) and _pago_saldo_dom and _pago_saldo_dom.Monto is not None
+        else None
     )
     productos   = []
     if venta:
@@ -83,7 +87,12 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
             prod   = db.query(Producto).filter(
                 Producto.ID_Producto == item.ID_Producto
             ).first()
-            precio = float(prod.Precio_venta) if prod and prod.Precio_venta else 0.0
+            # Precio al momento de la venta (snapshot). Fallback al precio
+            # actual solo para líneas creadas antes de Precio_Unitario.
+            if item.Precio_Unitario is not None:
+                precio = float(item.Precio_Unitario)
+            else:
+                precio = float(prod.Precio_venta) if prod and prod.Precio_venta else 0.0
             productos.append({
                 "ID_Producto":     item.ID_Producto,
                 "nombre_producto": prod.nombre if prod else "",
@@ -126,7 +135,7 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
         "total":                total,
         "metodo_pago":          metodo_pago,
         "monto_efectivo":       monto_efectivo,
-        "comprobante_pago":     venta.Comprobante_Pago if venta else None,
+        "comprobante_pago":     (_pago_ant_dom.Comprobante_Url if _pago_ant_dom else None),
         "estado_pago":          venta.Estado_Pago if venta else None,
         # Anticipo: cuánto se pagó por adelantado y si ya se registró.
         # El domiciliario lo necesita para calcular el saldo real a cobrar.
@@ -212,7 +221,7 @@ def obtener_resumen_dia(db: Session, id_empleado: int) -> dict:
         if not venta:
             continue
         total_hoy    += Decimal(str(venta.Total or 0))
-        efectivo_hoy += _cobrado_en_mano(venta)
+        efectivo_hoy += _cobrado_en_mano(db, venta)
 
     return {
         "activos":        activos,
@@ -230,7 +239,7 @@ def _ventas_de(db: Session, domicilios: list) -> dict:
     return {v.ID_Venta: v for v in db.query(Venta).filter(Venta.ID_Venta.in_(ids)).all()}
 
 
-def _cobrado_en_mano(venta) -> Decimal:
+def _cobrado_en_mano(db: Session, venta) -> Decimal:
     """Cuánta plata de esta venta pasó por las manos del repartidor.
 
     En un pedido mixto solo la parte en efectivo: el resto se transfirió antes
@@ -242,7 +251,8 @@ def _cobrado_en_mano(venta) -> Decimal:
     if not es_pago_efectivo(venta.Metodo_Pago):
         return Decimal("0")
     if es_pago_mixto(venta.Metodo_Pago):
-        return Decimal(str(getattr(venta, "Monto_Efectivo", None) or 0))
+        _pago_saldo_cem = obtener_pago(db, venta.ID_Venta, TIPO_SALDO)
+        return Decimal(str((_pago_saldo_cem.Monto if _pago_saldo_cem else None) or 0))
     return Decimal(str(venta.Total or 0))
 
 
@@ -317,6 +327,13 @@ def obtener_domicilios(
     ventas_map = {v.ID_Venta: v for v in
                   db.query(Venta).filter(Venta.ID_Venta.in_(venta_ids)).all()} if venta_ids else {}
 
+    # Batch 1b: Pagos (anticipo/saldo) de esas ventas
+    pagos_map: dict = {}
+    if venta_ids:
+        from src.shared.services.models import Pago
+        for pg in db.query(Pago).filter(Pago.ID_Venta.in_(venta_ids)).all():
+            pagos_map[(pg.ID_Venta, pg.Tipo)] = pg
+
     # Batch 2: clientes (desde las ventas)
     cli_ids  = list({v.ID_Usuario for v in ventas_map.values() if v.ID_Usuario})
     todos_emp_ids = list(set(cli_ids) | set(emp_ids))
@@ -365,16 +382,24 @@ def obtener_domicilios(
 
         total_v    = float(venta.Total) if venta and venta.Total else 0.0
         metodo     = venta.Metodo_Pago or "" if venta else ""
+        _pago_saldo_b = pagos_map.get((venta.ID_Venta, TIPO_SALDO)) if venta else None
+        _pago_ant_b   = pagos_map.get((venta.ID_Venta, TIPO_ANTICIPO)) if venta else None
         monto_efec = (
-            float(venta.Monto_Efectivo)
-            if venta and venta.Monto_Efectivo is not None else None
+            float(_pago_saldo_b.Monto)
+            if venta and es_pago_mixto(metodo) and _pago_saldo_b and _pago_saldo_b.Monto is not None
+            else None
         )
 
         prods = []
         if venta:
             for item in vxp_by_venta.get(venta.ID_Venta, []):
                 prod   = productos_map.get(item.ID_Producto)
-                precio = float(prod.Precio_venta) if prod and prod.Precio_venta else 0.0
+                # Precio al momento de la venta (snapshot). Fallback al precio
+                # actual solo para líneas creadas antes de Precio_Unitario.
+                if item.Precio_Unitario is not None:
+                    precio = float(item.Precio_Unitario)
+                else:
+                    precio = float(prod.Precio_venta) if prod and prod.Precio_venta else 0.0
                 prods.append({
                     "ID_Producto":     item.ID_Producto,
                     "nombre_producto": prod.nombre if prod else "",
@@ -415,9 +440,9 @@ def obtener_domicilios(
             # "sin cobrar" aunque el cobro estuviera registrado, así que no
             # dejaba marcar la entrega.
             "estado_pago":          venta.Estado_Pago if venta else None,
-            "comprobante_pago":     venta.Comprobante_Pago if venta else None,
-            "anticipo_monto":       float(getattr(venta, "Anticipo_Monto", 0) or 0) if venta else 0,
-            "anticipo_registrado":  bool(getattr(venta, "Anticipo_Registrado", 0)) if venta else False,
+            "comprobante_pago":     (_pago_ant_b.Comprobante_Url if _pago_ant_b else None),
+            "anticipo_monto":       float(_pago_ant_b.Monto or 0) if _pago_ant_b else 0,
+            "anticipo_registrado":  bool(_pago_ant_b and _pago_ant_b.Estado in ESTADOS_RESUELTOS_OK),
             "productos":            prods,
             "telefono_cliente":     cliente.Telefono if cliente else "",
             "efectivo_liquidado":   bool(getattr(dom, "Efectivo_Liquidado", 0)),
@@ -720,7 +745,7 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
                     status_code=400,
                     detail="Debes registrar el cobro antes de marcar el pedido como entregado",
                 )
-            if cobro_efectivo_pendiente(venta_check):
+            if cobro_efectivo_pendiente(db, venta_check):
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -731,7 +756,7 @@ def cambiar_estado(db: Session, id_domicilio: int, nuevo_estado: int, observacio
             # El anticipo es la mitad: cubre los insumos, no el pedido. Con
             # solo esa mitad registrada se estaría entregando la mercancía y
             # quedándose esperando el resto.
-            if saldo_final_pendiente(venta_check):
+            if saldo_final_pendiente(db, venta_check):
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -841,19 +866,24 @@ def registrar_pago_efectivo(
             detail=f"El cobro ya fue registrado (estado_pago='{estado_pago_actual}')",
         )
 
+    _pago_cobro_dom = pago_o_nuevo(db, venta.ID_Venta, tipo_cobro_efectivo(venta), "Efectivo")
+
     if datos.recibido:
         if datos.monto is None:
             raise HTTPException(status_code=422, detail="El monto es obligatorio cuando recibido=true")
         # Cuánto hay que cobrar en mano:
-        # - Mixto: solo la parte en efectivo (el resto ya entró por transferencia).
-        # - Anticipo ya registrado: solo el saldo (total − anticipo); el cliente
+        # - Mixto: solo la parte en efectivo (el resto ya entró por transferencia),
+        #   registrada como fila 'saldo' en Pagos.
+        # - Anticipo ya aprobado: solo el saldo (total − anticipo); el cliente
         #   ya pagó la primera parte y el domiciliario no puede cobrarle dos veces.
         # - Resto: el total completo.
-        _anticipo_registrado = bool(getattr(venta, "Anticipo_Registrado", 0))
-        _anticipo_monto      = float(getattr(venta, "Anticipo_Monto", 0) or 0)
-        if _pago_mixto and venta.Monto_Efectivo is not None:
-            esperado = float(venta.Monto_Efectivo)
-        elif _anticipo_registrado and _anticipo_monto > 0:
+        _pago_saldo_esp = obtener_pago(db, venta.ID_Venta, TIPO_SALDO)
+        _pago_ant_esp    = obtener_pago(db, venta.ID_Venta, TIPO_ANTICIPO)
+        _anticipo_ok    = bool(_pago_ant_esp and _pago_ant_esp.Estado in ESTADOS_RESUELTOS_OK)
+        _anticipo_monto = float(_pago_ant_esp.Monto or 0) if _pago_ant_esp else 0.0
+        if _pago_mixto and _pago_saldo_esp and _pago_saldo_esp.Monto is not None:
+            esperado = float(_pago_saldo_esp.Monto)
+        elif _anticipo_ok and _anticipo_monto > 0:
             esperado = max(0.0, float(venta.Total or 0) - _anticipo_monto)
         else:
             esperado = float(venta.Total or 0)
@@ -863,15 +893,16 @@ def registrar_pago_efectivo(
                 detail=f"El monto recibido ({datos.monto}) no coincide con el saldo pendiente ({esperado})",
             )
         venta.Estado_Pago = "efectivo_recibido"
-        # Un pedido con anticipo exige además Pago_Final_Registrado=1 para poder
-        # cerrarse como Entregado (validado por saldo_final_pendiente). Sin esto,
-        # el domiciliario queda atrapado: el botón "Cobrar" desaparece (Estado_Pago
-        # ya es efectivo_recibido) pero ENTREGADO sigue bloqueado.
-        if getattr(venta, "Requiere_Anticipo", 0):
-            venta.Pago_Final_Registrado  = 1
-            venta.Pago_Final_Monto       = Decimal(str(datos.monto))
-            venta.Pago_Final_Metodo_Pago = "Efectivo"
-            venta.Pago_Final_Fecha       = _now()
+        # Un pedido con anticipo (o la pata 'saldo' de un mixto) exige que quede
+        # una fila de Pagos resuelta ('recibido') para poder cerrarse como
+        # Entregado (validado por `saldo_final_pendiente`/`cobro_efectivo_pendiente`).
+        # Sin esto, el domiciliario queda atrapado: el botón "Cobrar" desaparece
+        # (Estado_Pago ya es efectivo_recibido) pero ENTREGADO sigue bloqueado.
+        _pago_cobro_dom.Metodo_Pago      = "Efectivo"
+        _pago_cobro_dom.Monto            = Decimal(str(datos.monto))
+        _pago_cobro_dom.Estado           = "recibido"
+        _pago_cobro_dom.Fecha_Resolucion = _now()
+        _pago_cobro_dom.ID_Registrado_Por = id_usuario_actual
         audit_value = f"monto:{datos.monto}"
     else:
         if not datos.motivo or len(datos.motivo.strip()) < 10:
@@ -880,6 +911,9 @@ def registrar_pago_efectivo(
                 detail="El motivo es obligatorio y debe tener al menos 10 caracteres cuando recibido=false",
             )
         venta.Estado_Pago = "no_recibido"
+        _pago_cobro_dom.Estado            = "no_recibido"
+        _pago_cobro_dom.Fecha_Resolucion  = _now()
+        _pago_cobro_dom.ID_Registrado_Por = id_usuario_actual
         audit_value = f"motivo:{datos.motivo.strip()}"
 
     ts = _now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -931,7 +965,11 @@ def confirmar_retorno_tienda(db: Session, id_domicilio: int) -> dict:
 
     costo_domicilio = Decimal(str(dom.Precio_Domicilio_Final or 0))
     costo_ida_y_vuelta = costo_domicilio * 2
-    transferido = Decimal(str(getattr(venta, "Anticipo_Monto", 0) or 0)) if getattr(venta, "Anticipo_Registrado", 0) else Decimal("0")
+    _pago_ant_ret = obtener_pago(db, venta.ID_Venta, TIPO_ANTICIPO)
+    transferido = (
+        Decimal(str(_pago_ant_ret.Monto or 0))
+        if (_pago_ant_ret and _pago_ant_ret.Monto) else Decimal("0")
+    )
     if transferido > 0:
         a_favor = transferido - costo_ida_y_vuelta
         if a_favor > 0:
@@ -940,8 +978,7 @@ def confirmar_retorno_tienda(db: Session, id_domicilio: int) -> dict:
         # transferido: no se acredita ni se cobra nada extra (2.4.2 — no se
         # retiene "gastos operativos", pero tampoco se le regala domicilio al
         # cliente que ya no puede recibir el pedido).
-        venta.Anticipo_Registrado = 0
-        venta.Anticipo_Monto      = Decimal("0")
+        _pago_ant_ret.Monto = Decimal("0")
 
     venta.Estado                   = EstadoPedido.RETENIDO_EN_TIENDA
     venta.Estado_Pago              = "no_recibido"

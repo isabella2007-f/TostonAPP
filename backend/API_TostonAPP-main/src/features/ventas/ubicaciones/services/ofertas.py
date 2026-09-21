@@ -12,6 +12,7 @@ from src.shared.services.models import (
     Barrio, Ciudad, OfertaDomicilio, OfertaXBarrio,
 )
 from .service import _now, _parse_csv_int, _to_csv, precio_domicilio_final
+from src.shared.services.enums import TipoOfertaDomicilio
 
 ACTIVO, INACTIVO = 1, 2
 
@@ -58,7 +59,7 @@ def listar_ofertas(
     q = db.query(OfertaDomicilio)
     if estado is not None:
         q = q.filter(OfertaDomicilio.Estado == estado)
-    if tipo in ("descuento", "recargo"):
+    if tipo in TipoOfertaDomicilio.TODOS:
         q = q.filter(OfertaDomicilio.Tipo == tipo)
     if texto:
         termino = "%" + texto.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"

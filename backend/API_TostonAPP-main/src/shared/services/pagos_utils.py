@@ -9,12 +9,26 @@ pedir, el repartidor se queda trabado sin entender por qué.
 Antes cada módulo preguntaba por su cuenta con `.lower()` y `in`, y el pedido
 mixto no coincidía con ninguna de las preguntas: llevaba comprobante Y efectivo
 en mano, pero se leía como si no llevara ninguno de los dos.
+
+Desde la migración a `Pagos` (ver `models.py`), el monto/método/comprobante/
+estado de cada "pata" del pago vive en su propia fila (`Tipo='anticipo'` |
+`'saldo'`) en vez de en columnas sueltas de `Ventas`. Este módulo también es
+el punto único para leer/crear esas filas — nadie hace `db.query(Pago)...`
+por su cuenta fuera de acá.
 """
 import re
+from src.shared.services.models import Pago
 
 _RE_MIXTO         = re.compile(r"mixto", re.IGNORECASE)
 _RE_TRANSFERENCIA = re.compile(r"transf|nequi|daviplata|bancol|qr", re.IGNORECASE)
 _RE_EFECTIVO      = re.compile(r"efectiv|contra|cash", re.IGNORECASE)
+
+TIPO_ANTICIPO = "anticipo"
+TIPO_SALDO    = "saldo"
+
+# Estados de una fila de Pagos que cuentan como "resuelto a favor del negocio"
+# (comprobante aprobado, o efectivo físicamente recibido).
+ESTADOS_RESUELTOS_OK = frozenset({"aprobado", "recibido"})
 
 
 def es_pago_mixto(metodo: str | None) -> bool:
@@ -59,7 +73,40 @@ def _estado_pago(venta) -> str:
     return (getattr(venta, "Estado_Pago", None) or "pendiente").strip()
 
 
-def cobro_efectivo_pendiente(venta) -> bool:
+def obtener_pago(db, id_venta: int, tipo: str) -> "Pago | None":
+    """La fila de Pagos de esta venta para esa pata (`anticipo` | `saldo`), o
+    None si todavía no existe."""
+    return db.query(Pago).filter(Pago.ID_Venta == id_venta, Pago.Tipo == tipo).first()
+
+
+def pago_o_nuevo(db, id_venta: int, tipo: str, metodo_pago: str) -> "Pago":
+    """Devuelve la fila existente de esa pata, o crea una nueva en blanco
+    (Estado='pendiente') si es la primera vez que se toca. Hace `flush()` para
+    que la fila tenga `ID_Pago` de una, pero no hace commit — eso lo decide
+    quien llama."""
+    pago = obtener_pago(db, id_venta, tipo)
+    if pago is None:
+        pago = Pago(
+            ID_Venta=id_venta, Tipo=tipo, Metodo_Pago=metodo_pago,
+            Estado="pendiente", Intentos_Rechazo=0,
+        )
+        db.add(pago)
+        db.flush()
+    return pago
+
+
+def tipo_cobro_efectivo(venta) -> str:
+    """A qué fila de Pagos apunta un cobro en efectivo (domicilio, tienda,
+    contra entrega, retenido-en-tienda): `'saldo'` si ya existe una pata
+    previa por transferencia (anticipo exigido, o pedido mixto — la
+    transferencia se paga al hacer el pedido); `'anticipo'` si el efectivo es
+    el único pago de este pedido (pedido simple en efectivo, sin anticipo)."""
+    if getattr(venta, "Requiere_Anticipo", 0) or es_pago_mixto(venta.Metodo_Pago):
+        return TIPO_SALDO
+    return TIPO_ANTICIPO
+
+
+def cobro_efectivo_pendiente(db, venta) -> bool:
     """¿Queda plata por recibir en mano en este pedido?"""
     if not es_pago_efectivo(venta.Metodo_Pago):
         return False
@@ -71,15 +118,17 @@ def cobro_efectivo_pendiente(venta) -> bool:
         return False
     if _estado_pago(venta) in COBRO_RESUELTO:
         return False
-    # En un mixto el efectivo tiene su propio registro: el admin puede cobrarlo
-    # antes de que se apruebe el comprobante, y ahí el estado queda en
-    # "anticipo_pagado" aunque la plata ya haya entrado.
-    if es_pago_mixto(venta.Metodo_Pago) and getattr(venta, "Pago_Final_Registrado", 0):
-        return False
+    # En un mixto el efectivo tiene su propio registro (fila 'saldo'): el
+    # admin puede cobrarlo antes de que se apruebe el comprobante, y ahí el
+    # estado queda en "anticipo_pagado" aunque la plata ya haya entrado.
+    if es_pago_mixto(venta.Metodo_Pago):
+        saldo = obtener_pago(db, venta.ID_Venta, TIPO_SALDO)
+        if saldo and saldo.Estado in ESTADOS_RESUELTOS_OK:
+            return False
     return True
 
 
-def saldo_final_pendiente(venta) -> bool:
+def saldo_final_pendiente(db, venta) -> bool:
     """¿Este pedido pidió anticipo y todavía debe el resto?
 
     El anticipo es la mitad: cubre los insumos, no el pedido. Entregar con solo
@@ -89,14 +138,16 @@ def saldo_final_pendiente(venta) -> bool:
     No aplica a los pedidos normales, ni cuando el cliente decidió pagar todo
     por adelantado, ni cuando su saldo a favor cubre lo que faltaba.
     """
-    anticipo = float(getattr(venta, "Anticipo_Monto", 0) or 0)
+    pago_anticipo = obtener_pago(db, venta.ID_Venta, TIPO_ANTICIPO)
+    anticipo = float(pago_anticipo.Monto or 0) if pago_anticipo else 0.0
     if anticipo <= 0:
         return False
     # Si ni el anticipo entró, el pedido ni siquiera llegó hasta acá: de eso se
     # encarga la validación general del estado de pago.
-    if not getattr(venta, "Anticipo_Registrado", 0):
+    if not pago_anticipo or not pago_anticipo.Monto:
         return False
-    if getattr(venta, "Pago_Final_Registrado", 0):
+    pago_saldo = obtener_pago(db, venta.ID_Venta, TIPO_SALDO)
+    if pago_saldo and pago_saldo.Estado in ESTADOS_RESUELTOS_OK:
         return False
     if _estado_pago(venta) == "pagado_completo":
         return False
@@ -108,15 +159,17 @@ def saldo_final_pendiente(venta) -> bool:
     return True
 
 
-def comprobante_sin_aprobar(venta) -> bool:
+def comprobante_sin_aprobar(db, venta) -> bool:
     """¿Hay un comprobante adjunto que el admin todavía no aprobó?
 
-    Se mira `Comprobante_Pago` y no el del anticipo a propósito: ese es el
-    único que `aprobar_comprobante` sabe aprobar, así que es el único que se
-    puede exigir sin dejar el pedido sin salida.
+    Se mira la fila `anticipo` (que es la que cubre tanto el anticipo como el
+    total sin producción, o la mitad transferida de un mixto) porque es la
+    única que `aprobar_comprobante` sabe aprobar: exigir otra cosa dejaría el
+    pedido sin salida.
     """
     if not es_pago_transferencia(venta.Metodo_Pago):
         return False
-    if not (venta.Comprobante_Pago or "").strip():
+    pago_anticipo = obtener_pago(db, venta.ID_Venta, TIPO_ANTICIPO)
+    if not pago_anticipo or not (pago_anticipo.Comprobante_Url or "").strip():
         return False
     return _estado_pago(venta) not in COMPROBANTE_APROBADO

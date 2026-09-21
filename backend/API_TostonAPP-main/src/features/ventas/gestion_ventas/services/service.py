@@ -35,13 +35,16 @@ def _imagen_producto(db: Session, id_producto: int) -> str | None:
     ).first()
     return img.imagen if img else None
 from src.shared.services.notificaciones_utils import notificar, descartar_notificacion, notificar_stock_producto
+from src.shared.services.enums import TipoAccionFecha
 from src.features.ventas.pedidos.services.estados import (
     EstadoPedido, validar_transicion,
 )
 from .schemas import VentaCreate, DomicilioVentaInput
 from src.shared.services.observaciones_utils import observaciones_limpias
 from src.shared.services.pagos_utils import (
-    cobro_efectivo_pendiente, comprobante_sin_aprobar,
+    cobro_efectivo_pendiente, comprobante_sin_aprobar, es_pago_mixto,
+    obtener_pago, pago_o_nuevo, tipo_cobro_efectivo,
+    ESTADOS_RESUELTOS_OK, TIPO_ANTICIPO, TIPO_SALDO,
 )
 # El precio del domicilio ya NO es una constante: sale de Barrios.Precio ajustado
 # por las ofertas activas del barrio ese día (función única del módulo
@@ -260,6 +263,7 @@ def _evaluar_lineas_pedido(db: Session, productos_input) -> tuple[list[dict], De
             "cantidad":    cantidad,
             "stock":       stock,
             "preorden":    preorden,
+            "precio":      precio,
             # Si el admin lo sacó de la tienda ya no se le puede vender al
             # cliente, aunque siga en su carrito. Lo decide quien llama.
             "publicado":   int(getattr(producto, "Publicado", 0) or 0),
@@ -500,7 +504,12 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
     requiere_produccion = False
     for v in venta.productos:
         producto = v.producto
-        precio   = producto.Precio_venta if producto else Decimal("0")
+        # Precio al momento de la venta (snapshot). Fallback al precio actual
+        # solo para líneas creadas antes de que existiera Precio_Unitario.
+        if v.Precio_Unitario is not None:
+            precio = v.Precio_Unitario
+        else:
+            precio = producto.Precio_venta if producto else Decimal("0")
         if getattr(producto, "Requiere_Produccion", 0):
             requiere_produccion = True
         imagen = producto.imagenes[0].imagen if (producto and producto.imagenes) else None
@@ -554,6 +563,18 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         if o.Estado == 1
     )
 
+    # Filas de Pagos de esta venta (como mucho una por Tipo — ver `Pago` en
+    # models.py). `venta.pagos` ya viene cargada por relationship; se evita un
+    # segundo `obtener_pago()` que dispararía una query aparte por venta.
+    _pago_anticipo = next((p for p in venta.pagos if p.Tipo == TIPO_ANTICIPO), None)
+    _pago_saldo    = next((p for p in venta.pagos if p.Tipo == TIPO_SALDO), None)
+    _es_mixto_fmt  = es_pago_mixto(venta.Metodo_Pago)
+    _motivo_rechazo_pago = None
+    if _pago_saldo and _pago_saldo.Estado == "rechazado":
+        _motivo_rechazo_pago = _pago_saldo.Motivo_Rechazo
+    elif _pago_anticipo and _pago_anticipo.Estado == "rechazado":
+        _motivo_rechazo_pago = _pago_anticipo.Motivo_Rechazo
+
     return {
         "ID_Venta":           venta.ID_Venta,
         "ID_Usuario":         venta.ID_Usuario,
@@ -569,14 +590,14 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         "Estado":             venta.Estado,
         "estado_label":       _label_estado(db, venta.Estado) if venta.Estado else None,
         "Metodo_Pago":            venta.Metodo_Pago,
-        "monto_efectivo":         getattr(venta, "Monto_Efectivo", None),
-        "monto_transferencia":    getattr(venta, "Monto_Transferencia", None),
+        "monto_efectivo":         (_pago_saldo.Monto if (_es_mixto_fmt and _pago_saldo) else None),
+        "monto_transferencia":    (_pago_anticipo.Monto if (_es_mixto_fmt and _pago_anticipo) else None),
         "Fecha_Venta":            venta.Fecha_Venta,
         "Fecha_pedido":           venta.Fecha_pedido,
         "Fecha_entrega":          getattr(venta, "Fecha_entrega", None),
         "Fecha_entrega_esperada": venta.Fecha_entrega_esperada,
         "productos":              productos,
-        "comprobante_pago":             venta.Comprobante_Pago,
+        "comprobante_pago":             _pago_anticipo.Comprobante_Url if _pago_anticipo else None,
         "tiene_domicilio":              domicilio is not None,
         "ID_Domicilio":                 domicilio.ID_Domicilio          if domicilio else None,
         "direccion_entrega":            domicilio.Direccion_entrega      if domicilio else None,
@@ -605,23 +626,23 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         # verificado en backend al crear la venta).
         "sobre_stock":             bool(getattr(venta, "Sobre_Stock", 0)),
         "anticipo_requerido":      getattr(venta, "Anticipo_Requerido", None),
-        "anticipo_pagado":         getattr(venta, "Anticipo_Pagado", None),
+        "anticipo_pagado":         (_pago_anticipo.Monto_Verificado_Creacion if _pago_anticipo else None),
         "requiere_anticipo":       bool(getattr(venta, "Requiere_Anticipo", 0)),
-        "anticipo_monto":          getattr(venta, "Anticipo_Monto", None),
-        "anticipo_metodo_pago":    getattr(venta, "Anticipo_Metodo_Pago", None),
-        "anticipo_comprobante_url": getattr(venta, "Anticipo_Comprobante_Url", None),
-        "anticipo_registrado":       bool(getattr(venta, "Anticipo_Registrado", 0)),
-        "pago_final_registrado":     bool(getattr(venta, "Pago_Final_Registrado", 0)),
-        "pago_final_monto":          getattr(venta, "Pago_Final_Monto", None),
-        "pago_final_metodo_pago":    getattr(venta, "Pago_Final_Metodo_Pago", None),
-        "pago_final_comprobante_url": getattr(venta, "Pago_Final_Comprobante_Url", None),
-        "pago_final_fecha":          getattr(venta, "Pago_Final_Fecha", None),
+        "anticipo_monto":          (_pago_anticipo.Monto if _pago_anticipo else None),
+        "anticipo_metodo_pago":    (_pago_anticipo.Metodo_Pago if _pago_anticipo else None),
+        "anticipo_comprobante_url": (_pago_anticipo.Comprobante_Url if _pago_anticipo else None),
+        "anticipo_registrado":       bool(_pago_anticipo and _pago_anticipo.Monto),
+        "pago_final_registrado":     bool(_pago_saldo and _pago_saldo.Estado in ESTADOS_RESUELTOS_OK),
+        "pago_final_monto":          (_pago_saldo.Monto if _pago_saldo else None),
+        "pago_final_metodo_pago":    (_pago_saldo.Metodo_Pago if _pago_saldo else None),
+        "pago_final_comprobante_url": (_pago_saldo.Comprobante_Url if _pago_saldo else None),
+        "pago_final_fecha":          (_pago_saldo.Fecha_Resolucion if _pago_saldo else None),
         "estado_pago":               getattr(venta, "Estado_Pago", "pendiente"),
-        "motivo_rechazo_comprobante": getattr(venta, "Motivo_Rechazo_Comprobante", None),
+        "motivo_rechazo_comprobante": _motivo_rechazo_pago,
         # Segundo comprobante: el saldo restante tras el anticipo (3.10).
-        "saldo_comprobante_url": getattr(venta, "Saldo_Comprobante_Url", None),
-        "intentos_rechazo_comprobante_anticipo": int(getattr(venta, "Intentos_Rechazo_Comprobante_Anticipo", 0) or 0),
-        "intentos_rechazo_comprobante_saldo":    int(getattr(venta, "Intentos_Rechazo_Comprobante_Saldo", 0) or 0),
+        "saldo_comprobante_url": (_pago_saldo.Comprobante_Url if _pago_saldo else None),
+        "intentos_rechazo_comprobante_anticipo": int((_pago_anticipo.Intentos_Rechazo if _pago_anticipo else 0) or 0),
+        "intentos_rechazo_comprobante_saldo":    int((_pago_saldo.Intentos_Rechazo if _pago_saldo else 0) or 0),
         # 3.7: marca de tiempo de cuándo entró a "Retenido en tienda", para
         # que el frontend calcule las ventanas de 24h/48h (evaluación
         # perezosa, sin scheduler — el backend valida lo mismo al actuar).
@@ -773,6 +794,14 @@ def _batch_ventas(ventas: list, db: Session) -> list:
     venta_ids   = [v.ID_Venta   for v in ventas]
     usuario_ids = list({v.ID_Usuario for v in ventas if v.ID_Usuario})
 
+    # Batch 0: filas de Pagos (anticipo/saldo) de estas ventas — como mucho
+    # una por Tipo (ver `Pago` en models.py). Mismo patrón que `_formato_venta`.
+    pagos_map: dict = {}
+    if venta_ids:
+        from src.shared.services.models import Pago
+        for pg in db.query(Pago).filter(Pago.ID_Venta.in_(venta_ids)).all():
+            pagos_map[(pg.ID_Venta, pg.Tipo)] = pg
+
     # Batch 1: clientes
     usuarios = {u.ID_Usuario: u for u in
                 db.query(Usuario).filter(Usuario.ID_Usuario.in_(usuario_ids)).all()} if usuario_ids else {}
@@ -875,6 +904,16 @@ def _batch_ventas(ventas: list, db: Session) -> list:
         # no el stock actual (que puede haber cambiado después del pedido).
         rfp = bool(getattr(venta, "Sobre_Stock", 0)) or bool(getattr(venta, "Necesita_Produccion", 0))
 
+        # Filas de Pagos de esta venta (mismo patrón que `_formato_venta`).
+        _pago_anticipo = pagos_map.get((venta.ID_Venta, TIPO_ANTICIPO))
+        _pago_saldo    = pagos_map.get((venta.ID_Venta, TIPO_SALDO))
+        _es_mixto_bv   = es_pago_mixto(venta.Metodo_Pago)
+        _motivo_rechazo_pago_bv = None
+        if _pago_saldo and _pago_saldo.Estado == "rechazado":
+            _motivo_rechazo_pago_bv = _pago_saldo.Motivo_Rechazo
+        elif _pago_anticipo and _pago_anticipo.Estado == "rechazado":
+            _motivo_rechazo_pago_bv = _pago_anticipo.Motivo_Rechazo
+
         result.append({
             "ID_Venta":           venta.ID_Venta,
             "ID_Usuario":         venta.ID_Usuario,
@@ -890,14 +929,14 @@ def _batch_ventas(ventas: list, db: Session) -> list:
             "Estado":             venta.Estado,
             "estado_label":       _label_estado(db, venta.Estado) if venta.Estado else None,
             "Metodo_Pago":            venta.Metodo_Pago,
-            "monto_efectivo":         getattr(venta, "Monto_Efectivo", None),
-            "monto_transferencia":    getattr(venta, "Monto_Transferencia", None),
+            "monto_efectivo":         (_pago_saldo.Monto if (_es_mixto_bv and _pago_saldo) else None),
+            "monto_transferencia":    (_pago_anticipo.Monto if (_es_mixto_bv and _pago_anticipo) else None),
             "Fecha_Venta":            venta.Fecha_Venta,
             "Fecha_pedido":           venta.Fecha_pedido,
             "Fecha_entrega":          getattr(venta, "Fecha_entrega", None),
             "Fecha_entrega_esperada": venta.Fecha_entrega_esperada,
             "productos":              prods_list,
-            "comprobante_pago":             venta.Comprobante_Pago,
+            "comprobante_pago":             (_pago_anticipo.Comprobante_Url if _pago_anticipo else None),
             "tiene_domicilio":              dom is not None,
             "ID_Domicilio":                 dom.ID_Domicilio        if dom else None,
             "direccion_entrega":            dom.Direccion_entrega    if dom else None,
@@ -915,31 +954,33 @@ def _batch_ventas(ventas: list, db: Session) -> list:
             "requiere_produccion":           requiere_produccion,
             "sobre_stock":             bool(getattr(venta, "Sobre_Stock", 0)),
             "anticipo_requerido":      getattr(venta, "Anticipo_Requerido", None),
-            "anticipo_pagado":         getattr(venta, "Anticipo_Pagado", None),
+            "anticipo_pagado":         (_pago_anticipo.Monto_Verificado_Creacion if _pago_anticipo else None),
             "requiere_anticipo":       bool(getattr(venta, "Requiere_Anticipo", 0)),
-            "anticipo_monto":          getattr(venta, "Anticipo_Monto", None),
-            "anticipo_metodo_pago":    getattr(venta, "Anticipo_Metodo_Pago", None),
-            "anticipo_comprobante_url": getattr(venta, "Anticipo_Comprobante_Url", None),
-            "anticipo_registrado":       bool(getattr(venta, "Anticipo_Registrado", 0)),
-            "pago_final_registrado":     bool(getattr(venta, "Pago_Final_Registrado", 0)),
-            "pago_final_monto":          getattr(venta, "Pago_Final_Monto", None),
-            "pago_final_metodo_pago":    getattr(venta, "Pago_Final_Metodo_Pago", None),
-            "pago_final_comprobante_url": getattr(venta, "Pago_Final_Comprobante_Url", None),
-            "pago_final_fecha":          getattr(venta, "Pago_Final_Fecha", None),
+            "anticipo_monto":          (_pago_anticipo.Monto if _pago_anticipo else None),
+            "anticipo_metodo_pago":    (_pago_anticipo.Metodo_Pago if _pago_anticipo else None),
+            "anticipo_comprobante_url": (_pago_anticipo.Comprobante_Url if _pago_anticipo else None),
+            "anticipo_registrado":       bool(_pago_anticipo and _pago_anticipo.Monto),
+            "pago_final_registrado":     bool(_pago_saldo and _pago_saldo.Estado in ESTADOS_RESUELTOS_OK),
+            "pago_final_monto":          (_pago_saldo.Monto if _pago_saldo else None),
+            "pago_final_metodo_pago":    (_pago_saldo.Metodo_Pago if _pago_saldo else None),
+            "pago_final_comprobante_url": (_pago_saldo.Comprobante_Url if _pago_saldo else None),
+            "pago_final_fecha":          (_pago_saldo.Fecha_Resolucion if _pago_saldo else None),
             "estado_pago":               getattr(venta, "Estado_Pago", "pendiente"),
-            "motivo_rechazo_comprobante": getattr(venta, "Motivo_Rechazo_Comprobante", None),
+            "motivo_rechazo_comprobante": _motivo_rechazo_pago_bv,
             "requiere_fecha_propuesta": rfp,
             "fecha_rechazada":  getattr(venta, "Fecha_Rechazada", None),
             "intentos_rechazo": int(getattr(venta, "intentos_rechazo", 0) or 0),
             "resaltar_canal_excepcion": int(getattr(venta, "intentos_rechazo", 0) or 0) >= LIMITE_INTENTOS_RECHAZO,
-            "saldo_comprobante_url": getattr(venta, "Saldo_Comprobante_Url", None),
-            "intentos_rechazo_comprobante_anticipo": int(getattr(venta, "Intentos_Rechazo_Comprobante_Anticipo", 0) or 0),
-            "intentos_rechazo_comprobante_saldo":    int(getattr(venta, "Intentos_Rechazo_Comprobante_Saldo", 0) or 0),
+            "saldo_comprobante_url": (_pago_saldo.Comprobante_Url if _pago_saldo else None),
+            "intentos_rechazo_comprobante_anticipo": int((_pago_anticipo.Intentos_Rechazo if _pago_anticipo else 0) or 0),
+            "intentos_rechazo_comprobante_saldo":    int((_pago_saldo.Intentos_Rechazo if _pago_saldo else 0) or 0),
             "fecha_retenido_en_tienda": getattr(venta, "Fecha_Retenido_En_Tienda", None),
             "envio_completo_domingo": (
                 None if getattr(venta, "Envio_Completo_Domingo", None) is None
                 else bool(venta.Envio_Completo_Domingo)
             ),
+            "iva_total":     getattr(venta, "IVA_Total",     None),
+            "subtotal_base": getattr(venta, "Subtotal_Base", None),
         })
 
     return result
@@ -1158,7 +1199,6 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
         Fecha_Venta            = _now(),
         Fecha_pedido           = _now(),
         Fecha_entrega_esperada = datos.Fecha_entrega_esperada,
-        Comprobante_Pago       = datos.comprobante_pago,
         Estado_Pago            = _estado_pago_inicial,
     )
     db.add(nueva_venta)
@@ -1170,12 +1210,14 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
         nueva_venta.ID_Venta, "/ventas/pedidos",
     )
 
+    precios_por_producto = {l["ID_Producto"]: l.get("precio") for l in lineas}
     for p in datos.productos:
         db.add(VentaXProducto(
             ID_Venta          = nueva_venta.ID_Venta,
             ID_Producto       = p.ID_Producto,
             Cantidad          = p.Cantidad,
             Cantidad_Preorden = preorden_por_producto.get(p.ID_Producto, 0),
+            Precio_Unitario   = precios_por_producto.get(p.ID_Producto),
         ))
 
     # Detectar productos fabricables con déficit. Mismo criterio que usan las
@@ -1258,10 +1300,32 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
 
     # Pago mixto: el reparto se hace sobre el total ya cerrado (con domicilio,
     # descuentos y saldo a favor aplicados), no sobre lo que declaró el cliente.
+    # Dos filas de una vez: 'anticipo' es la mitad transferida (comprobante al
+    # hacer el pedido), 'saldo' es la mitad en efectivo (se cobra al entregar).
     if _es_mixto(datos.Metodo_Pago):
-        nueva_venta.Monto_Efectivo, nueva_venta.Monto_Transferencia = _partir_pago_mixto(
+        _monto_efectivo, _monto_transferencia = _partir_pago_mixto(
             nueva_venta.Total, datos.pago_efectivo_monto
         )
+        _pago_anticipo = pago_o_nuevo(db, nueva_venta.ID_Venta, TIPO_ANTICIPO, "Transferencia")
+        _pago_anticipo.Monto           = _monto_transferencia
+        _pago_anticipo.Comprobante_Url = datos.comprobante_pago
+        _pago_anticipo.Estado          = "pendiente_validacion" if datos.comprobante_pago else "pendiente"
+        _pago_anticipo.Fecha_Registro  = _now()
+        _pago_saldo = pago_o_nuevo(db, nueva_venta.ID_Venta, TIPO_SALDO, "Efectivo")
+        _pago_saldo.Monto = _monto_efectivo
+    else:
+        # Pedido simple (una sola forma de pago): una fila 'anticipo' que
+        # representa el único pago del pedido. El comprobante (si lo hay) se
+        # adjunta acá; el monto final se ajusta más abajo según el flujo
+        # (admin/cliente, con o sin anticipo exigido).
+        _pago_anticipo = pago_o_nuevo(
+            db, nueva_venta.ID_Venta, TIPO_ANTICIPO,
+            "Transferencia" if _es_transferencia(datos.Metodo_Pago) else "Efectivo",
+        )
+        if datos.comprobante_pago:
+            _pago_anticipo.Comprobante_Url = datos.comprobante_pago
+            _pago_anticipo.Estado          = "pendiente_validacion"
+            _pago_anticipo.Fecha_Registro  = _now()
 
     # Que el pedido supere el stock se registra siempre: es un hecho del pedido
     # y de él dependen la fecha propuesta y las órdenes de producción, pida o no
@@ -1369,13 +1433,17 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
                 )
 
             nueva_venta.Anticipo_Requerido = anticipo_requerido
-            nueva_venta.Anticipo_Pagado    = anticipo_pagado
+            # Dato de auditoría puntual de este chequeo (nunca se vuelve a leer
+            # en ningún otro lugar): cuánto del anticipo exigido quedó
+            # verificado (crédito aplicado) en el momento de crear la venta.
+            _pago_anticipo.Monto_Verificado_Creacion = anticipo_pagado
             # Cuando el flujo de anticipo explícito no se activa (solo ítems de
             # producción sobre stock) pero el cliente sí aportó respaldo de pago,
             # registrar igual para que el panel muestre el monto correcto.
             if not datos.requiere_anticipo and tiene_soporte:
-                nueva_venta.Anticipo_Registrado = 1
-                nueva_venta.Anticipo_Monto      = anticipo_requerido
+                _pago_anticipo.Monto            = anticipo_requerido
+                _pago_anticipo.Estado           = "aprobado"
+                _pago_anticipo.Fecha_Resolucion = _now()
                 nueva_venta.Estado_Pago         = "anticipo_pagado"
 
         # El aviso al panel lo dispara el faltante, no el anticipo: el admin tiene
@@ -1405,11 +1473,19 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
             nueva_venta.Requiere_Anticipo        = (
                 1 if (anticipo_obligatorio or datos.anticipo_registrado) else 0
             )
-            nueva_venta.Anticipo_Monto           = datos.anticipo_monto
-            nueva_venta.Anticipo_Metodo_Pago     = datos.anticipo_metodo_pago
-            nueva_venta.Anticipo_Comprobante_Url = datos.anticipo_comprobante_url
-            nueva_venta.Anticipo_Registrado      = 1 if datos.anticipo_registrado else 0
-            nueva_venta.Estado_Pago              = "anticipo_pagado" if datos.anticipo_registrado else "pendiente"
+            _pago_anticipo.Monto           = datos.anticipo_monto
+            _pago_anticipo.Metodo_Pago     = (
+                "Transferencia" if _es_transferencia(datos.anticipo_metodo_pago) else "Efectivo"
+            )
+            # Colapsa con el comprobante general del pedido (decisión de diseño
+            # aprobada): si el mostrador mandó los dos, manda el específico del
+            # anticipo — es el que de verdad valida `aprobar_comprobante`.
+            if datos.anticipo_comprobante_url:
+                _pago_anticipo.Comprobante_Url = datos.anticipo_comprobante_url
+            if datos.anticipo_registrado:
+                _pago_anticipo.Estado           = "aprobado"
+                _pago_anticipo.Fecha_Resolucion = _now()
+            nueva_venta.Estado_Pago = "anticipo_pagado" if datos.anticipo_registrado else "pendiente"
             # El cliente eligió pagar el total completo ahora. Se usa la bandera
             # explícita (pagar_todo) en vez de comparar montos: la diferencia de
             # redondeo entre el total del cliente (JS) y el servidor (Decimal) puede
@@ -1419,8 +1495,11 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
                 _pago_total
                 or (datos.anticipo_monto is not None and float(datos.anticipo_monto) >= float(nueva_venta.Total or 0))
             ):
-                nueva_venta.Pago_Final_Registrado = 1
-                nueva_venta.Estado_Pago           = "pagado_completo"
+                _pago_saldo = pago_o_nuevo(db, nueva_venta.ID_Venta, TIPO_SALDO, _pago_anticipo.Metodo_Pago)
+                _pago_saldo.Monto            = Decimal("0")
+                _pago_saldo.Estado           = "aprobado"
+                _pago_saldo.Fecha_Resolucion = _now()
+                nueva_venta.Estado_Pago      = "pagado_completo"
     else:
         # ── Pedido del cliente: sin comprobante al crear (3.2) ───────────────
         # El anticipo (si el total lo exige — puramente por monto, 3.1) es
@@ -1486,7 +1565,12 @@ def crear_venta(db: Session, datos: VentaCreate) -> dict:
                 # El crédito cubrió el total: no hace falta comprobante de
                 # transferencia para algo que ya quedó en $0.
                 nueva_venta.Estado_Pago = "pagado_completo"
-                nueva_venta.Pago_Final_Registrado = 1
+                _pago_anticipo.Monto            = Decimal("0")
+                _pago_anticipo.Estado           = "aprobado"
+                _pago_anticipo.Fecha_Resolucion = _now()
+                if not datos.domicilio:
+                    _descontar_stock_venta(db, nueva_venta.ID_Venta, PARTE_TODO)
+                    nueva_venta.Stock_Reservado = 1
             elif _es_transferencia(datos.Metodo_Pago) or _es_mixto(datos.Metodo_Pago):
                 pass
             else:
@@ -1691,12 +1775,20 @@ def registrar_pago_final(db: Session, id_venta: int, datos) -> dict:
     # porque nadie del negocio vio la plata entrar. `GestionPedidos.jsx`
     # llama a este endpoint y de inmediato marca el pedido Entregado,
     # asumiendo que `Pago_Final_Registrado` ya quedó en 1 acá.
-    venta.Pago_Final_Monto           = datos.monto
-    venta.Pago_Final_Metodo_Pago     = datos.metodo_pago
-    venta.Pago_Final_Comprobante_Url = datos.comprobante_url
-    venta.Pago_Final_Fecha           = _now()
-    venta.Pago_Final_Registrado      = 1
-    venta.Estado_Pago                = "pagado_completo"
+    # "digital" no es un método reconocido por `es_pago_transferencia` (regex
+    # de pagos_utils): se normaliza a 'Transferencia' en la fila de Pagos —
+    # exige comprobante igual que transferencia (chequeo D3, arriba), es lo
+    # que importa acá.
+    _metodo_normalizado = (
+        "Transferencia" if datos.metodo_pago.lower() in ("transferencia", "digital") else "Efectivo"
+    )
+    _pago_saldo = pago_o_nuevo(db, id_venta, TIPO_SALDO, _metodo_normalizado)
+    _pago_saldo.Metodo_Pago     = _metodo_normalizado
+    _pago_saldo.Monto           = datos.monto
+    _pago_saldo.Comprobante_Url = datos.comprobante_url
+    _pago_saldo.Fecha_Resolucion = _now()
+    _pago_saldo.Estado           = "aprobado" if _metodo_normalizado == "Transferencia" else "recibido"
+    venta.Estado_Pago            = "pagado_completo"
 
     db.commit()
     db.refresh(venta)
@@ -1706,7 +1798,7 @@ def registrar_pago_final(db: Session, id_venta: int, datos) -> dict:
 _VENTANA_PROTECCION = timedelta(minutes=10)
 
 
-def _saldo_transferencia_pendiente(venta: Venta) -> bool:
+def _saldo_transferencia_pendiente(db: Session, venta: Venta) -> bool:
     """True si el pedido tiene anticipo, el saldo se paga por transferencia y
     esa transferencia todavía no fue aprobada (3.10).
 
@@ -1718,7 +1810,8 @@ def _saldo_transferencia_pendiente(venta: Venta) -> bool:
         return False
     if not _es_transferencia(venta.Metodo_Pago):
         return False
-    return not bool(getattr(venta, "Pago_Final_Registrado", 0))
+    pago_saldo = obtener_pago(db, venta.ID_Venta, TIPO_SALDO)
+    return not bool(pago_saldo and pago_saldo.Estado in ESTADOS_RESUELTOS_OK)
 
 
 # 3.6: mientras un pedido para recoger en tienda sigue en negociación (fecha,
@@ -1785,7 +1878,7 @@ def cambiar_estado(
     # El comprobante lo sube el cliente y lo aprueba el admin; si se confirma
     # antes, el pedido entra a producción y se despacha contra una imagen que
     # después puede resultar falsa o de otro monto.
-    if nuevo_estado == EstadoPedido.CONFIRMADO and comprobante_sin_aprobar(venta):
+    if nuevo_estado == EstadoPedido.CONFIRMADO and comprobante_sin_aprobar(db, venta):
         _estado_pago = (getattr(venta, "Estado_Pago", None) or "pendiente").strip()
         if _estado_pago == "comprobante_rechazado":
             raise HTTPException(
@@ -1885,7 +1978,7 @@ def cambiar_estado(
         # transferencia, tiene que estar aprobado antes de despachar. Si es en
         # efectivo se cobra al entregar (3.11) y no bloquea acá. No bloquea
         # asignar/reasignar repartidor, que es un botón aparte.
-        if _saldo_transferencia_pendiente(venta):
+        if _saldo_transferencia_pendiente(db, venta):
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -1900,7 +1993,7 @@ def cambiar_estado(
     # el pedido como entregado sin registrar ese cobro deja la venta cerrada
     # y el efectivo sin rastro. Registrarlo también es declarar que NO se
     # pudo cobrar (con motivo): lo que no vale es entregar sin decirlo.
-    if nuevo_estado == EstadoPedido.ENTREGADO and cobro_efectivo_pendiente(venta):
+    if nuevo_estado == EstadoPedido.ENTREGADO and cobro_efectivo_pendiente(db, venta):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -1911,8 +2004,10 @@ def cambiar_estado(
 
     # Bloquear paso a ENTREGADO si el pedido requiere anticipo y el saldo no fue registrado.
     # No afecta pedidos donde Requiere_Anticipo == 0 (flujo normal sin anticipo).
+    _pago_anticipo_eg = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+    _pago_saldo_eg     = obtener_pago(db, id_venta, TIPO_SALDO)
     if nuevo_estado == EstadoPedido.ENTREGADO and getattr(venta, "Requiere_Anticipo", 0):
-        if not getattr(venta, "Pago_Final_Registrado", 0):
+        if not (_pago_saldo_eg and _pago_saldo_eg.Estado in ESTADOS_RESUELTOS_OK):
             raise HTTPException(
                 status_code=400,
                 detail="Debe registrar el pago final antes de marcar el pedido como entregado",
@@ -1924,10 +2019,10 @@ def cambiar_estado(
     # como comprobante del anticipo: también cuenta, si no el pedido se queda sin
     # poder entregarse.
     _metodo = (venta.Metodo_Pago or "").strip().lower()
-    _soporte_pago = venta.Comprobante_Pago or getattr(venta, "Anticipo_Comprobante_Url", None)
+    _soporte_pago = _pago_anticipo_eg.Comprobante_Url if _pago_anticipo_eg else None
     _hay_transferencia = (
         "transfer" in _metodo
-        or ("mixto" in _metodo and float(venta.Monto_Transferencia or 0) > 0)
+        or ("mixto" in _metodo and float((_pago_anticipo_eg.Monto if _pago_anticipo_eg else 0) or 0) > 0)
     )
     if nuevo_estado == EstadoPedido.ENTREGADO and _hay_transferencia and not _soporte_pago:
         raise HTTPException(
@@ -2050,10 +2145,26 @@ def cambiar_estado(
         # se alcanzó a hornear: ahí la panadería no gastó nada y la plata del
         # cliente vuelve sola. Horneado, los insumos ya se fueron y qué pasa
         # con esa plata lo acuerdan el cliente y quien atiende.
-        _anticipo = Decimal(str(getattr(venta, "Anticipo_Monto", None) or 0))
-        if (getattr(venta, "Anticipo_Registrado", 0) and _anticipo > 0
+        # NOTA: igual que antes de la migración, esto se dispara con solo
+        # `Monto` declarado (no exige Estado='aprobado') — incluye el caso del
+        # comprobante rechazado 3 veces que auto-cancela el pedido. Es
+        # comportamiento preexistente, preservado tal cual; reportado como
+        # hallazgo aparte, no se corrige en este refactor.
+        _pago_anticipo_cnl = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+        _anticipo = Decimal(str(_pago_anticipo_cnl.Monto or 0)) if _pago_anticipo_cnl else Decimal("0")
+        if (_pago_anticipo_cnl and _pago_anticipo_cnl.Monto and _anticipo > 0
                 and anticipo_vuelve_solo(db, id_venta)):
             _abonar_credito(db, venta.ID_Usuario, _anticipo, id_venta)
+
+        # Pedido mixto: si la mitad en efectivo ya se cobró (en tienda o al
+        # domiciliario) antes de que la transferencia se rechazara la 3ra vez
+        # y el pedido se cancelara solo, esa plata también se devuelve como
+        # saldo a favor — regla nueva confirmada con el usuario (antes no
+        # existía ningún camino que la devolviera).
+        _pago_saldo_cnl = obtener_pago(db, id_venta, TIPO_SALDO)
+        if (_pago_saldo_cnl and _pago_saldo_cnl.Estado in ESTADOS_RESUELTOS_OK
+                and (_pago_saldo_cnl.Monto or 0) > 0):
+            _abonar_credito(db, venta.ID_Usuario, Decimal(str(_pago_saldo_cnl.Monto)), id_venta)
 
     if venta.Estado == EstadoPedido.PENDIENTE:
         descartar_notificacion(db, "pedido_nuevo", id_venta)
@@ -2246,7 +2357,7 @@ def proponer_fecha(
     venta.Estado = EstadoPedido.FECHA_PROPUESTA
     venta.Fecha_entrega_esperada = fecha_entrega
     _guardar_historial_fecha(
-        db, id_venta, "propuesta", fecha_entrega,
+        db, id_venta, TipoAccionFecha.PROPUESTA, fecha_entrega,
         motivo_rechazo=(motivo.strip() if motivo else None), id_usuario=id_admin,
     )
     _mensaje_fecha = f"El administrador propuso una fecha de entrega para tu pedido #{id_venta}"
@@ -2467,7 +2578,7 @@ def aprobar_fecha_directa(db: Session, id_venta: int, actual: dict) -> dict:
     descartar_notificacion(db, "produccion_requerida", id_venta)
     descartar_notificacion(db, "pedido_sobre_stock",   id_venta)
     _avanzar_tras_fecha_confirmada(db, venta, venta.Fecha_entrega_esperada, id_usuario=id_admin)
-    _guardar_historial_fecha(db, id_venta, "aceptada", venta.Fecha_entrega_esperada, id_usuario=id_admin)
+    _guardar_historial_fecha(db, id_venta, TipoAccionFecha.ACEPTADA, venta.Fecha_entrega_esperada, id_usuario=id_admin)
 
     notificar(
         db, "fecha_aceptada", "Pedido aprobado",
@@ -2663,7 +2774,7 @@ def aceptar_fecha(db: Session, id_venta: int, actual: dict) -> dict:
     if venta.Estado != EstadoPedido.FECHA_PROPUESTA:
         raise HTTPException(status_code=400, detail="El pedido no está en estado 'Fecha propuesta'")
 
-    _guardar_historial_fecha(db, id_venta, "aceptada", venta.Fecha_entrega_esperada, id_usuario=id_usuario)
+    _guardar_historial_fecha(db, id_venta, TipoAccionFecha.ACEPTADA, venta.Fecha_entrega_esperada, id_usuario=id_usuario)
     _avanzar_tras_fecha_confirmada(db, venta, venta.Fecha_entrega_esperada, id_usuario=id_usuario)
 
     notificar(
@@ -2733,7 +2844,7 @@ def rechazar_fecha(db: Session, id_venta: int, actual: dict, fecha_propuesta_cli
     venta.intentos_rechazo = (int(getattr(venta, "intentos_rechazo", 0) or 0)) + 1
     venta.Estado = EstadoPedido.FECHA_PROPUESTA_FINAL
 
-    _guardar_historial_fecha(db, id_venta, "propuesta_final", fecha_propuesta_cliente, motivo.strip(), id_usuario=id_usuario)
+    _guardar_historial_fecha(db, id_venta, TipoAccionFecha.PROPUESTA_FINAL, fecha_propuesta_cliente, motivo.strip(), id_usuario=id_usuario)
     descartar_notificacion(db, "fecha_rechazada", id_venta)
     notificar(
         db, "fecha_rechazada", "El cliente propuso su fecha final",
@@ -2776,7 +2887,7 @@ def rechazar_fecha_final(db: Session, id_venta: int, actual: dict, motivo: str |
     id_admin = getattr(actual.get("registro"), "ID_Usuario", None)
     venta.Estado = EstadoPedido.ESCALADO_A_ADMIN
     _guardar_historial_fecha(
-        db, id_venta, "rechazada_final", venta.Fecha_entrega_esperada, motivo, id_usuario=id_admin
+        db, id_venta, TipoAccionFecha.RECHAZADA_FINAL, venta.Fecha_entrega_esperada, motivo, id_usuario=id_admin
     )
     notificar(
         db, "fecha_rechazada", "Tu propuesta de fecha fue rechazada",
@@ -2883,7 +2994,7 @@ def resolver_escalado_acuerdo_manual(
 
     id_admin = getattr(actual.get("registro"), "ID_Usuario", None)
     _avanzar_tras_fecha_confirmada(db, venta, fecha_acordada, id_usuario=id_admin)
-    _guardar_historial_fecha(db, id_venta, "propuesta", fecha_acordada, id_usuario=id_admin)
+    _guardar_historial_fecha(db, id_venta, TipoAccionFecha.PROPUESTA, fecha_acordada, id_usuario=id_admin)
     notificar(
         db, "fecha_propuesta", "Fecha de entrega acordada por el administrador",
         f"El administrador acordó una fecha de entrega para tu pedido #{id_venta}",
@@ -2922,8 +3033,9 @@ def resolver_escalado_cancelar(db: Session, id_venta: int, actual: dict) -> dict
     # o transferencia la gestiona el admin fuera del sistema; el registro en
     # CreditoCliente asegura que quede trazabilidad y que el cliente pueda usarlo
     # en el próximo pedido si lo prefiere.
-    _anticipo = Decimal(str(getattr(venta, "Anticipo_Monto", None) or 0))
-    if (getattr(venta, "Anticipo_Registrado", 0) and _anticipo > 0
+    _pago_anticipo_esc = obtener_pago(db, id_venta, TIPO_ANTICIPO)
+    _anticipo = Decimal(str(_pago_anticipo_esc.Monto or 0)) if _pago_anticipo_esc else Decimal("0")
+    if (_pago_anticipo_esc and _pago_anticipo_esc.Monto and _anticipo > 0
             and anticipo_vuelve_solo(db, id_venta)):
         _abonar_credito(db, venta.ID_Usuario, _anticipo, id_venta)
 
