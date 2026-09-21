@@ -113,9 +113,9 @@ class PedidoUpdate(BaseModel):
     # ajusta el Total (edición explícita; ver zona de peligro del snapshot).
     # Municipio/Departamento se derivan del barrio, no se aceptan del request.
     ID_Barrio:            Optional[int]   = None
-    Subtotal:             Optional[float] = None
-    Descuento:            Optional[float] = None
-    Total:                Optional[float] = None
+    # Ni Total ni Subtotal ni Descuento: el total lo lleva el servidor (ver
+    # `editar_pedido`). Lo que el panel corrige acá es cómo se paga y cómo se
+    # entrega.
     Notas:                Optional[str]   = None
     Comprobante_Pago:     Optional[str]   = None
 

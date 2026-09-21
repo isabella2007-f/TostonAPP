@@ -1834,9 +1834,19 @@ function ModalVerComprobante({ pedido, esSaldo = false, saving, onClose, onAprob
 function AccionesCell({ ped, saving, onVer, onEditar, onConfirmar, onMarcarListo, onEntregar, onAsignarDomicilio, onCancelar, onAprobarFecha, onProponerFecha, onRechazarFechaFinal, onResolverEscalado, onVerComprobante, onSubirComprobante, onRegistrarCobro, onResolverRetenido, onProduccionBloqueada, onSaldoBloqueado, onAvisarRecoger, onEnviarAEntregar }) {
   const necesitaProduccion  = ped.requiereFechaPropuesta;
   const canEdit             = puedeEditarsePedido(ped.estado);
+  // Confirmar un pedido pendiente.
+  //
+  // Antes se exigía además que el pago por transferencia ya estuviera
+  // aprobado, y eso dejaba sin botón a todos los pedidos por transferencia:
+  // ahora nacen en "Pendiente" y su pago llega DESPUÉS de confirmarlos, que
+  // es justamente para lo que sirve "Esperando pago". Lo único que sí
+  // bloquea es una captura que nadie revisó todavía —el servidor la rechaza
+  // igual (`comprobante_sin_aprobar`)—.
+  const comprobantePorRevisar = esPagoTransferencia(ped.metodo_pago)
+    && !!ped.comprobante
+    && !["pagado_completo", "anticipo_pagado"].includes(ped.estado_pago);
   const canAdvance          = ped.estado === "Pendiente" && !necesitaProduccion
-    && (!esPagoTransferencia(ped.metodo_pago)
-        || ["pagado_completo", "anticipo_pagado"].includes(ped.estado_pago));
+    && !comprobantePorRevisar;
   // Camino A: aprobar de una la fecha que el cliente ya pidió. Camino B (más
   // abajo, canProponerFecha): contraofrecer otra.
   // "Fecha propuesta final" (3.4): la contraoferta del cliente se aprueba con
@@ -2480,7 +2490,8 @@ export default function GestionPedidos() {
     }
   };
 
-  const handleConfirmarCambioEstado = async (id, nuevoEstado) => {
+  const handleConfirmarCambioEstado = async (id, estadoPedido) => {
+    let nuevoEstado = estadoPedido;
     const ped = pedidos.find(p => p.id === id);
     if (!ped) return;
     setActionSaving(true);
@@ -2490,7 +2501,11 @@ export default function GestionPedidos() {
       } else if (nuevoEstado === "Entregado") {
         await cambiarEstadoVenta(id, 8);
       } else {
-        await confirmarPedido(id);
+        // Confirmar puede terminar en "Confirmado" o en "Esperando pago",
+        // según quede o no plata por respaldar: el estado lo dice el
+        // servidor, no este formulario.
+        const actualizado = await confirmarPedido(id);
+        nuevoEstado = actualizado?.estado || nuevoEstado;
       }
       setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado: nuevoEstado } : p));
       showToast(

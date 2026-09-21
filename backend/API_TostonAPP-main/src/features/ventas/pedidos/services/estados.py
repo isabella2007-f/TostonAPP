@@ -54,8 +54,13 @@ TRANSICIONES: dict[int, frozenset[int]] = {
     # contraoferta (→ Fecha propuesta). Un rechazo-con-causa/edición reabre
     # aquí mismo (Pendiente → Pendiente, no es una transición nueva).
     EstadoPedido.PENDIENTE:       frozenset({EstadoPedido.CONFIRMADO, EstadoPedido.ESPERANDO_PAGO, EstadoPedido.FECHA_PROPUESTA, EstadoPedido.CANCELADO}),
-    # confirmado → listo (saltar preparando) es válido si el pedido ya está listo de inmediato
-    EstadoPedido.CONFIRMADO:      frozenset({EstadoPedido.PREPARANDO, EstadoPedido.LISTO, EstadoPedido.CANCELADO}),
+    # confirmado → listo (saltar preparando) es válido si el pedido ya está listo de inmediato.
+    # ESPERANDO_PAGO: confirmar es la panadería aceptando el pedido; si además
+    # queda plata por respaldar, lo siguiente es esperar ese pago. Son dos
+    # cosas distintas y el pedido pasa por las dos —antes se saltaba
+    # "Confirmado" y el historial perdía el momento en que se aceptó—. El
+    # regreso lo hace `aprobar_comprobante`, que devuelve el pedido acá.
+    EstadoPedido.CONFIRMADO:      frozenset({EstadoPedido.PREPARANDO, EstadoPedido.LISTO, EstadoPedido.ESPERANDO_PAGO, EstadoPedido.CANCELADO}),
     EstadoPedido.PREPARANDO:      frozenset({EstadoPedido.LISTO, EstadoPedido.CANCELADO}),
     # RETENIDO_EN_TIENDA (3.7): el cajero no pudo cobrar en efectivo.
     EstadoPedido.LISTO:           frozenset({EstadoPedido.EN_CAMINO, EstadoPedido.ENTREGADO, EstadoPedido.CANCELADO, EstadoPedido.RETENIDO_EN_TIENDA}),

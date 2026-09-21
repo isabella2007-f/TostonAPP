@@ -157,15 +157,17 @@ def editar_pedido(db: Session, id_venta: int, datos: dict) -> dict:
         if "transfer" in _metodo_actual and datos["Comprobante_Pago"] and _estado_pago_no_final:
             pedido.Estado_Pago = "pendiente_validacion"
 
-    if datos.get("Total") is not None:
-        pedido.Total = datos["Total"]
-
-    detalle = db.query(DetalleVenta).filter(DetalleVenta.ID_Venta == id_venta).first()
-    if detalle:
-        if datos.get("Descuento") is not None:
-            detalle.Descuento = datos["Descuento"]
-        if datos.get("Subtotal") is not None:
-            detalle.SubTotal = datos["Subtotal"]
+    # El total NO se acepta del formulario. Sale de las líneas del pedido, del
+    # domicilio y de lo que ya se descontó, y acá solo cambia por el
+    # domicilio —más abajo, por diferencia contra el snapshot—. Aceptarlo del
+    # request era dejar que la pantalla cobrara la cifra que quisiera.
+    #
+    # `Descuento` tampoco: esa columna de DetalleVenta guarda el CRÉDITO que
+    # el cliente usó (así la lee `_formato_venta`, como `credito_aplicado`),
+    # no un descuento comercial. El formulario escribía ahí y borraba el
+    # saldo a favor que el pedido ya había consumido. El descuento de verdad
+    # vive en DescuentoXVenta, atado a una promoción: no es un monto libre
+    # que se escriba a mano.
 
     # Registrar anticipo (cuando el admin confirma que ya recibió el 50%)
     if datos.get("Anticipo_Registrado"):
@@ -307,7 +309,20 @@ def confirmar_pedido(db: Session, id_venta: int) -> dict:
         db.refresh(pedido)
         return _formato_venta(pedido, db)
 
-    return _gv_cambiar_estado(db, id_venta, _destino_al_confirmar(pedido))
+    # Confirmar es la panadería aceptando el pedido, y eso ocurre siempre:
+    # es el momento en que se aparta la mercancía y el cliente recibe el
+    # aviso de que su pedido va. Si además queda plata por respaldar, el
+    # pedido sigue a "Esperando pago", que es otra cosa —lo que falta es del
+    # cliente, no del negocio—.
+    #
+    # Antes se saltaba directo al segundo: el pedido nunca pasaba por
+    # Confirmado, así que no se apartaba el stock ni salía ese aviso.
+    confirmado = _gv_cambiar_estado(db, id_venta, EstadoPedido.CONFIRMADO)
+    if _destino_al_confirmar(pedido) != EstadoPedido.ESPERANDO_PAGO:
+        return confirmado
+    return _gv_cambiar_estado(
+        db, id_venta, EstadoPedido.ESPERANDO_PAGO,
+        saltar_ventana_proteccion=True)
 
 
 def _destino_al_confirmar(pedido: Venta) -> int:

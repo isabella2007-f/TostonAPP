@@ -355,7 +355,7 @@ class PanelAdminTests(PanelBase):
         # que se confirme no lo mueve de ahí.
         self.patch(f"/pedidos/{pedido['ID_Venta']}/confirmar", self.admin)
         self.assertEqual(
-            self.venta(pedido["ID_Venta"]).Estado, PEDIDO_ESPERANDO_PAGO,
+            self.venta(pedido["ID_Venta"]).Estado, PEDIDO_PENDIENTE,
             "se confirmó un pedido cuyo comprobante nadie revisó")
 
     def test_aprobado_el_comprobante_el_pedido_se_confirma(self):

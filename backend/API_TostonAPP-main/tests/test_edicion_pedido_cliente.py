@@ -349,7 +349,11 @@ class ElPanelTest(EdicionBase):
     def test_a_efectivo_el_pedido_deja_de_esperar_pago(self):
         # El panel mostraba el mismo pedido "Esperando pago" con el aviso de
         # comprobante pendiente, sobre un pedido que ya era en efectivo.
-        id_venta = self.pedido_transferencia(comprobante_pago=URL)
+        # El comprobante se adjunta ya en la etapa de pago: confirmar un
+        # pedido con una captura sin revisar está bloqueado a propósito.
+        id_venta = self.pedido_transferencia()
+        self.afirmar_ok(self.patch(f"/pedidos/{id_venta}/pagar", self.cliente,
+                                   {"comprobante_url": URL}))
         detalle = self.afirmar_ok(
             self.put(f"/pedidos/{id_venta}", self.admin,
                      {"Metodo_Pago": "Efectivo"}))

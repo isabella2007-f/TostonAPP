@@ -2,14 +2,36 @@
    sentido abrir el editor. Vive fuera del componente para que Gestión de pedidos
    pueda preguntar antes de ofrecer el botón. */
 export const PERMISOS_POR_ESTADO = {
+  /* Editar un pedido es corregir CÓMO se paga y CÓMO se entrega. Nada más.
+     Todo lo demás tiene su propio camino, con sus propias validaciones, y
+     dejarlo entrar por acá es dejar que se las salte:
+
+     - `productos` movía cantidades sin revisar stock ni reabrir la
+       negociación de fecha, y sin recalcular el anticipo.
+     - `descuento` escribía en `DetalleVenta.Descuento`, que en este esquema
+       guarda el CRÉDITO que el cliente usó, no un descuento comercial: cada
+       edición borraba el saldo a favor que el pedido ya había consumido. El
+       descuento de verdad vive en `DescuentoXVenta`, atado a una promoción.
+       El servidor ya no acepta ninguno de los dos campos.
+     - El estado nunca estuvo acá, y así se queda: se mueve con sus acciones,
+       que validan la transición. */
   "Pendiente": {
-    cliente:           true,
-    productos:         true,
+    cliente:           false,
+    productos:         false,
     metodo_pago:       true,
     domicilio:         true,
     direccion_entrega: true,
     notas:             true,
-    descuento:         true,
+    descuento:         false,
+  },
+  "Esperando pago": {
+    cliente:           false,
+    productos:         false,
+    metodo_pago:       true,
+    domicilio:         true,
+    direccion_entrega: true,
+    notas:             true,
+    descuento:         false,
   },
   "En producción": {
     cliente:           false,
@@ -18,7 +40,7 @@ export const PERMISOS_POR_ESTADO = {
     domicilio:         false,
     direccion_entrega: true,
     notas:             true,
-    descuento:         true,
+    descuento:         false,
   },
   "Listo": {
     cliente:           false,
