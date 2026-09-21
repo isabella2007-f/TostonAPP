@@ -7,7 +7,7 @@
  */
 import {
   puedeEditarPedido, puedeCancelarPedido, puedeReabrirNegociacion,
-  restanteDeVentana, montoATransferir,
+  restanteDeVentana, montoATransferir, llevaProduccion, permiteEfectivo,
 } from '../src/features/sales/orders/reglasEdicionCliente.js';
 
 let fallos = 0;
@@ -79,6 +79,28 @@ comprobar('confirmado no se cancela desde acá',
   puedeCancelarPedido(pedido({ estado: 'Confirmado' }), AHORA), false);
 
 comprobar('quedan 5 minutos', Math.round(restanteDeVentana(pedido(), AHORA) / 60000), 5);
+
+// ── Encargo: lo que hay que hornear ─────────────────────────────────
+const enVitrina  = { requiereProduccion: true,  cantidad: 2, stock: 5 };
+const porEncargo = { requiereProduccion: true,  cantidad: 6, stock: 2 };
+const noSeFabrica = { requiereProduccion: false, cantidad: 9, stock: 0 };
+
+comprobar('pedir más de lo que hay de algo que se hornea es encargo',
+  llevaProduccion([enVitrina, porEncargo]), true);
+
+comprobar('si alcanza con lo de la vitrina, no',
+  llevaProduccion([enVitrina]), false);
+
+comprobar('lo que la panadería no fabrica nunca es encargo',
+  llevaProduccion([noSeFabrica]), false);
+
+comprobar('un carrito vacío tampoco', llevaProduccion([]), false);
+
+comprobar('el encargo no se paga en efectivo',
+  permiteEfectivo({ porEncargo: true }), false);
+
+comprobar('lo de vitrina sí',
+  permiteEfectivo({ porEncargo: false }), true);
 
 comprobar('el mixto transfiere el resto', montoATransferir('Mixto', 20000, 8000), 12000);
 comprobar('la transferencia cubre el total', montoATransferir('Transferencia', 20000, 0), 20000);

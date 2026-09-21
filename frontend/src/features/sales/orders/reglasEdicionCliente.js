@@ -130,6 +130,29 @@ export const montoATransferir = (metodo, total, efectivo) => {
   return 0;
 };
 
+/**
+ * ¿El carrito lleva algo que hay que hornear?
+ *
+ * Una línea es "por encargo" cuando el producto se fabrica y se piden más
+ * unidades de las que hay en vitrina: ese faltante abre una orden de
+ * producción. Es el mismo criterio con el que el servidor decide
+ * `Necesita_Produccion` al crear la venta.
+ */
+export const llevaProduccion = (items) =>
+  (items || []).some(
+    (it) => it?.requiereProduccion && (it.cantidad || 0) > (it.stock ?? 0)
+  );
+
+/**
+ * ¿Se puede pagar en efectivo?
+ *
+ * Un encargo no: el efectivo se cobra al recibir, cuando el pedido ya se
+ * produjo y los insumos ya se gastaron, así que no respalda nada. El
+ * servidor lo rechaza al crear y al editar; acá se deja de ofrecer, que es
+ * lo que evita el botón que no hace nada.
+ */
+export const permiteEfectivo = ({ porEncargo }) => !porEncargo;
+
 /** ¿Este método necesita que alguien revise un comprobante? */
 export const llevaTransferencia = (metodo) =>
   metodo === 'Transferencia' || metodo === 'Mixto';

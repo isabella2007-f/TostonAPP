@@ -10,6 +10,10 @@ import FormularioDireccion from '../../../../shared/components/FormularioDirecci
 import { desdeTexto, lineaVia } from '../../../../utils/direccionEntrega';
 // La regla del anticipo vive en un solo lugar, espejo del servidor.
 import { pideAnticipo } from '../../../../utils/anticipo';
+// Y la del encargo, que decide si el efectivo sirve para este pedido.
+import {
+  llevaProduccion, permiteEfectivo as permiteEfectivoPago,
+} from '../reglasEdicionCliente';
 import SaldoMonto from '../../../../shared/components/SaldoMonto';
 import SplitPagoMonto from '../../../../shared/components/SplitPagoMonto';
 import TerminosCondicionesModal from '../../../../shared/components/TerminosCondicionesModal';
@@ -222,13 +226,27 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
   // no tocando el estado, para que el cliente que baje la cantidad recupere el
   // método que había elegido.
   const permiteMixto = !requiereAnticipo;
-  const esMixto      = permiteMixto && paymentMethod === 'mixto';
+
+  // Lo que hay que hornear no se paga en efectivo: ese cobro llega al
+  // recibir, cuando el pedido ya se produjo y los insumos ya se gastaron. El
+  // servidor lo rechaza, así que ofrecer el botón era ofrecer un error.
+  const lineasPorEncargo = llevaProduccion(orderDetails?.items);
+  const permiteEfectivo  = permiteEfectivoPago({ porEncargo: lineasPorEncargo });
+
+  // El método que de verdad se manda. Se resuelve al leer y no tocando el
+  // estado, para que quien baje la cantidad recupere el que había elegido.
+  const metodoPago =
+    (paymentMethod === 'mixto'    && !permiteMixto) ||
+    (paymentMethod === 'efectivo' && !permiteEfectivo)
+      ? 'digital'
+      : paymentMethod;
+  const esMixto      = permiteMixto && metodoPago === 'mixto';
 
   if (!isOpen || !orderDetails) return null;
 
   const itemsConDeficit = (orderDetails.items || []).filter(
     (it: CartItem) => it.requiereProduccion && it.cantidad > (it.stock ?? 0)
-  );
+  );   // mismo criterio que `llevaProduccion`, acá con el detalle de cada línea
 
   const soloDigitos = (tel: string) => tel.replace(/\D/g, '');
   const telefonoValido = soloDigitos(telefono).length === 10;
@@ -345,7 +363,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
       // El comprobante ya no se sube acá: se adjunta después, cuando el
       // pedido llegue a "Esperando pago" (sin producción) o al aprobarse la
       // fecha (con producción y anticipo).
-      await onConfirm(paymentMethod, { usar: usarCredito, monto: creditoAplicar, efectivoMonto: Number(efectivoMonto) || 0 }, {
+      await onConfirm(metodoPago, { usar: usarCredito, monto: creditoAplicar, efectivoMonto: Number(efectivoMonto) || 0 }, {
         tieneDomicilio,
         address,
         idBarrio,
@@ -695,14 +713,26 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
                 { id: 'digital',  icon: <CreditCard size={14} />, label: 'Transferencia' },
                 { id: 'efectivo', icon: <Banknote size={14} />,   label: 'Efectivo' },
                 { id: 'mixto',    icon: <Scale size={14} />,      label: 'Mixto' },
-              ].filter(m => m.id !== 'mixto' || permiteMixto).map(m => (
+              ].filter(m => (m.id !== 'mixto'    || permiteMixto)
+                         && (m.id !== 'efectivo' || permiteEfectivo)).map(m => (
                 <button key={m.id} onClick={() => setPaymentMethod(m.id)}
-                  className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl border-2 transition-all text-[11px] font-black ${paymentMethod === m.id ? 'border-green-600 bg-green-50 text-green-800' : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'}`}>
-                  <div className={`p-1.5 rounded-lg ${paymentMethod === m.id ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-400'}`}>{m.icon}</div>
+                  className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl border-2 transition-all text-[11px] font-black ${metodoPago === m.id ? 'border-green-600 bg-green-50 text-green-800' : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'}`}>
+                  <div className={`p-1.5 rounded-lg ${metodoPago === m.id ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-400'}`}>{m.icon}</div>
                   {m.label}
                 </button>
               ))}
             </div>
+
+            {!permiteEfectivo && !requiereAnticipo && (
+              <div className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2.5">
+                <Banknote size={16} className="text-yellow-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] font-bold text-yellow-800">
+                  Tu pedido lleva productos por encargo, así que se paga por
+                  transferencia: el efectivo se cobraría al recibirlo, cuando ya
+                  estaría horneado.
+                </p>
+              </div>
+            )}
 
             {requiereAnticipo && (
               <div className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2.5">
@@ -731,14 +761,14 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
               </div>
             )}
 
-            {(paymentMethod === 'digital' || esMixto) && totalFinal === 0 && (
+            {(metodoPago === 'digital' || esMixto) && totalFinal === 0 && (
               <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
                 <CheckCircle2 size={14} className="text-green-600 shrink-0" />
                 <p className="text-xs font-bold text-green-800">Tu saldo a favor cubre el total — no necesitas realizar ningún pago.</p>
               </div>
             )}
 
-            {(paymentMethod === 'digital' || esMixto) && totalFinal > 0 && (
+            {(metodoPago === 'digital' || esMixto) && totalFinal > 0 && (
               <div className="space-y-2">
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
                   <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1.5">
@@ -811,7 +841,7 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, orderDet
                 </span>
               </div>
             )}
-            {paymentMethod === 'mixto' && Number(efectivoMonto) > 0 && (
+            {metodoPago === 'mixto' && Number(efectivoMonto) > 0 && (
               <>
                 <div className="flex justify-between text-[11px] font-bold text-gray-500">
                   <span>En efectivo al recibir</span>
