@@ -77,6 +77,8 @@ const adaptPedido = (p) => {
     requiereProduccion:    !!(p.requiere_produccion),
     requiereFechaPropuesta: !!(p.requiere_fecha_propuesta),
     fecha_propuesta:  p.Fecha_Propuesta || p.fecha_propuesta || p.Fecha_entrega_esperada || null,
+    // La negociación completa, con sus motivos y de qué lado vino cada una.
+    propuestas_fecha: p.propuestas_fecha || [],
     fecha_rechazada:  p.fecha_rechazada || null,
     intentos_rechazo: p.intentos_rechazo || 0,
     resaltarCanalExcepcion: !!(p.resaltar_canal_excepcion),

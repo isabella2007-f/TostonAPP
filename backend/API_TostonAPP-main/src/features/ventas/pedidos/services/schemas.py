@@ -63,6 +63,9 @@ class PedidoResponse(BaseModel):
     # Estado del pago y metadatos adicionales
     estado_pago:                       Optional[str]     = None
     motivo_rechazo_comprobante:        Optional[str]     = None
+    # La negociación de la fecha, con sus motivos: es lo que deja ver de qué
+    # lado vino cada propuesta y por qué.
+    propuestas_fecha:           list                 = []
     fecha_rechazada:                   Optional[datetime] = None
     # Segundo comprobante: el saldo restante tras el anticipo (3.10)
     saldo_comprobante_url:                    Optional[str] = None

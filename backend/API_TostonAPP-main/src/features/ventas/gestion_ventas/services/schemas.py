@@ -167,6 +167,9 @@ class VentaResponse(BaseModel):
     # declararlo aca Pydantic lo descartaba: el cliente veia "rechazado" sin
     # motivo y volvia a mandar la misma captura.
     motivo_rechazo_comprobante: Optional[str]    = None
+    # La negociación de la fecha, con sus motivos: es lo que deja ver de qué
+    # lado vino cada propuesta y por qué.
+    propuestas_fecha:           list                 = []
     # Solo los pedidos sobre stock o de producción necesitan fecha propuesta
     requiere_fecha_propuesta:      bool             = False
     requiere_produccion:           bool             = False

@@ -17,6 +17,7 @@ import EditarPedido from "./EditarPedido.jsx";
 import FilasRelleno from "../../../shared/components/FilasRelleno";
 import { puedeEditarsePedido } from "./permisosEdicion.js";
 import { puedeEnviarADomicilio } from "./accionesRetenido.js";
+import PropuestasFecha from "../../../shared/components/PropuestasFecha.jsx";
 import { esPagoEfectivo, esPagoMixto, esPagoTransferencia, montoACobrar, montoTransferido } from "../../../utils/metodosPago.js";
 import SearchableSelect from "../../../shared/components/SearchableSelect.jsx";
 import ImageLightbox from "../../../shared/components/ImageLightbox.jsx";
@@ -390,6 +391,15 @@ function ModalVerPedido({ pedido: pedidoProp, empleados, onClose, onEdit }) {
                   )}
                 </div>
               </div>
+
+              {/* La negociación completa: qué propuso cada lado y por qué. La
+                  contraoferta del cliente —fecha y motivo— se guardaba y no
+                  llegaba a esta pantalla. */}
+              {!!pedido.propuestas_fecha?.length && (
+                <div style={{ padding: "0 16px 14px" }}>
+                  <PropuestasFecha propuestas={pedido.propuestas_fecha} />
+                </div>
+              )}
 
               {/* Notas (ancho completo) */}
               {pedido.notas && (

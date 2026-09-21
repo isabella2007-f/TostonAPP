@@ -1174,7 +1174,14 @@ def _saldo_por_transferencia_aplica(db: Session, pedido: Venta) -> str | None:
         return "Este pedido no tiene anticipo, no aplica un segundo comprobante"
     # El saldo es lo que queda DESPUÉS del anticipo: sin anticipo pagado no
     # hay resto que deber, y el primer comprobante es el que está pendiente.
-    if not getattr(pedido, "Anticipo_Registrado", 0):
+    #
+    # Se mira la fila de pago, que es donde vive el anticipo desde que se
+    # sacó de `Ventas`. Preguntarlo con `getattr(pedido, "Anticipo_Registrado")`
+    # —como estaba— devolvía el valor por defecto sobre una columna que ya no
+    # existe: SIEMPRE cero, así que el cliente que ya había pagado su anticipo
+    # recibía "primero hay que pagar el anticipo" y no podía subir el saldo.
+    _pago_ant = obtener_pago(db, pedido.ID_Venta, TIPO_ANTICIPO)
+    if not (_pago_ant and _pago_ant.Monto):
         return "Primero hay que pagar el anticipo de este pedido"
     if not _lleva_transferencia(pedido.Metodo_Pago):
         return "El saldo de este pedido se cobra en efectivo, no por transferencia"

@@ -639,6 +639,7 @@ def _formato_venta(venta: Venta, db: Session, *, dxv_map=None) -> dict:
         "pago_final_fecha":          (_pago_saldo.Fecha_Resolucion if _pago_saldo else None),
         "estado_pago":               getattr(venta, "Estado_Pago", "pendiente"),
         "motivo_rechazo_comprobante": _motivo_rechazo_pago,
+        "propuestas_fecha":          _propuestas_de_fecha(db, venta.ID_Venta),
         # Segundo comprobante: el saldo restante tras el anticipo (3.10).
         "saldo_comprobante_url": (_pago_saldo.Comprobante_Url if _pago_saldo else None),
         "intentos_rechazo_comprobante_anticipo": int((_pago_anticipo.Intentos_Rechazo if _pago_anticipo else 0) or 0),
@@ -2280,6 +2281,41 @@ def requiere_fecha_propuesta(db: Session, venta: Venta) -> bool:
     if bool(getattr(venta, "Sobre_Stock", 0)):
         return True
     return bool(getattr(venta, "Necesita_Produccion", 0))
+
+
+def _propuestas_de_fecha(db: Session, id_venta: int) -> list[dict]:
+    """La negociación de la fecha, de la primera propuesta a la última.
+
+    Se guardaba desde hace tiempo en `Historial_Fechas_Propuestas` y no se
+    devolvía en ninguna respuesta: el cliente veía la fecha propuesta sin el
+    motivo que el admin había escrito, el admin no veía la contraoferta del
+    cliente, y no había manera de mostrar que hubo más de una vuelta.
+
+    `de` dice de qué lado vino cada una, que es lo que permite pintarlas como
+    una conversación sin que nadie tenga que adivinar.
+    """
+    _DE_QUIEN = {
+        TipoAccionFecha.PROPUESTA:       "panaderia",
+        TipoAccionFecha.ACEPTADA:        "cliente",
+        TipoAccionFecha.PROPUESTA_FINAL: "cliente",
+        TipoAccionFecha.RECHAZADA_FINAL: "panaderia",
+    }
+    filas = (
+        db.query(HistorialFechasPropuestas)
+        .filter(HistorialFechasPropuestas.ID_Venta == id_venta)
+        .order_by(HistorialFechasPropuestas.ID_Historial)
+        .all()
+    )
+    return [
+        {
+            "tipo":   f.Tipo_Accion,
+            "de":     _DE_QUIEN.get(f.Tipo_Accion),
+            "fecha":  f.Fecha_Propuesta,
+            "motivo": f.Motivo_Rechazo,
+            "cuando": f.Fecha_Accion,
+        }
+        for f in filas
+    ]
 
 
 def _guardar_historial_fecha(

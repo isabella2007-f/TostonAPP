@@ -25,6 +25,7 @@ import {
   Banknote, ClipboardList, CornerUpLeft, AlertCircle, PenLine,
   Upload, Paperclip, Download,
 } from 'lucide-react';
+import PropuestasFecha from '../../../shared/components/PropuestasFecha';
 import '../../../styles/Client.css';
 
 const CUENTA_TRANSFERENCIA = {
@@ -1196,6 +1197,15 @@ const PedidosClientePage = () => {
                       </div>
                     </div>
                   )}
+
+                  {/* Y la conversación completa: quién propuso qué día y por
+                      qué. El motivo que escribe la panadería se guardaba y no
+                      se mostraba en ninguna parte. */}
+                  {!!selectedPedido.propuestas_fecha?.length && (
+                    <div style={{ marginTop: 10 }}>
+                      <PropuestasFecha propuestas={selectedPedido.propuestas_fecha} compacto />
+                    </div>
+                  )}
                 </div>
               )}
               {/* Legado: pedidos que ya tenían orden de producción antes de este cambio. */}
@@ -1323,6 +1333,11 @@ const PedidosClientePage = () => {
                 && !['Entregado', 'Cancelado', 'Esperando pago'].includes(selectedPedido.estado)
                 && (selectedPedido.metodo_pago || '').toLowerCase().includes('transfer')
                 && !selectedPedido.pago_final_registrado
+                /* El saldo es el SEGUNDO pago: sin el anticipo adentro no hay
+                   resto que deber, y preguntarlo igual le decía al cliente "ya
+                   recibimos tu anticipo" sobre un pedido en el que nadie había
+                   pagado nada. */
+                && selectedPedido.anticipo_registrado
                 && (() => {
                 const yaSubido  = selectedPedido.estado_pago === 'saldo_pendiente_validacion';
                 const rechazado = selectedPedido.estado_pago === 'saldo_comprobante_rechazado';

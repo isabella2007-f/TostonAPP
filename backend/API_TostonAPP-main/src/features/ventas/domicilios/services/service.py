@@ -139,8 +139,13 @@ def _formato_domicilio(dom: Domicilio, db: Session) -> dict:
         "estado_pago":          venta.Estado_Pago if venta else None,
         # Anticipo: cuánto se pagó por adelantado y si ya se registró.
         # El domiciliario lo necesita para calcular el saldo real a cobrar.
-        "anticipo_monto":       float(getattr(venta, "Anticipo_Monto", 0) or 0) if venta else 0,
-        "anticipo_registrado":  bool(getattr(venta, "Anticipo_Registrado", 0)) if venta else False,
+        # El anticipo vive en su fila de pago desde que se sacó de `Ventas`.
+        # Se leía con `getattr` sobre las columnas viejas, que ya no existen:
+        # el monto salía 0 y el registrado False SIEMPRE, así que el
+        # repartidor veía "sin anticipo" en un pedido que sí lo tenía y el
+        # saldo a cobrar le salía por el total entero.
+        "anticipo_monto":       float(_pago_ant_dom.Monto or 0) if _pago_ant_dom else 0,
+        "anticipo_registrado":  bool(_pago_ant_dom and _pago_ant_dom.Monto),
         "productos":            productos,
         "telefono_cliente":     cliente.Telefono if cliente else "",
         # Liquidación del efectivo cobrado por el repartidor
